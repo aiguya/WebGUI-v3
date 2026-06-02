@@ -52,17 +52,17 @@ if not %errorlevel%==0 (
   )
 )
 
-echo Starting WebGork Studio V2...
-echo URL: http://127.0.0.1:7862
+echo Starting WebGUI.v3...
+echo URL: http://127.0.0.1:7863
 echo.
-echo Keep this window open while using WebGork Studio.
+echo Keep this window open while using WebGUI.
 echo Press Ctrl+C in this window to stop the server.
 echo.
 
 set "WEBGORK_OPEN_BROWSER=1"
-set "WEBGORK_PORT=7862"
+set "WEBGORK_PORT=7863"
 %PYTHON_CMD% app.py
 
 echo.
-echo WebGork Studio stopped.
+echo WebGUI stopped.
 pause

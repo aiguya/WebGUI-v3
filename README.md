@@ -1,11 +1,11 @@
-# WebGUI.v2 사용 매뉴얼
+# WebGUI.v3 사용 매뉴얼
 
-WebGUI.v2는 로컬 PC에서 실행하는 AI 이미지/영상 생성 WebUI입니다. Grok/xAI 계열 생성, Hermes xAI OAuth 프록시, Codex/ChatGPT OAuth 이미지 프록시, 로컬 라이브러리 관리, 영상 연장, 영상 편집, 망가 실사화/역식 배치 작업을 한 화면에서 다루도록 만든 Windows 중심 앱입니다.
+WebGUI.v3은 로컬 PC에서 실행하는 AI 이미지/영상 생성 WebUI입니다. Grok/xAI 계열 생성, Hermes xAI OAuth 프록시, Codex/ChatGPT OAuth 이미지 프록시, 로컬 라이브러리 관리, 영상 연장, 영상 편집, 망가 실사화/역식 배치 작업을 한 화면에서 다루도록 만든 Windows 중심 앱입니다.
 
 기본 실행 주소는 다음과 같습니다.
 
 ```text
-http://127.0.0.1:7862
+http://127.0.0.1:7863
 ```
 
 ## 빠른 실행
@@ -21,7 +21,7 @@ run_webgork_app.bat
 동작:
 
 - 필요한 Python 패키지가 없으면 자동 설치합니다.
-- 서버가 꺼져 있으면 `127.0.0.1:7862`로 실행합니다.
+- 서버가 꺼져 있으면 `127.0.0.1:7863`로 실행합니다.
 - Chrome이 있으면 `--app=` 모드의 독립 창으로 엽니다.
 - Chrome을 찾지 못하면 기본 브라우저로 엽니다.
 
@@ -39,7 +39,7 @@ Python 3.10 이상이 필요합니다.
 
 ```powershell
 python -m pip install -r requirements.txt
-set WEBGORK_PORT=7862
+set WEBGORK_PORT=7863
 python app.py
 ```
 
@@ -47,7 +47,7 @@ python app.py
 
 상단은 두 줄 헤더입니다.
 
-- 첫 줄: `WebGUI.v2` 타이틀, Hermes 연결 상태, Codex 이미지 프록시 연결 상태, credit 잔량 표시
+- 첫 줄: `WebGUI.v3` 타이틀, Hermes 연결 상태, Codex 이미지 프록시 연결 상태, credit 잔량 표시
 - 둘째 줄: 아이콘 탭 메뉴
 
 메인 화면은 세 영역입니다.

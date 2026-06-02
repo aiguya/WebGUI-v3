@@ -6,19 +6,19 @@
   <meta name="theme-color" content="#050505">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="WebGork">
-  <title>WebGUI.v2</title>
+  <meta name="apple-mobile-web-app-title" content="WebGUI">
+  <title>WebGUI.v3</title>
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260602-v2-83">
+  <link rel="stylesheet" href="/static/styles.css?v=20260602-v3-01">
 </head>
 <body>
   <header class="topbar">
     <div class="title-row">
       <div class="brand-block">
         <div class="brand-line">
-          <h1>WebGUI.v2</h1>
+          <h1>WebGUI.v3</h1>
         </div>
       </div>
       <div class="header-status">
@@ -674,7 +674,7 @@
               <button type="button" id="testHermesProxy" class="secondary">Hermes 연결 테스트</button>
             </div>
           </form>
-          <p class="note">Version 2는 Hermes Agent가 OAuth 인증과 Grok 호출을 담당하고, 이 앱은 Proxy endpoint만 호출하는 구성을 권장합니다.</p>
+          <p class="note">Version 3는 Hermes Agent가 OAuth 인증과 Grok 호출을 담당하고, 이 앱은 Proxy endpoint만 호출하는 구성을 권장합니다.</p>
         </div>
         <div class="settings-card">
           <h2>직접 OAuth 로그인</h2>
@@ -697,7 +697,7 @@
           <h2>저장 경로</h2>
           <form id="mediaRootForm" class="inline-form">
             <label>결과물 저장 폴더</label>
-            <input type="text" name="media_root" id="mediaRootInput" placeholder="예: C:\Users\aiguy\Pictures\WebGork">
+            <input type="text" name="media_root" id="mediaRootInput" placeholder="예: C:\Users\aiguy\Pictures\WebGUI-v3">
             <div class="button-row">
               <button type="button" id="browseMediaRoot" class="secondary">파일 브라우저로 선택</button>
               <button type="submit">저장 경로 적용</button>
@@ -797,6 +797,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260602-v2-83"></script>
+  <script src="/static/app.js?v=20260602-v3-01"></script>
 </body>
 </html>

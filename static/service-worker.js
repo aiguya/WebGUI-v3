@@ -1,8 +1,8 @@
-const CACHE_NAME = "webgork-shell-v2-83";
+const CACHE_NAME = "webgui-shell-v3-01";
 const SHELL_ASSETS = [
   "/",
-  "/static/styles.css?v=20260602-v2-83",
-  "/static/app.js?v=20260602-v2-83",
+  "/static/styles.css?v=20260602-v3-01",
+  "/static/app.js?v=20260602-v3-01",
   "/static/icon.svg",
   "/static/manifest.webmanifest"
 ];

@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import hashlib
 import html
 import json
@@ -857,13 +857,13 @@ class XaiOAuthCallbackHandler(BaseHTTPRequestHandler):
         if error:
             message = f"OAuth 오류: {error}"
         elif not code or not pending:
-            message = "OAuth state 검증에 실패했습니다. WebGork Studio에서 다시 로그인해 주세요."
+            message = "OAuth state 검증에 실패했습니다. WebGUI.v3에서 다시 로그인해 주세요."
         else:
             try:
                 oauth_exchange_code(code, pending["verifier"], pending["redirect_uri"])
                 OAUTH_PENDING.pop(state, None)
                 ok = True
-                message = "Grok OAuth 로그인이 완료되었습니다. 이 창을 닫고 WebGork Studio로 돌아가세요."
+                message = "Grok OAuth 로그인이 완료되었습니다. 이 창을 닫고 WebGUI.v3으로 돌아가세요."
             except Exception as exc:
                 message = f"토큰 교환 실패: {exc}"
         body = f"""<!doctype html>
@@ -872,7 +872,7 @@ class XaiOAuthCallbackHandler(BaseHTTPRequestHandler):
 <body style="font-family:Arial,sans-serif;background:#101413;color:#f7f4ea;padding:40px">
 <h1>{'로그인 완료' if ok else '로그인 실패'}</h1>
 <p>{html.escape(message)}</p>
-<p><a style="color:#5bc0be" href="http://127.0.0.1:7860">WebGork Studio로 돌아가기</a></p>
+<p><a style="color:#5bc0be" href="http://127.0.0.1:7863">WebGUI.v3으로 돌아가기</a></p>
 </body></html>"""
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -3034,7 +3034,7 @@ def auth_xai_start():
 def oauth_start():
     cfg = config()
     if not cfg["oauth_client_id"]:
-        return safe_error("직접 OAuth Client ID가 설정되어 있지 않습니다. Version 2에서는 Hermes Agent Proxy 사용을 권장합니다.", status=400)
+        return safe_error("직접 OAuth Client ID가 설정되어 있지 않습니다. Version 3에서는 Hermes Agent Proxy 사용을 권장합니다.", status=400)
     endpoints = oauth_discovery()
     ensure_oauth_callback_server()
     verifier, challenge = pkce_pair()
@@ -3079,7 +3079,7 @@ def oauth_callback():
     session["webgork_mode"] = "live"
     for key in ("xai_oauth_state", "xai_oauth_verifier", "xai_oauth_nonce"):
         session.pop(key, None)
-    return render_template("oauth_result.html", ok=True, message="Grok OAuth 로그인이 완료되었습니다. 이제 이 창을 닫고 WebGork Studio로 돌아가세요.")
+    return render_template("oauth_result.html", ok=True, message="Grok OAuth 로그인이 완료되었습니다. 이제 이 창을 닫고 WebGUI.v3으로 돌아가세요.")
 
 
 @app.post("/api/auth/logout")
@@ -3141,7 +3141,7 @@ def auth_status():
 def hermes_auth_start():
     exe = hermes_exe_path()
     if not exe.exists():
-        return safe_error("Hermes 실행 파일을 찾을 수 없습니다. V2 Hermes 설치를 먼저 확인해 주세요.", status=400)
+        return safe_error("Hermes 실행 파일을 찾을 수 없습니다. V3 Hermes 설치를 먼저 확인해 주세요.", status=400)
     logged_in, detail = hermes_auth_logged_in()
     if logged_in:
         ensure_hermes_proxy_background()
@@ -3410,7 +3410,7 @@ def browse_media_root():
         root.withdraw()
         root.attributes("-topmost", True)
         selected = filedialog.askdirectory(
-            title="WebGork 결과물 저장 폴더 선택",
+            title="WebGUI.v3 결과물 저장 폴더 선택",
             initialdir=str(media_root()),
         )
         root.destroy()
@@ -3419,7 +3419,7 @@ def browse_media_root():
         script = (
             "Add-Type -AssemblyName System.Windows.Forms; "
             "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
-            "$d.Description = 'WebGork 결과물 저장 폴더 선택'; "
+            "$d.Description = 'WebGUI.v3 결과물 저장 폴더 선택'; "
             f"$d.SelectedPath = '{selected_path}'; "
             "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { "
             "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
@@ -4680,7 +4680,7 @@ if __name__ == "__main__":
         log_file = open(ROOT / "webgork-runtime.log", "a", encoding="utf-8", buffering=1)
         sys.stdout = log_file
         sys.stderr = log_file
-    port = int(os.getenv("WEBGORK_PORT", "7862"))
+    port = int(os.getenv("WEBGORK_PORT", "7863"))
     if os.getenv("WEBGORK_OPEN_BROWSER", "1") == "1":
         Thread(target=lambda: (time.sleep(1.2), webbrowser.open(f"http://127.0.0.1:{port}")), daemon=True).start()
     app.run(host="127.0.0.1", port=port, debug=False)

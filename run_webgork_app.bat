@@ -42,11 +42,11 @@ if not %errorlevel%==0 (
   )
 )
 
-powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7862/health -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }" >nul 2>nul
+powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }" >nul 2>nul
 if not %errorlevel%==0 (
-  echo Starting WebGork Studio V2 server...
-  start "WebGork Studio V2 Server" /min cmd /c "set WEBGORK_OPEN_BROWSER=0&& set WEBGORK_PORT=7862&& %PYTHON_CMD% app.py"
-  powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 30; $i++){ try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7862/health -TimeoutSec 1 > $null; $ok=$true; break } catch { Start-Sleep -Milliseconds 500 } }; if(-not $ok){ exit 1 }"
+  echo Starting WebGUI.v3 server...
+  start "WebGUI.v3 Server" /min cmd /c "set WEBGORK_OPEN_BROWSER=0&& set WEBGORK_PORT=7863&& %PYTHON_CMD% app.py"
+  powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 30; $i++){ try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 1 > $null; $ok=$true; break } catch { Start-Sleep -Milliseconds 500 } }; if(-not $ok){ exit 1 }"
   if not %errorlevel%==0 (
     echo Server did not start.
     pause
@@ -60,9 +60,9 @@ if not defined CHROME_EXE if exist "%ProgramFiles(x86)%\Google\Chrome\Applicatio
 if not defined CHROME_EXE if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" set "CHROME_EXE=%LocalAppData%\Google\Chrome\Application\chrome.exe"
 
 if defined CHROME_EXE (
-  start "" "%CHROME_EXE%" --app=http://127.0.0.1:7862 --class=WebGorkStudioV2
+  start "" "%CHROME_EXE%" --app=http://127.0.0.1:7863 --class=WebGUIv3
 ) else (
-  start "" http://127.0.0.1:7862
+  start "" http://127.0.0.1:7863
 )
 
 endlocal
