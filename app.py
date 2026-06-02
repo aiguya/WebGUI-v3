@@ -116,9 +116,12 @@ def ensure_media_dirs_for(root):
     for folder in ("image", "video", "uploads", "thumbnails", "manga_trans", "manga_panels", "metadata-backups"):
         (root / folder).mkdir(parents=True, exist_ok=True)
     meta = root / "metadata.json"
+    prompts = root / "prompts.json"
     usage = root / "usage.json"
     if not meta.exists():
         meta.write_text("[]", encoding="utf-8")
+    if not prompts.exists():
+        prompts.write_text("[]", encoding="utf-8")
     if not usage.exists():
         usage.write_text(json.dumps({"requests": 0, "tokens": 0, "cost_usd": 0, "last_usage": None}), encoding="utf-8")
 
@@ -159,6 +162,10 @@ def metadata_backup_dir():
 
 def usage_path():
     return media_path("usage.json")
+
+
+def prompts_path():
+    return media_path("prompts.json")
 
 
 def oauth_token_path():
@@ -524,6 +531,120 @@ def write_metadata(items):
     temp = target.with_name(f"{target.name}.tmp")
     temp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(target)
+
+
+PROMPT_TASKS = {
+    "image": "이미지 생성",
+    "edit": "이미지 편집",
+    "video": "이미지→영상",
+    "extend": "공식 연장",
+    "frame": "프레임 연장",
+    "manga": "망가 실사화·역식",
+    "general": "범용",
+}
+PROMPT_STRUCTURED_FIELDS = ("subject", "scene", "style", "lighting", "camera", "keep", "change", "negative", "extra")
+
+
+def clean_prompt_tag(tag):
+    tag = re.sub(r"\s+", " ", str(tag or "")).strip()
+    return tag[:32]
+
+
+def normalize_prompt_tags(value):
+    if isinstance(value, str):
+        raw = re.split(r"[,#\n]", value)
+    elif isinstance(value, list):
+        raw = value
+    else:
+        raw = []
+    tags = []
+    seen = set()
+    for item in raw:
+        tag = clean_prompt_tag(item)
+        key = tag.lower()
+        if tag and key not in seen:
+            seen.add(key)
+            tags.append(tag)
+    return tags[:20]
+
+
+def normalize_prompt_structure(value):
+    if not isinstance(value, dict):
+        return {}
+    structured = {}
+    for key in PROMPT_STRUCTURED_FIELDS:
+        text = str(value.get(key) or "").strip()
+        if text:
+            structured[key] = text[:4000]
+    return structured
+
+
+def normalize_prompt_item(item):
+    item = dict(item or {})
+    prompt = str(item.get("prompt") or "").strip()
+    structured = normalize_prompt_structure(item.get("structured"))
+    title = str(item.get("title") or "").strip()[:160]
+    if not title:
+        title = (prompt[:48] + "…") if len(prompt) > 48 else (prompt or "새 프롬프트")
+    task = str(item.get("task") or "general").strip()
+    if task not in PROMPT_TASKS:
+        task = "general"
+    created_at = item.get("created_at") or datetime.now(timezone.utc).isoformat()
+    updated_at = item.get("updated_at") or created_at
+    versions = item.get("versions") if isinstance(item.get("versions"), list) else []
+    normalized_versions = []
+    for version in versions[-30:]:
+        if not isinstance(version, dict):
+            continue
+        normalized_versions.append({
+            "at": version.get("at") or updated_at,
+            "title": str(version.get("title") or title)[:160],
+            "prompt": str(version.get("prompt") or "")[:20000],
+            "structured": normalize_prompt_structure(version.get("structured")),
+            "tags": normalize_prompt_tags(version.get("tags")),
+        })
+    return {
+        "id": str(item.get("id") or uuid.uuid4().hex),
+        "title": title,
+        "task": task,
+        "task_label": PROMPT_TASKS[task],
+        "prompt": prompt[:20000],
+        "structured": structured,
+        "tags": normalize_prompt_tags(item.get("tags")),
+        "favorite": bool(item.get("favorite")),
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "usage_count": int(item.get("usage_count") or 0),
+        "last_used_at": item.get("last_used_at"),
+        "source_item_id": item.get("source_item_id"),
+        "source_file_path": item.get("source_file_path"),
+        "versions": normalized_versions,
+    }
+
+
+def read_prompts():
+    try:
+        data = json.loads(prompts_path().read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, FileNotFoundError):
+        data = []
+    if not isinstance(data, list):
+        data = []
+    return [normalize_prompt_item(item) for item in data if isinstance(item, dict)]
+
+
+def write_prompts(items):
+    target = prompts_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [normalize_prompt_item(item) for item in items if isinstance(item, dict)]
+    temp = target.with_name(f"{target.name}.tmp")
+    temp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(target)
+
+
+def prompt_item_response(item):
+    normalized = normalize_prompt_item(item)
+    normalized["version_count"] = len(normalized.get("versions") or [])
+    return normalized
 
 
 def read_usage():
@@ -3485,6 +3606,150 @@ def prompt_plan():
         })
     except Exception as exc:
         return safe_error("프롬프트 플래너 실행에 실패했습니다.", exc, 502)
+
+
+@app.get("/api/prompts")
+def prompt_library():
+    items = [prompt_item_response(item) for item in read_prompts()]
+    items.sort(key=lambda item: (bool(item.get("favorite")), item.get("updated_at") or ""), reverse=True)
+    tags = sorted({tag for item in items for tag in item.get("tags", [])}, key=str.lower)
+    return jsonify({"ok": True, "items": items, "tags": tags, "tasks": PROMPT_TASKS})
+
+
+@app.post("/api/prompts")
+def save_prompt_item():
+    payload = request.get_json(silent=True) or {}
+    prompt = str(payload.get("prompt") or "").strip()
+    structured = normalize_prompt_structure(payload.get("structured"))
+    if not prompt and structured:
+        prompt = "\n".join(value for value in structured.values() if value).strip()
+    if not prompt:
+        return safe_error("저장할 프롬프트를 입력해 주세요.")
+
+    item_id = str(payload.get("id") or "").strip()
+    items = read_prompts()
+    now = datetime.now(timezone.utc).isoformat()
+    incoming = normalize_prompt_item({
+        "id": item_id or uuid.uuid4().hex,
+        "title": payload.get("title"),
+        "task": payload.get("task"),
+        "prompt": prompt,
+        "structured": structured,
+        "tags": payload.get("tags"),
+        "favorite": parse_request_bool(payload.get("favorite")),
+        "created_at": now,
+        "updated_at": now,
+        "source_item_id": payload.get("source_item_id"),
+        "source_file_path": payload.get("source_file_path"),
+    })
+
+    for index, item in enumerate(items):
+        if item.get("id") != item_id:
+            continue
+        previous = normalize_prompt_item(item)
+        versions = list(previous.get("versions") or [])
+        changed = (
+            previous.get("prompt") != incoming.get("prompt")
+            or previous.get("structured") != incoming.get("structured")
+            or previous.get("title") != incoming.get("title")
+            or previous.get("tags") != incoming.get("tags")
+        )
+        if changed:
+            versions.append({
+                "at": previous.get("updated_at") or now,
+                "title": previous.get("title"),
+                "prompt": previous.get("prompt"),
+                "structured": previous.get("structured"),
+                "tags": previous.get("tags"),
+            })
+        incoming["created_at"] = previous.get("created_at") or now
+        incoming["usage_count"] = previous.get("usage_count") or 0
+        incoming["last_used_at"] = previous.get("last_used_at")
+        incoming["source_item_id"] = incoming.get("source_item_id") or previous.get("source_item_id")
+        incoming["source_file_path"] = incoming.get("source_file_path") or previous.get("source_file_path")
+        incoming["versions"] = versions[-30:]
+        items[index] = incoming
+        write_prompts(items)
+        return jsonify({"ok": True, "item": prompt_item_response(incoming), "created": False})
+
+    items.insert(0, incoming)
+    write_prompts(items)
+    return jsonify({"ok": True, "item": prompt_item_response(incoming), "created": True})
+
+
+@app.post("/api/prompts/favorite")
+def favorite_prompt_item():
+    payload = request.get_json(silent=True) or {}
+    item_id = str(payload.get("id") or "").strip()
+    favorite = parse_request_bool(payload.get("favorite"))
+    if not item_id:
+        return safe_error("프롬프트를 찾을 수 없습니다.", status=404)
+    items = read_prompts()
+    for item in items:
+        if item.get("id") == item_id:
+            item["favorite"] = favorite
+            item["updated_at"] = datetime.now(timezone.utc).isoformat()
+            write_prompts(items)
+            return jsonify({"ok": True, "id": item_id, "favorite": favorite})
+    return safe_error("프롬프트를 찾을 수 없습니다.", status=404)
+
+
+@app.post("/api/prompts/use")
+def use_prompt_item():
+    payload = request.get_json(silent=True) or {}
+    item_id = str(payload.get("id") or "").strip()
+    items = read_prompts()
+    now = datetime.now(timezone.utc).isoformat()
+    for item in items:
+        if item.get("id") == item_id:
+            item["usage_count"] = int(item.get("usage_count") or 0) + 1
+            item["last_used_at"] = now
+            item["updated_at"] = now
+            write_prompts(items)
+            return jsonify({"ok": True, "item": prompt_item_response(item)})
+    return safe_error("프롬프트를 찾을 수 없습니다.", status=404)
+
+
+@app.post("/api/prompts/delete")
+def delete_prompt_items():
+    payload = request.get_json(silent=True) or {}
+    ids = set(str(item) for item in (payload.get("ids") or []) if item)
+    if not ids:
+        return safe_error("삭제할 프롬프트를 선택해 주세요.")
+    items = read_prompts()
+    keep = [item for item in items if item.get("id") not in ids]
+    write_prompts(keep)
+    return jsonify({"ok": True, "deleted": len(items) - len(keep)})
+
+
+@app.post("/api/prompts/from-library")
+def save_prompt_from_library():
+    payload = request.get_json(silent=True) or {}
+    item = find_library_item_by_id(payload.get("id"))
+    if not item:
+        return safe_error("라이브러리 항목을 찾을 수 없습니다.", status=404)
+    prompt = str(item.get("prompt") or "").strip()
+    if not prompt or prompt.startswith("("):
+        return safe_error("저장할 프롬프트가 없는 라이브러리 항목입니다.")
+    kind = item.get("kind") or "general"
+    task = "video" if kind == "video" else ("edit" if kind == "edit" else "image")
+    title = str(payload.get("title") or prompt[:60] or "라이브러리 프롬프트").strip()
+    now = datetime.now(timezone.utc).isoformat()
+    prompt_item = normalize_prompt_item({
+        "title": title,
+        "task": task,
+        "prompt": prompt,
+        "tags": ["library", task],
+        "favorite": False,
+        "created_at": now,
+        "updated_at": now,
+        "source_item_id": item.get("id"),
+        "source_file_path": item.get("file_path"),
+    })
+    items = read_prompts()
+    items.insert(0, prompt_item)
+    write_prompts(items)
+    return jsonify({"ok": True, "item": prompt_item_response(prompt_item)})
 
 
 @app.post("/api/t2i")

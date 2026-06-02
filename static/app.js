@@ -57,6 +57,12 @@ let libraryThumbSize = validLibraryThumbSize(libraryPrefs.thumbSize);
 let libraryCachedItems = [];
 let libraryPageSize = pageSizeFromValue(libraryPrefs.pageSize, 80);
 let libraryVisibleCount = libraryPageSize;
+let promptItems = [];
+let promptSelectedId = "";
+let promptSearch = "";
+let promptTaskFilter = "all";
+let promptFavoriteFilter = "all";
+let promptAutoValue = "";
 let pickerVisibleCount = 80;
 let pickerPageSize = 80;
 const multiImageSources = new WeakMap();
@@ -76,6 +82,24 @@ const promptPlannerForms = new Set([
   "/api/manga-batch",
 ]);
 const promptPlannerCache = new WeakMap();
+const promptTaskLabels = {
+  image: "이미지 생성",
+  edit: "이미지 편집",
+  video: "이미지→영상",
+  extend: "공식 연장",
+  frame: "프레임 연장",
+  manga: "망가 실사화·역식",
+  general: "범용",
+};
+const promptTaskTarget = {
+  image: "t2i",
+  edit: "i2i",
+  video: "i2v",
+  extend: "v2v",
+  frame: "v2vFrame",
+  manga: "mangaBatch",
+  general: "t2i",
+};
 
 const iconSvg = paths => `
   <svg class="tab-svg" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -114,6 +138,10 @@ const tabIcons = {
   reverse: {
     label: "그림 프롬프트",
     html: iconSvg(`<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path><path d="M8 8h8"></path><path d="M8 12h5"></path>`),
+  },
+  prompts: {
+    label: "프롬프트",
+    html: iconSvg(`<path d="M5 4h14v16H5z"></path><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path><path d="m16 16 1.2 1.2L20 14"></path>`),
   },
   library: {
     label: "라이브러리",
@@ -189,6 +217,7 @@ function activateTab(id) {
   tabs.forEach(tab => tab.classList.toggle("active", tab.dataset.tab === id));
   panels.forEach(panel => panel.classList.toggle("active", panel.id === id));
   if (id === "library") loadLibrary();
+  if (id === "prompts") loadPromptManager();
   if (id === "settings") {
     loadHealth();
   }
@@ -230,6 +259,7 @@ function installPromptPlannerControls(form) {
         <span>Grok 4.2 프롬프트 플래너</span>
       </label>
       <button type="button" class="secondary compact-btn" data-preview-prompt-plan>미리보기</button>
+      <button type="button" class="secondary compact-btn" data-save-current-prompt>저장</button>
     </div>
     <div class="prompt-compare" data-prompt-compare hidden>
       <div>
@@ -267,6 +297,7 @@ function installPromptPlannerControls(form) {
     await navigator.clipboard.writeText(planned);
     showToast("최종 프롬프트를 복사했습니다.");
   });
+  box.querySelector("[data-save-current-prompt]")?.addEventListener("click", () => draftPromptFromForm(form));
   promptField.addEventListener("input", () => {
     promptPlannerCache.delete(form);
     const compare = form.querySelector("[data-prompt-compare]");
@@ -1586,6 +1617,401 @@ async function copyReversePrompt() {
 
 document.querySelector("#copyReverseOutput")?.addEventListener("click", copyReversePrompt);
 
+function promptTaskForEndpoint(endpoint) {
+  return ({
+    "/api/t2i": "image",
+    "/api/i2i": "edit",
+    "/api/i2v": "video",
+    "/api/v2v-extend": "extend",
+    "/api/v2v-frame-extend": "frame",
+    "/api/manga-batch": "manga",
+  })[endpoint] || "general";
+}
+
+function managedPromptForm() {
+  return document.querySelector("#promptManagerForm");
+}
+
+function promptStructuredInputs() {
+  return Array.from(document.querySelectorAll("[data-prompt-structured]"));
+}
+
+function managedPromptTextarea() {
+  return document.querySelector("#managedPromptText");
+}
+
+function structuredPromptFromEditor() {
+  const structured = {};
+  promptStructuredInputs().forEach(input => {
+    const key = input.dataset.promptStructured;
+    const value = (input.value || "").trim();
+    if (key && value) structured[key] = value;
+  });
+  return structured;
+}
+
+function composePrompt(structured) {
+  const labels = {
+    subject: "대상",
+    scene: "장면",
+    style: "스타일",
+    lighting: "조명",
+    camera: "카메라",
+    keep: "유지",
+    change: "변경",
+    negative: "제외",
+    extra: "추가 지시",
+  };
+  return Object.entries(labels)
+    .map(([key, label]) => structured[key] ? `${label}: ${structured[key]}` : "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+function syncManagedPromptFromStructured() {
+  const text = managedPromptTextarea();
+  if (!text) return;
+  const next = composePrompt(structuredPromptFromEditor());
+  if (!text.value.trim() || text.value === promptAutoValue) {
+    text.value = next;
+    promptAutoValue = next;
+  }
+}
+
+function promptPayloadFromEditor() {
+  const form = managedPromptForm();
+  const structured = structuredPromptFromEditor();
+  return {
+    id: form?.elements.id?.value || "",
+    title: form?.elements.title?.value || "",
+    task: form?.elements.task?.value || "general",
+    tags: form?.elements.tags?.value || "",
+    favorite: Boolean(form?.elements.favorite?.checked),
+    prompt: managedPromptTextarea()?.value || "",
+    structured,
+  };
+}
+
+function formatPromptTime(value) {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function setPromptEditorItem(item = {}) {
+  const form = managedPromptForm();
+  if (!form) return;
+  form.elements.id.value = item.id || "";
+  form.elements.title.value = item.title || "";
+  form.elements.task.value = item.task || "image";
+  form.elements.tags.value = (item.tags || []).join(", ");
+  form.elements.favorite.checked = Boolean(item.favorite);
+  const structured = item.structured || {};
+  promptStructuredInputs().forEach(input => {
+    input.value = structured[input.dataset.promptStructured] || "";
+  });
+  const prompt = item.prompt || composePrompt(structured);
+  const text = managedPromptTextarea();
+  if (text) text.value = prompt;
+  promptAutoValue = composePrompt(structured);
+  promptSelectedId = item.id || "";
+  document.querySelector("#promptSendTarget").value = promptTaskTarget[item.task || "general"] || "t2i";
+  const meta = document.querySelector("#promptEditorMeta");
+  if (meta) {
+    const versionCount = item.version_count ?? (item.versions || []).length ?? 0;
+    meta.textContent = item.id
+      ? `저장됨 · ${promptTaskLabels[item.task] || item.task || "범용"} · 버전 ${versionCount} · 사용 ${item.usage_count || 0}회 · ${formatPromptTime(item.updated_at)}`
+      : "새 프롬프트";
+  }
+  renderPromptList();
+}
+
+function resetPromptEditor(seed = {}) {
+  setPromptEditorItem({
+    id: "",
+    title: seed.title || "",
+    task: seed.task || "image",
+    tags: seed.tags || [],
+    favorite: Boolean(seed.favorite),
+    prompt: seed.prompt || "",
+    structured: seed.structured || {},
+    version_count: 0,
+    usage_count: 0,
+  });
+}
+
+function filteredPrompts() {
+  const query = promptSearch.trim().toLowerCase();
+  return promptItems
+    .filter(item => promptTaskFilter === "all" || item.task === promptTaskFilter)
+    .filter(item => promptFavoriteFilter !== "favorite" || item.favorite)
+    .filter(item => {
+      if (!query) return true;
+      const haystack = [
+        item.title,
+        item.prompt,
+        item.task_label,
+        ...(item.tags || []),
+      ].filter(Boolean).join(" ").toLowerCase();
+      return query.split(/\s+/).every(token => haystack.includes(token));
+    })
+    .sort((a, b) => Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+}
+
+function renderPromptList() {
+  const list = document.querySelector("#promptList");
+  if (!list) return;
+  const items = filteredPrompts();
+  const stats = document.querySelector("#promptStats");
+  if (stats) stats.textContent = `${items.length} / ${promptItems.length}개`;
+  if (!items.length) {
+    list.innerHTML = `<p class="prompt-empty">저장된 프롬프트가 없습니다.</p>`;
+    return;
+  }
+  list.innerHTML = items.map(item => `
+    <article class="prompt-card${item.id === promptSelectedId ? " active" : ""}" data-prompt-id="${escapeHtml(item.id)}">
+      <button type="button" class="favorite-button prompt-favorite${item.favorite ? " active" : ""}" data-prompt-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}">★</button>
+      <div class="prompt-card-body">
+        <strong>${escapeHtml(item.title || "프롬프트")}</strong>
+        <small>${escapeHtml(promptTaskLabels[item.task] || item.task || "범용")} · ${formatPromptTime(item.updated_at)}</small>
+        <p>${escapeHtml(item.prompt || "")}</p>
+        <div class="prompt-tags">${(item.tags || []).slice(0, 5).map(tag => `<span>${escapeHtml(tag)}</span>`).join("")}</div>
+      </div>
+      <button type="button" class="secondary compact-btn" data-prompt-send>보내기</button>
+    </article>
+  `).join("");
+}
+
+async function loadPromptManager(force = false) {
+  if (promptItems.length && !force) {
+    renderPromptList();
+    return;
+  }
+  const response = await fetch("/api/prompts");
+  const data = await response.json();
+  if (!data.ok) rememberApiError(data, "프롬프트 조회 실패");
+  promptItems = data.items || [];
+  renderPromptList();
+  if (!promptSelectedId && promptItems.length) setPromptEditorItem(promptItems[0]);
+}
+
+async function savePromptEditor() {
+  const payload = promptPayloadFromEditor();
+  if (!payload.prompt.trim()) {
+    showToast("저장할 프롬프트를 입력해 주세요.", true);
+    return null;
+  }
+  const data = await postJson("/api/prompts", payload);
+  const index = promptItems.findIndex(item => item.id === data.item.id);
+  if (index >= 0) promptItems[index] = data.item;
+  else promptItems.unshift(data.item);
+  setPromptEditorItem(data.item);
+  showToast(data.created ? "프롬프트를 저장했습니다." : "프롬프트를 업데이트했습니다.");
+  return data.item;
+}
+
+function selectPromptById(id) {
+  const item = promptItems.find(entry => entry.id === id);
+  if (item) setPromptEditorItem(item);
+}
+
+async function deleteManagedPrompt() {
+  const id = managedPromptForm()?.elements.id?.value || "";
+  if (!id) {
+    resetPromptEditor();
+    return;
+  }
+  const data = await postJson("/api/prompts/delete", { ids: [id] });
+  promptItems = promptItems.filter(item => item.id !== id);
+  resetPromptEditor();
+  renderPromptList();
+  showToast(`${data.deleted || 0}개 프롬프트를 삭제했습니다.`);
+}
+
+async function togglePromptFavorite(id, button) {
+  const item = promptItems.find(entry => entry.id === id);
+  if (!item) return;
+  const next = !item.favorite;
+  setFavoriteButtonState(button, next, true);
+  const data = await postJson("/api/prompts/favorite", { id, favorite: next });
+  item.favorite = Boolean(data.favorite);
+  item.updated_at = new Date().toISOString();
+  setFavoriteButtonState(button, item.favorite, false);
+  if (promptSelectedId === id) setPromptEditorItem(item);
+  else renderPromptList();
+}
+
+async function markPromptUsed(id) {
+  if (!id) return;
+  try {
+    const data = await postJson("/api/prompts/use", { id });
+    const index = promptItems.findIndex(item => item.id === id);
+    if (index >= 0) promptItems[index] = data.item;
+  } catch {
+    // Usage counters are helpful metadata, not required for sending prompts.
+  }
+}
+
+async function sendPromptToTarget(targetId, prompt, itemId = "") {
+  if (!String(prompt || "").trim()) {
+    showToast("보낼 프롬프트가 없습니다.", true);
+    return;
+  }
+  const targetPanel = document.querySelector(`#${targetId}`);
+  const field = targetPanel?.querySelector("textarea[name='prompt']");
+  if (!field) {
+    showToast("프롬프트를 보낼 입력창을 찾을 수 없습니다.", true);
+    return;
+  }
+  field.value = prompt;
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  await markPromptUsed(itemId);
+  activateTab(targetId);
+  showToast("프롬프트를 작업 화면으로 보냈습니다.");
+}
+
+async function saveCurrentPromptFromForm(form) {
+  const field = form?.querySelector("textarea[name='prompt']");
+  const prompt = field?.value || "";
+  if (!prompt.trim()) {
+    showToast("저장할 프롬프트를 입력해 주세요.", true);
+    return;
+  }
+  const task = promptTaskForEndpoint(form.dataset.endpoint);
+  const titleSeed = prompt.split(/\s+/).slice(0, 8).join(" ");
+  const data = await postJson("/api/prompts", {
+    title: `${promptTaskLabels[task] || "프롬프트"} · ${titleSeed}`.trim(),
+    task,
+    prompt,
+    tags: [task],
+  });
+  const index = promptItems.findIndex(item => item.id === data.item.id);
+  if (index >= 0) promptItems[index] = data.item;
+  else promptItems.unshift(data.item);
+  setPromptEditorItem(data.item);
+  activateTab("prompts");
+  showToast("현재 프롬프트를 보관했습니다.");
+}
+
+function draftPromptFromForm(form) {
+  saveCurrentPromptFromForm(form).catch(error => showToast(error.message, true));
+}
+
+async function savePromptFromViewer() {
+  const prompt = document.querySelector("#promptViewerText")?.textContent || "";
+  if (!prompt.trim()) {
+    showToast("저장할 프롬프트가 없습니다.", true);
+    return;
+  }
+  const data = await postJson("/api/prompts", {
+    title: prompt.split(/\s+/).slice(0, 8).join(" "),
+    task: "general",
+    prompt,
+    tags: ["library"],
+  });
+  promptItems.unshift(data.item);
+  setPromptEditorItem(data.item);
+  closePromptViewer();
+  activateTab("prompts");
+  showToast("프롬프트를 보관했습니다.");
+}
+
+async function savePromptFromLibraryItem(item) {
+  const data = await postJson("/api/prompts/from-library", { id: item.dataset.id });
+  promptItems.unshift(data.item);
+  setPromptEditorItem(data.item);
+  activateTab("prompts");
+  showToast("라이브러리 프롬프트를 보관했습니다.");
+}
+
+document.querySelector("#promptList")?.addEventListener("click", async event => {
+  const card = event.target.closest(".prompt-card");
+  if (!card) return;
+  const id = card.dataset.promptId;
+  const favorite = event.target.closest("[data-prompt-favorite]");
+  if (favorite) {
+    event.stopPropagation();
+    try {
+      await togglePromptFavorite(id, favorite);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+    return;
+  }
+  if (event.target.closest("[data-prompt-send]")) {
+    event.stopPropagation();
+    const item = promptItems.find(entry => entry.id === id);
+    if (item) await sendPromptToTarget(promptTaskTarget[item.task] || "t2i", item.prompt || "", item.id);
+    return;
+  }
+  selectPromptById(id);
+});
+
+document.querySelector("#promptSearch")?.addEventListener("input", event => {
+  promptSearch = event.target.value || "";
+  renderPromptList();
+});
+
+document.querySelector("#promptTaskFilter")?.addEventListener("change", event => {
+  promptTaskFilter = event.target.value || "all";
+  renderPromptList();
+});
+
+document.querySelector("#promptFavoriteFilter")?.addEventListener("change", event => {
+  promptFavoriteFilter = event.target.value || "all";
+  renderPromptList();
+});
+
+promptStructuredInputs().forEach(input => input.addEventListener("input", syncManagedPromptFromStructured));
+
+managedPromptTextarea()?.addEventListener("input", event => {
+  if (event.target.value !== promptAutoValue) promptAutoValue = "";
+});
+
+managedPromptForm()?.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    await savePromptEditor();
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
+
+document.querySelector("#newPromptItem")?.addEventListener("click", () => resetPromptEditor());
+
+document.querySelector("#duplicatePromptItem")?.addEventListener("click", () => {
+  const payload = promptPayloadFromEditor();
+  payload.id = "";
+  payload.title = `${payload.title || "프롬프트"} 복사본`;
+  resetPromptEditor(payload);
+});
+
+document.querySelector("#deletePromptItem")?.addEventListener("click", () => {
+  deleteManagedPrompt().catch(error => showToast(error.message, true));
+});
+
+document.querySelector("#copyManagedPrompt")?.addEventListener("click", async () => {
+  const prompt = managedPromptTextarea()?.value || "";
+  if (!prompt.trim()) {
+    showToast("복사할 프롬프트가 없습니다.", true);
+    return;
+  }
+  await navigator.clipboard.writeText(prompt);
+  showToast("프롬프트를 복사했습니다.");
+});
+
+document.querySelector("#sendManagedPrompt")?.addEventListener("click", () => {
+  const prompt = managedPromptTextarea()?.value || "";
+  const id = managedPromptForm()?.elements.id?.value || "";
+  const target = document.querySelector("#promptSendTarget")?.value || "t2i";
+  sendPromptToTarget(target, prompt, id).catch(error => showToast(error.message, true));
+});
+
+document.querySelector("#savePromptViewer")?.addEventListener("click", event => {
+  event.stopPropagation();
+  savePromptFromViewer().catch(error => showToast(error.message, true));
+});
+
 async function loadLibrary(resetVisible = true) {
   const grid = document.querySelector("#libraryGrid");
   const response = await fetch("/api/library");
@@ -1840,6 +2266,7 @@ function renderLibraryGrid(grid, allItems, items) {
               <button type="button" data-menu-action="open-file">기본 앱으로 열기</button>
               <button type="button" data-menu-action="copy-file">파일 복사</button>
               <button type="button" data-menu-action="copy-path">파일 경로 저장</button>
+              <button type="button" data-menu-action="save-prompt">프롬프트 저장</button>
             </div>
           </div>
         </div>
@@ -1886,6 +2313,7 @@ function createLibraryItemNode(item) {
             <button type="button" data-menu-action="open-file">기본 앱으로 열기</button>
             <button type="button" data-menu-action="copy-file">파일 복사</button>
             <button type="button" data-menu-action="copy-path">파일 경로 복사</button>
+            <button type="button" data-menu-action="save-prompt">프롬프트 저장</button>
           </div>
         </div>
       </div>
@@ -2133,6 +2561,9 @@ const libraryMenuActions = {
     const data = await postJson("/api/library/item-path", { id: item.dataset.id });
     await navigator.clipboard.writeText(data.path);
     showToast("파일 경로를 복사했습니다.");
+  },
+  async "save-prompt"(item) {
+    await savePromptFromLibraryItem(item);
   },
 };
 

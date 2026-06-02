@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260602-v3-03">
+  <link rel="stylesheet" href="/static/styles.css?v=20260602-v3-04">
 </head>
 <body>
   <header class="topbar">
@@ -58,6 +58,9 @@
         </button>
         <button class="tab" data-tab="reverse" aria-label="그림 프롬프트" data-tooltip="그림 프롬프트">
           <span class="tab-icon icon-prompt" aria-hidden="true"></span>
+        </button>
+        <button class="tab" data-tab="prompts" aria-label="프롬프트" data-tooltip="프롬프트">
+          <span class="tab-icon icon-prompt-library" aria-hidden="true"></span>
         </button>
         <button class="tab" data-tab="library" aria-label="라이브러리" data-tooltip="라이브러리">
           <span class="tab-icon icon-library" aria-hidden="true"></span>
@@ -585,6 +588,125 @@
       </div>
     </section>
 
+    <section class="panel" id="prompts">
+      <div class="prompt-manager">
+        <aside class="prompt-manager-list">
+          <div class="prompt-manager-head">
+            <div>
+              <h2>프롬프트</h2>
+              <p>작업용 프롬프트를 저장하고 다시 보냅니다.</p>
+            </div>
+            <button type="button" id="newPromptItem" class="secondary">새로 만들기</button>
+          </div>
+          <div class="prompt-manager-filters">
+            <input type="search" id="promptSearch" placeholder="제목, 태그, 내용 검색">
+            <select id="promptTaskFilter" aria-label="프롬프트 작업 필터">
+              <option value="all">모든 작업</option>
+              <option value="image">이미지 생성</option>
+              <option value="edit">이미지 편집</option>
+              <option value="video">이미지→영상</option>
+              <option value="extend">공식 연장</option>
+              <option value="frame">프레임 연장</option>
+              <option value="manga">망가 실사화·역식</option>
+              <option value="general">범용</option>
+            </select>
+            <select id="promptFavoriteFilter" aria-label="프롬프트 즐겨찾기 필터">
+              <option value="all">전체</option>
+              <option value="favorite">즐겨찾기</option>
+            </select>
+          </div>
+          <div class="prompt-manager-stats" id="promptStats"></div>
+          <div class="prompt-list" id="promptList"></div>
+        </aside>
+
+        <form class="prompt-editor" id="promptManagerForm">
+          <input type="hidden" name="id">
+          <div class="panel-head">
+            <h2>프롬프트 편집</h2>
+            <span>Prompt Asset</span>
+          </div>
+          <label>이름</label>
+          <input type="text" name="title" placeholder="예: 시네마틱 인물 클로즈업">
+          <div class="prompt-editor-row">
+            <div>
+              <label>작업 종류</label>
+              <select name="task">
+                <option value="image">이미지 생성</option>
+                <option value="edit">이미지 편집</option>
+                <option value="video">이미지→영상</option>
+                <option value="extend">공식 연장</option>
+                <option value="frame">프레임 연장</option>
+                <option value="manga">망가 실사화·역식</option>
+                <option value="general">범용</option>
+              </select>
+            </div>
+            <div>
+              <label>태그</label>
+              <input type="text" name="tags" placeholder="cinematic, face, 2k">
+            </div>
+          </div>
+          <label class="check-row">
+            <input type="checkbox" name="favorite">
+            <span>즐겨찾기</span>
+          </label>
+
+          <div class="prompt-structured-grid">
+            <div>
+              <label>대상</label>
+              <input type="text" data-prompt-structured="subject" placeholder="예: 검은 정장을 입은 여성">
+            </div>
+            <div>
+              <label>장면</label>
+              <input type="text" data-prompt-structured="scene" placeholder="예: 밤의 유리 테이블 앞">
+            </div>
+            <div>
+              <label>스타일</label>
+              <input type="text" data-prompt-structured="style" placeholder="예: 프리미엄 광고 사진">
+            </div>
+            <div>
+              <label>조명</label>
+              <input type="text" data-prompt-structured="lighting" placeholder="예: 낮은 키 라이트와 반사광">
+            </div>
+            <div>
+              <label>카메라</label>
+              <input type="text" data-prompt-structured="camera" placeholder="예: 85mm 렌즈, 얕은 심도">
+            </div>
+            <div>
+              <label>유지</label>
+              <input type="text" data-prompt-structured="keep" placeholder="예: 얼굴, 의상, 포즈 유지">
+            </div>
+          </div>
+          <label>변경</label>
+          <textarea data-prompt-structured="change" placeholder="바꾸고 싶은 요소"></textarea>
+          <label>제외</label>
+          <textarea data-prompt-structured="negative" placeholder="원하지 않는 요소"></textarea>
+          <label>추가 지시</label>
+          <textarea data-prompt-structured="extra" placeholder="모델에 직접 전달할 세부 지시"></textarea>
+          <label>최종 프롬프트</label>
+          <textarea name="prompt" id="managedPromptText" placeholder="구조형 입력을 채우면 자동 합성됩니다. 직접 수정해도 됩니다."></textarea>
+
+          <div class="prompt-editor-actions">
+            <button type="submit">저장</button>
+            <button type="button" class="secondary" id="duplicatePromptItem">복제</button>
+            <button type="button" class="secondary" id="copyManagedPrompt">복사</button>
+            <button type="button" class="danger-btn" id="deletePromptItem">삭제</button>
+          </div>
+          <div class="prompt-send-row">
+            <select id="promptSendTarget" aria-label="프롬프트 보낼 작업">
+              <option value="t2i">이미지 생성으로 보내기</option>
+              <option value="i2i">이미지 편집으로 보내기</option>
+              <option value="i2v">이미지→영상으로 보내기</option>
+              <option value="v2v">공식 연장으로 보내기</option>
+              <option value="v2vFrame">프레임 연장으로 보내기</option>
+              <option value="mangaBatch">망가 실사화·역식으로 보내기</option>
+            </select>
+            <button type="button" id="sendManagedPrompt">보내기</button>
+          </div>
+          <div class="prompt-editor-meta" id="promptEditorMeta"></div>
+        </form>
+      </div>
+    </section>
+
     <section class="panel" id="library">
       <div class="library-sticky-head">
         <div class="library-toolbar">
@@ -791,12 +913,15 @@
   <div class="prompt-viewer" id="promptViewer" hidden>
     <div class="prompt-viewer-panel">
       <div class="prompt-viewer-text" id="promptViewerText"></div>
-      <button type="button" id="copyPromptViewer">프롬프트 복사</button>
+      <div class="button-row">
+        <button type="button" id="copyPromptViewer">프롬프트 복사</button>
+        <button type="button" id="savePromptViewer" class="secondary">프롬프트 저장</button>
+      </div>
     </div>
   </div>
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260602-v3-03"></script>
+  <script src="/static/app.js?v=20260602-v3-04"></script>
 </body>
 </html>
