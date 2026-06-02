@@ -2,7 +2,15 @@
 setlocal
 cd /d "%~dp0"
 
-set "HERMES_EXE=%~dp0.hermes-venv\Scripts\hermes.exe"
+if not defined HERMES_EXE set "HERMES_EXE=%~dp0.hermes-venv\Scripts\hermes.exe"
+if not exist "%HERMES_EXE%" set "HERMES_EXE=%~dp0vendor\hermes-agent\venv\Scripts\hermes.exe"
+if not exist "%HERMES_EXE%" set "HERMES_EXE=%~dp0..\https-gall-dcinside-com-mgallery-board-Version-2\.hermes-venv\Scripts\hermes.exe"
+if not exist "%HERMES_EXE%" set "HERMES_EXE=%~dp0..\https-gall-dcinside-com-mgallery-board-Version-2\vendor\hermes-agent\venv\Scripts\hermes.exe"
+if not exist "%HERMES_EXE%" (
+  echo Hermes executable was not found.
+  pause
+  exit /b 1
+)
 
 echo Waiting for Hermes xAI OAuth login...
 for /l %%i in (1,1,600) do (

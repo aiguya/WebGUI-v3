@@ -686,8 +686,44 @@ def clear_oauth_token():
         token_path.unlink()
 
 
+def hermes_exe_candidates():
+    exe_name = "hermes.exe" if os.name == "nt" else "hermes"
+    candidates = []
+    for env_name in ("WEBGORK_HERMES_EXE", "HERMES_EXE"):
+        value = os.getenv(env_name)
+        if value:
+            candidates.append(Path(value).expanduser())
+    candidates.extend([
+        ROOT / ".hermes-venv" / "Scripts" / exe_name,
+        ROOT / ".hermes-venv" / "bin" / exe_name,
+        ROOT / "vendor" / "hermes-agent" / "venv" / "Scripts" / exe_name,
+        ROOT / "vendor" / "hermes-agent" / "venv" / "bin" / exe_name,
+    ])
+    sibling_names = [
+        ROOT.name.replace("-Version-3", "-Version-2"),
+        ROOT.name.replace("-Version-3", ""),
+    ]
+    for name in dict.fromkeys(sibling_names):
+        if not name or name == ROOT.name:
+            continue
+        sibling = ROOT.parent / name
+        candidates.extend([
+            sibling / ".hermes-venv" / "Scripts" / exe_name,
+            sibling / ".hermes-venv" / "bin" / exe_name,
+            sibling / "vendor" / "hermes-agent" / "venv" / "Scripts" / exe_name,
+            sibling / "vendor" / "hermes-agent" / "venv" / "bin" / exe_name,
+        ])
+    discovered = shutil.which("hermes")
+    if discovered:
+        candidates.append(Path(discovered))
+    return candidates
+
+
 def hermes_exe_path():
-    return ROOT / ".hermes-venv" / "Scripts" / "hermes.exe"
+    for candidate in hermes_exe_candidates():
+        if candidate and candidate.exists():
+            return candidate.resolve()
+    return ROOT / ".hermes-venv" / "Scripts" / ("hermes.exe" if os.name == "nt" else "hermes")
 
 
 def hermes_auth_path():

@@ -4,7 +4,11 @@ cd /d "%~dp0"
 
 set "APP_URL=http://127.0.0.1:7863"
 set "HERMES_PROXY_URL=http://127.0.0.1:8645/v1"
-set "HERMES_EXE=%~dp0.hermes-venv\Scripts\hermes.exe"
+if not defined HERMES_EXE set "HERMES_EXE=%~dp0.hermes-venv\Scripts\hermes.exe"
+if not exist "%HERMES_EXE%" set "HERMES_EXE=%~dp0vendor\hermes-agent\venv\Scripts\hermes.exe"
+if not exist "%HERMES_EXE%" set "HERMES_EXE=%~dp0..\https-gall-dcinside-com-mgallery-board-Version-2\.hermes-venv\Scripts\hermes.exe"
+if not exist "%HERMES_EXE%" set "HERMES_EXE=%~dp0..\https-gall-dcinside-com-mgallery-board-Version-2\vendor\hermes-agent\venv\Scripts\hermes.exe"
+if not exist "%HERMES_EXE%" set "HERMES_EXE=%~dp0..\https-gall-dcinside-com-mgallery-board\.hermes-venv\Scripts\hermes.exe"
 
 if not exist "%HERMES_EXE%" (
   echo Hermes executable was not found:
