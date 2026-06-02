@@ -1,0 +1,43 @@
+# Private credentials and local runtime state
+.env
+.env.*
+!.env.example
+webgork-settings.json
+.webgork-private/
+.hermes-venv/
+
+# Generated media, user uploads, metadata, and distributable bundles
+media-library/
+release/
+backups/
+queue-grid-mockup*.png
+*.zip
+*.7z
+*.rar
+
+# Vendored dependency trees
+vendor/
+node_modules/
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Logs and temporary diagnostics
+*.log
+*.out.log
+*.err.log
+server*.log
+v2-server*.log
+launch-test.txt
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp

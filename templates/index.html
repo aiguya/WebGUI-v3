@@ -1,0 +1,802 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050505">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="WebGork">
+  <title>WebGUI.v2</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <link rel="stylesheet" href="/static/styles.css?v=20260602-v2-83">
+</head>
+<body>
+  <header class="topbar">
+    <div class="title-row">
+      <div class="brand-block">
+        <div class="brand-line">
+          <h1>WebGUI.v2</h1>
+        </div>
+      </div>
+      <div class="header-status">
+        <div class="status-pill compact-status" id="statusPill">상태 확인 중</div>
+        <div class="quota-pill is-empty" id="quotaPill" aria-label="credit 잔량">
+          <span class="quota-credit-label">credit</span>
+          <span class="quota-battery"><span style="width:0%"></span><strong>--%</strong></span>
+        </div>
+      </div>
+    </div>
+    <div class="header-actions tab-row">
+      <nav class="tabs" aria-label="studio tabs">
+        <button class="tab active" data-tab="t2i" aria-label="이미지 생성" data-tooltip="이미지 생성">
+          <span class="tab-icon icon-image" aria-hidden="true"></span>
+        </button>
+        <button class="tab" data-tab="i2i" aria-label="이미지 편집" data-tooltip="이미지 편집">
+          <span class="tab-icon icon-image icon-edit" aria-hidden="true"></span>
+        </button>
+        <button class="tab tab-combo" data-tab="i2v" aria-label="이미지 영상" data-tooltip="이미지 영상">
+          <span class="tab-icon icon-image" aria-hidden="true"></span>
+          <span class="tab-chevron" aria-hidden="true"></span>
+          <span class="tab-icon icon-video" aria-hidden="true"></span>
+        </button>
+        <button class="tab tab-combo" data-tab="v2v" aria-label="공식 연장" data-tooltip="공식 연장">
+          <span class="tab-icon icon-extend" aria-hidden="true"></span>
+          <span class="tab-icon icon-grok" aria-hidden="true">G</span>
+        </button>
+        <button class="tab tab-combo" data-tab="v2vFrame" aria-label="프레임 연장" data-tooltip="프레임 연장">
+          <span class="tab-icon icon-extend" aria-hidden="true"></span>
+          <span class="tab-icon icon-frame" aria-hidden="true"></span>
+        </button>
+        <button class="tab" data-tab="videoEdit" aria-label="영상 편집" data-tooltip="영상 편집">
+          <span class="tab-icon icon-video-edit" aria-hidden="true"></span>
+        </button>
+        <button class="tab" data-tab="mangaBatch" aria-label="망가 실사화·역식" data-tooltip="망가 실사화·역식">
+          <span class="tab-icon icon-manga" aria-hidden="true"></span>
+        </button>
+        <button class="tab" data-tab="reverse" aria-label="그림 프롬프트" data-tooltip="그림 프롬프트">
+          <span class="tab-icon icon-prompt" aria-hidden="true"></span>
+        </button>
+        <button class="tab" data-tab="library" aria-label="라이브러리" data-tooltip="라이브러리">
+          <span class="tab-icon icon-library" aria-hidden="true"></span>
+        </button>
+        <button class="tab" data-tab="settings" aria-label="설정" data-tooltip="설정">
+          <span class="tab-icon icon-settings" aria-hidden="true"></span>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel active" id="t2i">
+      <div class="studio-surface">
+        <div class="result-panel" id="t2iPreview">
+          <div class="empty-state">결과물이 여기에 표시됩니다.</div>
+        </div>
+        <form class="prompt-panel" data-endpoint="/api/t2i" data-kind="json" data-preview="#t2iPreview">
+          <div class="panel-head">
+            <h2>이미지 생성</h2>
+            <span>Text to Image</span>
+          </div>
+          <label>이미지 모델</label>
+          <select name="image_model">
+            <option value="grok-imagine-image-quality">Grok 이미지 퀄리티</option>
+            <option value="grok-imagine-image">Grok 이미지 기본</option>
+            <option value="gpt-5.4-mini">Codex/ChatGPT gpt-5.4-mini</option>
+            <option value="gpt-5.4">Codex/ChatGPT gpt-5.4</option>
+            <option value="gpt-5.5">Codex/ChatGPT gpt-5.5</option>
+          </select>
+          <label data-grok-resolution-field>Grok 해상도</label>
+          <select name="image_resolution" data-grok-resolution-field>
+            <option value="auto">auto</option>
+            <option value="1k">1k</option>
+            <option value="2k">2k</option>
+          </select>
+          <label>프롬프트</label>
+          <textarea name="prompt" id="t2iPrompt" placeholder="만들고 싶은 이미지를 자세히 적어 주세요."></textarea>
+          <label>결과 비율</label>
+          <select name="aspect_ratio">
+            <option value="auto">auto</option>
+            <option value="2:3">2:3</option>
+            <option value="3:2">3:2</option>
+            <option value="1:1">1:1</option>
+            <option value="9:16">9:16</option>
+            <option value="16:9">16:9</option>
+          </select>
+          <button type="submit">생성</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" id="i2i">
+      <div class="studio-surface">
+        <div class="result-panel" id="i2iPreview">
+          <div class="empty-state">편집 결과물이 여기에 표시됩니다.</div>
+        </div>
+        <form class="prompt-panel" data-endpoint="/api/i2i" data-preview="#i2iPreview">
+          <div class="panel-head">
+            <h2>이미지 편집</h2>
+            <span>Image to Image</span>
+          </div>
+          <label>원본 이미지</label>
+          <div class="source-picker">
+            <div class="drop-zone" data-file-drop data-multi-image-edit>
+              <input type="file" name="image" accept="image/png,image/jpeg,image/webp" multiple required>
+              <div class="selected-preview">
+                <span class="drop-title">이미지를 드래그하거나 붙여넣기</span>
+                <small>파일 업로드 또는 라이브러리에서 선택</small>
+              </div>
+            </div>
+            <div class="source-thumbs" data-source-thumbs></div>
+            <div class="source-actions">
+              <button type="button" class="secondary" data-trigger-file>파일 업로드</button>
+              <button type="button" class="secondary" data-open-library-picker>라이브러리에서 불러오기</button>
+              <button type="button" class="secondary" data-clear-multi-images>초기화</button>
+            </div>
+          </div>
+          <div data-library-image-paths hidden></div>
+          <div class="split-controls">
+            <div>
+              <label>이미지 모델</label>
+              <select name="image_model">
+                <option value="grok-imagine-image-quality">Grok 이미지 퀄리티</option>
+                <option value="grok-imagine-image">Grok 이미지 기본</option>
+                <option value="gpt-5.4-mini">Codex/ChatGPT gpt-5.4-mini</option>
+                <option value="gpt-5.4">Codex/ChatGPT gpt-5.4</option>
+                <option value="gpt-5.5">Codex/ChatGPT gpt-5.5</option>
+              </select>
+            </div>
+            <div>
+              <label data-grok-resolution-field>실험 해상도</label>
+              <select name="image_resolution" data-grok-resolution-field>
+                <option value="auto">auto</option>
+                <option value="1k">1k</option>
+                <option value="2k">2k</option>
+              </select>
+            </div>
+          </div>
+          <label>다중 이미지 처리</label>
+          <select name="edit_input_mode">
+            <option value="stitch">먼저 이어붙인 뒤 1장으로 편집</option>
+            <option value="multi">이미지를 여러 장 첨부해서 편집</option>
+          </select>
+          <label class="check-row">
+            <input type="checkbox" name="manga_edit" value="true">
+            <span>망가 작업으로 분류</span>
+          </label>
+          <label>편집 프롬프트</label>
+          <textarea name="prompt" id="i2iPrompt" placeholder="예: 연필 스케치 느낌으로 바꾸고 배경을 밝게"></textarea>
+          <label>결과 비율</label>
+          <select name="aspect_ratio">
+            <option value="auto">auto</option>
+            <option value="2:3">2:3</option>
+            <option value="3:2">3:2</option>
+            <option value="1:1">1:1</option>
+            <option value="9:16">9:16</option>
+            <option value="16:9">16:9</option>
+          </select>
+          <button type="submit">편집</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" id="i2v">
+      <div class="studio-surface">
+        <div class="result-panel" id="i2vPreview">
+          <div class="empty-state">영상 결과물이 여기에 표시됩니다.</div>
+        </div>
+        <form class="prompt-panel" data-endpoint="/api/i2v" data-preview="#i2vPreview">
+          <div class="panel-head">
+            <h2>이미지 → 영상</h2>
+            <span>Image to Video</span>
+          </div>
+          <label>참조 이미지</label>
+          <div class="source-picker">
+            <div class="drop-zone" data-file-drop data-multi-image-video>
+              <input type="file" name="image" accept="image/png,image/jpeg,image/webp" multiple required>
+              <div class="selected-preview">
+                <span class="drop-title">이미지를 드래그하거나 붙여넣기</span>
+                <small>1장은 기존 방식, 2장 이상은 참조 이미지 기반 생성</small>
+              </div>
+            </div>
+            <div class="source-thumbs" data-source-thumbs></div>
+            <div class="source-actions">
+              <button type="button" class="secondary" data-trigger-file>파일 업로드</button>
+              <button type="button" class="secondary" data-open-library-picker>라이브러리에서 불러오기</button>
+              <button type="button" class="secondary" data-clear-multi-images>초기화</button>
+            </div>
+          </div>
+          <div data-library-image-paths hidden></div>
+          <label>영상 모델</label>
+          <select name="video_model">
+            <option value="grok-imagine-video">Grok 영상</option>
+            <option value="grok-imagine-video-1.5-preview">Grok 영상 1.5 preview</option>
+          </select>
+          <label class="check-row">
+            <input type="checkbox" name="upscale_source" value="true">
+            <span>영상 생성 전 참조 이미지 2K 업스케일</span>
+          </label>
+          <label>영상 프롬프트</label>
+          <textarea name="prompt" id="i2vPrompt" placeholder="예: 카메라가 천천히 앞으로 이동하며 빛이 번진다"></textarea>
+          <div class="split-controls">
+            <div>
+              <label>길이(초)</label>
+              <input type="number" name="duration" min="2" max="15" value="6">
+            </div>
+            <div>
+              <label>해상도</label>
+              <select name="resolution">
+                <option value="720p">720p</option>
+                <option value="480p">480p</option>
+              </select>
+            </div>
+          </div>
+          <div class="split-controls">
+            <div>
+              <label>결과 비율</label>
+              <select name="aspect_ratio">
+                <option value="source">원본</option>
+                <option value="auto">auto</option>
+                <option value="2:3">2:3</option>
+                <option value="3:2">3:2</option>
+                <option value="1:1">1:1</option>
+                <option value="9:16">9:16</option>
+                <option value="16:9">16:9</option>
+              </select>
+            </div>
+            <div class="field-note">
+              <label>참고</label>
+              <p>공식 xAI 문서 기준 영상 출력은 480p 또는 720p를 지원합니다.</p>
+            </div>
+          </div>
+          <button type="submit">영상 생성</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" id="v2v">
+      <div class="studio-surface">
+        <div class="result-panel" id="v2vPreview">
+          <div class="empty-state">연장된 영상 결과물이 여기에 표시됩니다.</div>
+        </div>
+        <form class="prompt-panel" data-endpoint="/api/v2v-extend" data-preview="#v2vPreview">
+          <div class="panel-head">
+            <h2>공식 영상 연장</h2>
+            <span>Official Extension API</span>
+          </div>
+          <label>이어붙일 원본 영상</label>
+          <div class="source-picker">
+            <div class="drop-zone" data-file-drop data-media-type="video">
+              <input type="file" name="video" accept="video/mp4,video/webm,video/quicktime" required>
+              <div class="selected-preview">
+                <span class="drop-title">영상을 드래그하거나 선택</span>
+                <small>파일 업로드 또는 라이브러리에서 선택</small>
+              </div>
+            </div>
+            <div class="source-actions">
+              <button type="button" class="secondary" data-trigger-file>파일 업로드</button>
+              <button type="button" class="secondary" data-open-library-picker data-picker-kind="video">라이브러리에서 불러오기</button>
+            </div>
+          </div>
+          <input type="hidden" name="library_video_path">
+          <label>영상 모델</label>
+          <select name="video_model">
+            <option value="grok-imagine-video">Grok 영상</option>
+          </select>
+          <label>연장 프롬프트</label>
+          <textarea name="prompt" id="v2vPrompt" placeholder="예: 이전 장면의 움직임을 이어 카메라가 더 멀리 빠지며 분위기가 이어진다"></textarea>
+          <div class="split-controls">
+            <div>
+              <label>추가 길이(초)</label>
+              <input type="number" name="duration" min="2" max="15" value="6">
+            </div>
+            <div>
+              <label>연결 지점</label>
+              <div class="connect-picker" data-connect-picker>
+                <div class="connect-readout">
+                  <span data-connect-label>영상 끝</span>
+                  <button type="button" class="secondary" data-use-current-time>현재 위치</button>
+                </div>
+                <input type="range" data-connect-slider min="0" max="0" step="0.1" value="0" disabled>
+                <input type="number" name="connect_time" min="0" step="0.1" placeholder="마지막 프레임">
+              </div>
+            </div>
+          </div>
+          <div class="field-note">
+            <label>처리</label>
+            <p>공식 연장은 입력 영상의 해상도와 비율을 유지합니다. 연결 지점을 비우면 영상 끝에서 이어집니다.</p>
+          </div>
+          <button type="submit">공식 연장</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" id="v2vFrame">
+      <div class="studio-surface">
+        <div class="result-panel" id="v2vFramePreview">
+          <div class="empty-state">프레임 기반 연장 결과물이 여기에 표시됩니다.</div>
+        </div>
+        <form class="prompt-panel" data-endpoint="/api/v2v-frame-extend" data-preview="#v2vFramePreview">
+          <div class="panel-head">
+            <h2>프레임 기반 연장</h2>
+            <span>Last Frame + Local Concat</span>
+          </div>
+          <label>이어붙일 원본 영상</label>
+          <div class="source-picker">
+            <div class="drop-zone" data-file-drop data-media-type="video">
+              <input type="file" name="video" accept="video/mp4,video/webm,video/quicktime" required>
+              <div class="selected-preview">
+                <span class="drop-title">영상을 드래그하거나 선택</span>
+                <small>파일 업로드 또는 라이브러리에서 선택</small>
+              </div>
+            </div>
+            <div class="source-actions">
+              <button type="button" class="secondary" data-trigger-file>파일 업로드</button>
+              <button type="button" class="secondary" data-open-library-picker data-picker-kind="video">라이브러리에서 불러오기</button>
+            </div>
+          </div>
+          <input type="hidden" name="library_video_path">
+          <label>영상 모델</label>
+          <select name="video_model">
+            <option value="grok-imagine-video">Grok 영상</option>
+            <option value="grok-imagine-video-1.5-preview">Grok 영상 1.5 preview</option>
+          </select>
+          <label>연장 프롬프트</label>
+          <textarea name="prompt" id="v2vFramePrompt" placeholder="예: 이전 장면의 움직임을 이어 카메라가 더 멀리 빠지며 분위기가 이어진다"></textarea>
+          <div class="split-controls">
+            <div>
+              <label>추가 길이(초)</label>
+              <input type="number" name="duration" min="2" max="15" value="6">
+            </div>
+            <div>
+              <label>해상도</label>
+              <select name="resolution">
+                <option value="720p">720p</option>
+                <option value="480p">480p</option>
+              </select>
+            </div>
+          </div>
+          <div class="split-controls">
+            <div>
+              <label>결과 비율</label>
+              <select name="aspect_ratio">
+                <option value="source">원본</option>
+                <option value="auto">auto</option>
+                <option value="2:3">2:3</option>
+                <option value="3:2">3:2</option>
+                <option value="1:1">1:1</option>
+                <option value="9:16">9:16</option>
+                <option value="16:9">16:9</option>
+              </select>
+            </div>
+            <div class="field-note">
+              <label>처리</label>
+              <p>마지막 프레임을 첫 프레임으로 새 영상을 만들고, 원본 영상 뒤에 ffmpeg로 이어붙입니다.</p>
+            </div>
+          </div>
+          <label class="check-row">
+            <input type="checkbox" name="upscale_frame" value="true" checked>
+            <span>마지막 프레임 2K 업스케일</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" name="mute" value="true">
+            <span>음소거</span>
+          </label>
+          <button type="submit">프레임 연장</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" id="videoEdit">
+      <div class="studio-surface">
+        <div class="result-panel" id="videoEditPreview">
+          <div class="empty-state">편집된 영상 결과물이 여기에 표시됩니다.</div>
+        </div>
+        <form class="prompt-panel" data-endpoint="/api/video-edit" data-preview="#videoEditPreview">
+          <div class="panel-head">
+            <h2>영상 편집</h2>
+            <span>Local Video Editor</span>
+          </div>
+          <label>영상 소스</label>
+          <div class="source-picker video-edit-source">
+            <div class="drop-zone" data-file-drop data-media-type="video">
+              <input type="file" name="videos" accept="video/mp4,video/webm,video/quicktime" multiple required>
+              <div class="selected-preview">
+                <span class="drop-title">영상을 드래그하거나 선택</span>
+                <small>여러 파일을 한 번에 선택하거나 라이브러리에서 순서대로 추가</small>
+              </div>
+            </div>
+            <div class="source-actions">
+              <button type="button" class="secondary" data-trigger-file>파일 업로드</button>
+              <button type="button" class="secondary" data-open-library-picker data-picker-kind="video">라이브러리에서 추가</button>
+              <button type="button" class="secondary" data-clear-video-edit>초기화</button>
+            </div>
+            <div class="video-track-list" data-video-track-list>
+              <div class="video-track-empty">영상을 순서대로 추가해 주세요.</div>
+            </div>
+          </div>
+          <div data-library-video-paths hidden></div>
+          <label>결과 이름</label>
+          <input type="text" name="title" value="영상 편집" placeholder="라이브러리에 표시될 이름">
+          <div class="split-controls">
+            <div>
+              <label>연결 방식</label>
+              <select name="transition">
+                <option value="cut">일반 병합</option>
+                <option value="crossfade">크로스페이드</option>
+              </select>
+            </div>
+            <div>
+              <label>크로스페이드(초)</label>
+              <input type="number" name="crossfade" min="0" max="5" step="0.1" value="0.5">
+            </div>
+          </div>
+          <div class="split-controls">
+            <div>
+              <label>페이드 인(초)</label>
+              <input type="number" name="fade_in" min="0" max="10" step="0.1" value="0">
+            </div>
+            <div>
+              <label>페이드 아웃(초)</label>
+              <input type="number" name="fade_out" min="0" max="10" step="0.1" value="0">
+            </div>
+          </div>
+          <div class="split-controls">
+            <div>
+              <label>결과 비율</label>
+              <select name="aspect_ratio">
+                <option value="source">원본</option>
+                <option value="16:9">16:9</option>
+                <option value="9:16">9:16</option>
+                <option value="1:1">1:1</option>
+                <option value="2:3">2:3</option>
+                <option value="3:2">3:2</option>
+              </select>
+            </div>
+            <div>
+              <label>해상도</label>
+              <select name="resolution">
+                <option value="source">원본</option>
+                <option value="720p">720p</option>
+                <option value="480p">480p</option>
+              </select>
+            </div>
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" name="mute" value="true" checked>
+            <span>오디오 제거</span>
+          </label>
+          <button type="submit">영상 편집</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" id="mangaBatch">
+      <div class="studio-surface">
+        <div class="result-panel" id="mangaBatchPreview">
+          <div class="empty-state">배치 처리 결과물이 여기에 표시됩니다.</div>
+        </div>
+        <form class="prompt-panel" data-endpoint="/api/manga-batch" data-preview="#mangaBatchPreview" data-batch-result="true">
+          <div class="panel-head">
+            <h2>망가 실사화·역식</h2>
+            <span>Batch Image Edit</span>
+          </div>
+          <label>원본 이미지</label>
+          <div class="drop-zone" data-file-drop data-batch-images>
+            <input type="file" name="images" accept="image/png,image/jpeg,image/webp" multiple required>
+            <div class="selected-preview">
+              <span class="drop-title">망가 이미지를 여러 장 드래그하거나 선택</span>
+              <small>최대 500장, 기본 50개 병렬 처리</small>
+            </div>
+          </div>
+          <label>인물·의상 레퍼런스</label>
+          <div class="drop-zone" data-file-drop>
+            <input type="file" name="references" accept="image/png,image/jpeg,image/webp" multiple>
+            <div class="selected-preview">
+              <span class="drop-title">레퍼런스 이미지를 선택</span>
+              <small>컷 분리 실사화에서 외모, 색상, 의상 참고용으로 사용</small>
+            </div>
+          </div>
+          <div class="batch-file-list" data-batch-file-list>
+            <div class="video-track-empty">선택된 이미지가 없습니다.</div>
+          </div>
+          <button type="button" class="secondary" data-clear-batch-files>전체 취소</button>
+          <div class="split-controls">
+            <div>
+              <label>처리 방식</label>
+              <select name="mode">
+                <option value="live_translate">실사화 + 역식</option>
+                <option value="live">실사화만</option>
+                <option value="translate">역식만</option>
+                <option value="panel_realize">컷 분리 실사화</option>
+              </select>
+            </div>
+            <div>
+              <label>번역 언어</label>
+              <input type="text" name="target_language" value="Korean">
+            </div>
+          </div>
+          <div class="split-controls">
+            <div>
+              <label>결과 비율</label>
+              <select name="aspect_ratio">
+                <option value="auto">auto</option>
+                <option value="source">원본</option>
+                <option value="2:3">2:3</option>
+                <option value="3:2">3:2</option>
+                <option value="1:1">1:1</option>
+                <option value="9:16">9:16</option>
+                <option value="16:9">16:9</option>
+              </select>
+            </div>
+            <div>
+              <label>병렬 처리 수</label>
+              <input type="number" name="parallel" min="1" max="50" value="50">
+            </div>
+          </div>
+          <label>실험 해상도</label>
+          <select name="image_resolution">
+            <option value="auto">auto</option>
+            <option value="1k">1k</option>
+            <option value="2k">2k</option>
+          </select>
+          <label class="check-row">
+            <input type="checkbox" name="use_builtin_prompt" value="true" data-manga-builtin-toggle checked>
+            <span>내장 실사화·역식 프롬프트 사용</span>
+          </label>
+          <label>내장 프롬프트</label>
+          <textarea name="builtin_prompt" data-manga-builtin-prompt placeholder="내장 프롬프트를 불러오거나 직접 수정할 수 있습니다."></textarea>
+          <div class="button-row">
+            <button type="button" class="secondary" id="loadMangaBuiltinPrompt">내장 프롬프트 불러오기</button>
+            <button type="button" class="secondary" id="clearMangaBuiltinPrompt">비우기</button>
+          </div>
+          <label>추가 지시</label>
+          <textarea name="prompt" placeholder="예: 인물 얼굴과 의상은 원작 느낌을 유지하고, 말풍선 텍스트는 자연스러운 한국어로 식자"></textarea>
+          <button type="submit">배치 처리</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" id="reverse">
+      <div class="studio-surface">
+        <div class="result-panel prompt-result">
+          <textarea id="reverseOutput" readonly placeholder="추출된 프롬프트가 여기에 표시됩니다."></textarea>
+          <div class="button-row">
+            <button type="button" id="copyReverseOutput">복사</button>
+          </div>
+        </div>
+        <form class="prompt-panel" id="reverseForm" data-endpoint="/api/reverse-prompt">
+          <div class="panel-head">
+            <h2>그림 → 프롬프트</h2>
+            <span>Reverse Prompt</span>
+          </div>
+          <label>분석할 이미지</label>
+          <div class="drop-zone" data-file-drop>
+            <input type="file" name="image" accept="image/png,image/jpeg,image/webp" required>
+            <div class="selected-preview">
+              <span class="drop-title">이미지를 드래그하거나 붙여넣기</span>
+              <small>클릭해서 파일 선택도 가능합니다.</small>
+            </div>
+          </div>
+          <button type="submit">프롬프트 추출</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" id="library">
+      <div class="library-sticky-head">
+        <div class="library-toolbar">
+          <div>
+            <h2>라이브러리</h2>
+            <p>결과물을 선택하고 프롬프트를 다시 사용할 수 있습니다.</p>
+          </div>
+          <div class="button-row">
+            <button type="button" id="openMediaFolder" class="secondary">저장 폴더 열기</button>
+            <button type="button" id="refreshLibrary">새로고침</button>
+            <button type="button" id="deleteSelected" class="danger-btn">선택 삭제</button>
+          </div>
+        </div>
+        <div class="library-browse-bar">
+          <input type="search" id="librarySearch" placeholder="검색">
+          <select id="libraryFilter" aria-label="라이브러리 필터">
+            <option value="all">전체</option>
+            <option value="favorite">즐겨찾기</option>
+            <option value="image">이미지</option>
+            <option value="video">영상</option>
+            <option value="manga">망가 작업</option>
+          </select>
+          <select id="libraryOperationFilter" aria-label="작업 필터">
+            <option value="all">모든 작업</option>
+          </select>
+          <select id="libraryDateFilter" aria-label="날짜 필터">
+            <option value="all">전체 날짜</option>
+            <option value="today">오늘</option>
+            <option value="yesterday">어제</option>
+            <option value="7d">최근 7일</option>
+            <option value="month">이번 달</option>
+            <option value="custom">날짜 지정</option>
+          </select>
+          <input type="date" id="libraryDateInput" hidden>
+          <select id="librarySort" aria-label="정렬">
+            <option value="newest">최신순</option>
+            <option value="oldest">오래된순</option>
+            <option value="filename">파일명순</option>
+            <option value="favorite">즐겨찾기순</option>
+            <option value="resolution">해상도순</option>
+          </select>
+          <select id="libraryView" aria-label="보기 방식">
+            <option value="grid">그리드</option>
+            <option value="timeline">타임라인</option>
+            <option value="chain">연결 보기</option>
+          </select>
+          <select id="libraryThumbSize" aria-label="썸네일 크기">
+            <option value="small">작게</option>
+            <option value="medium">보통</option>
+            <option value="large">크게</option>
+          </select>
+          <select id="libraryPageSize" aria-label="표시 개수">
+            <option value="40">40개</option>
+            <option value="80">80개</option>
+            <option value="160">160개</option>
+            <option value="300">300개</option>
+            <option value="500">500개</option>
+          </select>
+          <button type="button" id="libraryJumpStart" class="secondary">처음</button>
+          <button type="button" id="libraryJumpEnd" class="secondary">최신</button>
+          <span class="library-stats" id="libraryStats"></span>
+        </div>
+      </div>
+      <div class="grid" id="libraryGrid"></div>
+    </section>
+
+    <section class="panel" id="settings">
+      <div class="settings-grid">
+        <div class="settings-card">
+          <h2>Provider</h2>
+          <form id="providerForm" class="inline-form">
+            <label>호출 방식</label>
+            <select name="provider" id="providerMode">
+              <option value="hermes_proxy">Hermes Agent Proxy</option>
+              <option value="direct">직접 xAI/OAuth</option>
+            </select>
+            <label>Hermes Proxy Base URL</label>
+            <input type="text" name="hermes_base_url" id="hermesBaseUrl" placeholder="예: http://127.0.0.1:3000/v1">
+            <label>Hermes Proxy Token</label>
+            <input type="password" name="hermes_api_key" autocomplete="off" placeholder="필요한 경우에만 입력">
+            <label class="check-row">
+              <input type="checkbox" name="clear_hermes_api_key" value="true">
+              <span>저장된 Hermes Token 지우기</span>
+            </label>
+            <div class="button-row">
+              <button type="submit">Provider 저장</button>
+              <button type="button" id="testHermesProxy" class="secondary">Hermes 연결 테스트</button>
+            </div>
+          </form>
+          <p class="note">Version 2는 Hermes Agent가 OAuth 인증과 Grok 호출을 담당하고, 이 앱은 Proxy endpoint만 호출하는 구성을 권장합니다.</p>
+        </div>
+        <div class="settings-card">
+          <h2>직접 OAuth 로그인</h2>
+          <a class="button-link login-wide" href="/api/auth/oauth/start" target="_blank" rel="noreferrer">브라우저로 Grok OAuth 로그인</a>
+          <form id="loginForm" class="inline-form">
+            <label>xAI API 키</label>
+            <input type="password" name="api_key" autocomplete="off" placeholder="필요할 때만 붙여넣기">
+            <div class="button-row">
+              <button type="submit">API 키 연결</button>
+              <button type="button" id="logoutButton" class="secondary">로그아웃</button>
+            </div>
+          </form>
+        </div>
+        <div class="settings-card">
+          <h2>무료 크레딧·토큰</h2>
+          <p class="note">Grok OAuth 사용량과 무료 크레딧 잔량은 Grok 공식 웹의 Usage 화면에서 확인할 수 있습니다.</p>
+          <a class="button-link login-wide secondary" href="https://grok.com/?_s=usage" target="_blank" rel="noreferrer">Grok 공식 Usage 열기</a>
+        </div>
+        <div class="settings-card">
+          <h2>저장 경로</h2>
+          <form id="mediaRootForm" class="inline-form">
+            <label>결과물 저장 폴더</label>
+            <input type="text" name="media_root" id="mediaRootInput" placeholder="예: C:\Users\aiguy\Pictures\WebGork">
+            <div class="button-row">
+              <button type="button" id="browseMediaRoot" class="secondary">파일 브라우저로 선택</button>
+              <button type="submit">저장 경로 적용</button>
+            </div>
+          </form>
+          <p class="note">이미지, 영상, 업로드 원본, 메타데이터가 이 폴더 아래에 저장됩니다.</p>
+        </div>
+        <div class="settings-card">
+          <h2>상태</h2>
+          <dl id="settingsList"></dl>
+        </div>
+        <div class="settings-card">
+          <h2>오류 로그</h2>
+          <p class="note">최근 오류를 팝업으로 열어 복사할 수 있습니다.</p>
+          <button type="button" id="showErrorLog" class="secondary wide-button">오류 로그 보기</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <section class="queue-dock" aria-label="작업 큐">
+    <div class="queue-head">
+      <div>
+        <h2>Queue</h2>
+        <p id="queueSummary">대기 중인 작업이 없습니다.</p>
+      </div>
+      <div class="button-row">
+        <button type="button" id="clearDoneJobs" class="secondary">완료 정리</button>
+      </div>
+    </div>
+    <div class="queue-list" id="queueList"></div>
+  </section>
+
+  <div class="toast" id="toast" hidden></div>
+  <dialog class="error-modal" id="errorModal">
+    <div class="modal-head">
+      <h2>오류 로그</h2>
+      <button type="button" id="closeErrorModal" class="icon-button">×</button>
+    </div>
+    <textarea id="errorLogText" readonly></textarea>
+    <div class="button-row">
+      <button type="button" id="copyErrorLog">복사</button>
+    </div>
+  </dialog>
+  <dialog class="picker-modal" id="libraryPickerModal">
+    <div class="modal-head">
+      <h2 id="libraryPickerTitle">라이브러리 이미지 선택</h2>
+      <button type="button" id="closeLibraryPicker" class="icon-button">×</button>
+    </div>
+    <div class="picker-toolbar">
+      <input type="search" id="pickerSearch" placeholder="검색">
+      <select id="pickerFavoriteFilter" aria-label="즐겨찾기 필터">
+        <option value="all">전체</option>
+        <option value="favorite">즐겨찾기</option>
+      </select>
+      <select id="pickerOperationFilter" aria-label="작업 필터">
+        <option value="all">모든 작업</option>
+      </select>
+      <select id="pickerDateFilter" aria-label="날짜 필터">
+        <option value="all">전체 날짜</option>
+        <option value="today">오늘</option>
+        <option value="yesterday">어제</option>
+        <option value="7d">최근 7일</option>
+        <option value="month">이번 달</option>
+        <option value="custom">날짜 지정</option>
+      </select>
+      <input type="date" id="pickerDateInput" hidden>
+      <select id="pickerSort" aria-label="정렬">
+        <option value="newest">최신순</option>
+        <option value="oldest">오래된순</option>
+        <option value="filename">파일명순</option>
+        <option value="favorite">즐겨찾기순</option>
+        <option value="resolution">해상도순</option>
+      </select>
+      <select id="pickerThumbSize" aria-label="썸네일 크기">
+        <option value="small">작게</option>
+        <option value="medium">보통</option>
+        <option value="large">크게</option>
+      </select>
+      <select id="pickerPageSize" aria-label="표시 개수">
+        <option value="40">40개</option>
+        <option value="80">80개</option>
+        <option value="160">160개</option>
+        <option value="300">300개</option>
+        <option value="500">500개</option>
+      </select>
+      <span class="picker-stats" id="pickerStats"></span>
+    </div>
+    <div class="picker-grid" id="libraryPickerGrid"></div>
+  </dialog>
+  <div class="prompt-viewer" id="promptViewer" hidden>
+    <div class="prompt-viewer-panel">
+      <div class="prompt-viewer-text" id="promptViewerText"></div>
+      <button type="button" id="copyPromptViewer">프롬프트 복사</button>
+    </div>
+  </div>
+  <dialog class="media-viewer" id="mediaViewer">
+    <div class="media-viewer-stage"></div>
+  </dialog>
+  <script src="/static/app.js?v=20260602-v2-83"></script>
+</body>
+</html>
