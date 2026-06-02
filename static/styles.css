@@ -881,6 +881,29 @@ input[type="range"] {
   background: rgba(255, 255, 255, .025);
 }
 
+.queue-count-box {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(82px, 112px);
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(235, 239, 244, .10);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .026);
+}
+
+.queue-count-box label {
+  margin: 0;
+  color: rgba(245, 245, 242, .72);
+  font-size: 12px;
+}
+
+.queue-count-box select {
+  min-height: 32px !important;
+  padding: 5px 8px !important;
+}
+
 .prompt-planner-head {
   display: flex;
   align-items: center;

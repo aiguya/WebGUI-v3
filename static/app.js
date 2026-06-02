@@ -70,6 +70,14 @@ const multiVideoSources = new WeakMap();
 const jobQueue = [];
 let activeJobs = 0;
 const maxActiveJobs = 30;
+const maxQueueCopies = 20;
+const repeatableQueueEndpoints = new Set([
+  "/api/t2i",
+  "/api/i2i",
+  "/api/i2v",
+  "/api/v2v-extend",
+  "/api/v2v-frame-extend",
+]);
 const batchMaxImages = 500;
 let pendingErrorLog = null;
 let lastQuotaRefresh = 0;
@@ -756,6 +764,55 @@ function updateJob(job, patch) {
   renderQueue();
 }
 
+function installQueueCountControl(form) {
+  if (!repeatableQueueEndpoints.has(form.dataset.endpoint) || form.querySelector("[data-queue-count-box]")) return;
+  const submitButton = form.querySelector("button[type='submit']");
+  if (!submitButton) return;
+  const box = document.createElement("div");
+  box.className = "queue-count-box";
+  box.dataset.queueCountBox = "true";
+  box.innerHTML = `
+    <label>동시 생성</label>
+    <select name="queue_count" data-queue-count></select>`;
+  const select = box.querySelector("[data-queue-count]");
+  for (let value = 1; value <= maxQueueCopies; value += 1) {
+    const option = document.createElement("option");
+    option.value = String(value);
+    option.textContent = `${value}개`;
+    select.appendChild(option);
+  }
+  submitButton.insertAdjacentElement("beforebegin", box);
+}
+
+function queueCopyCount(form) {
+  const field = form.querySelector("[data-queue-count]");
+  const count = Number.parseInt(field?.value || "1", 10);
+  const clamped = Math.max(1, Math.min(maxQueueCopies, Number.isFinite(count) ? count : 1));
+  if (field) field.value = String(clamped);
+  return clamped;
+}
+
+function cloneJobOptions(options) {
+  const cloned = {
+    method: options.method,
+    headers: options.headers ? { ...options.headers } : undefined,
+  };
+  if (options.body instanceof FormData) {
+    const body = new FormData();
+    options.body.forEach((value, key) => {
+      if (value instanceof File) {
+        body.append(key, value, value.name);
+      } else {
+        body.append(key, value);
+      }
+    });
+    cloned.body = body;
+  } else {
+    cloned.body = options.body;
+  }
+  return cloned;
+}
+
 async function buildJobRequest(form) {
   let body;
   let referenceUrl = null;
@@ -779,7 +836,7 @@ async function buildJobRequest(form) {
       body.set("prompt", prompt);
       body.set("aspect_ratio", form.querySelector("[name='aspect_ratio']").value);
       form.querySelectorAll("input, select, textarea").forEach(field => {
-        if (!field.name || ["prompt", "aspect_ratio", "image", "library_image_path", "library_image_paths", "image_source_order"].includes(field.name)) return;
+        if (!field.name || ["prompt", "aspect_ratio", "image", "library_image_path", "library_image_paths", "image_source_order", "queue_count"].includes(field.name)) return;
         if (field.type === "checkbox") {
           if (field.checked) body.set(field.name, field.value || "true");
           return;
@@ -832,6 +889,7 @@ async function buildJobRequest(form) {
       if (frame) body.set("last_frame", frame);
     }
   }
+  if (body instanceof FormData) body.delete("queue_count");
   options.body = body;
   return { options, prompt, referenceUrl };
 }
@@ -842,25 +900,29 @@ async function enqueueForm(form) {
   button.disabled = true;
   button.textContent = "큐에 추가 중";
   try {
+    const count = queueCopyCount(form);
     const request = await buildJobRequest(form);
     const type = endpointLabel(form.dataset.endpoint);
-    const job = {
-      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
-      type,
-      shortType: type.split(" ")[0],
-      status: "queued",
-      endpoint: form.dataset.endpoint,
-      previewSelector: form.dataset.preview,
-      referenceUrl: request.referenceUrl,
-      options: request.options,
-      prompt: request.prompt,
-      result: null,
-      error: null,
-    };
-    jobQueue.unshift(job);
+    for (let index = 1; index <= count; index += 1) {
+      const jobType = count > 1 ? `${type} ${index}/${count}` : type;
+      const job = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+        type: jobType,
+        shortType: type.split(" ")[0],
+        status: "queued",
+        endpoint: form.dataset.endpoint,
+        previewSelector: form.dataset.preview,
+        referenceUrl: request.referenceUrl,
+        options: cloneJobOptions(request.options),
+        prompt: request.prompt,
+        result: null,
+        error: null,
+      };
+      jobQueue.unshift(job);
+    }
     renderQueue();
     processQueue();
-    showToast("큐에 추가했습니다.");
+    showToast(count > 1 ? `큐에 ${count}개 추가했습니다.` : "큐에 추가했습니다.");
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -949,6 +1011,7 @@ async function pollMangaBatch(job, batchId, progress) {
 
 document.querySelectorAll("form[data-endpoint]").forEach(form => {
   installPromptPlannerControls(form);
+  installQueueCountControl(form);
   updateGrokResolutionControls(form);
   form.querySelector("[name='image_model']")?.addEventListener("change", () => updateGrokResolutionControls(form));
   form.querySelector("[name='video_model']")?.addEventListener("change", () => enforceI2vReferenceLimit(form, true));
