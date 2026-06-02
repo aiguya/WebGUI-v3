@@ -35,6 +35,9 @@ venv/
 server*.log
 v2-server*.log
 launch-test.txt
+artifacts/
+.chrome-v3-preview-profile/
+.chrome-v3-preview-profile-visible/
 
 # OS/editor noise
 .DS_Store
