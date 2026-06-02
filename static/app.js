@@ -63,6 +63,9 @@ let promptSearch = "";
 let promptTaskFilter = "all";
 let promptFavoriteFilter = "all";
 let promptAutoValue = "";
+let templateItems = [];
+let templateSelectedId = "";
+let templateSearch = "";
 let pickerVisibleCount = 80;
 let pickerPageSize = 80;
 const multiImageSources = new WeakMap();
@@ -151,6 +154,10 @@ const tabIcons = {
     label: "프롬프트",
     html: iconSvg(`<path d="M5 4h14v16H5z"></path><path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path><path d="m16 16 1.2 1.2L20 14"></path>`),
   },
+  templates: {
+    label: "영상 템플릿",
+    html: iconSvg(`<path d="M4 5h16v14H4z"></path><path d="M8 5v14M16 5v14"></path><path d="M4 9h4M4 15h4M16 9h4M16 15h4"></path><path d="m10.5 10 3 2-3 2Z"></path>`),
+  },
   library: {
     label: "라이브러리",
     html: iconSvg(`<rect x="4" y="3" width="4" height="18"></rect><rect x="10" y="3" width="4" height="18"></rect><rect x="16" y="3" width="4" height="18"></rect><path d="M4 8h4M10 8h4M16 8h4M4 17h4M10 17h4M16 17h4"></path>`),
@@ -226,6 +233,7 @@ function activateTab(id) {
   panels.forEach(panel => panel.classList.toggle("active", panel.id === id));
   if (id === "library") loadLibrary();
   if (id === "prompts") loadPromptManager();
+  if (id === "templates") loadTemplateManager();
   if (id === "settings") {
     loadHealth();
   }
@@ -2073,6 +2081,504 @@ document.querySelector("#sendManagedPrompt")?.addEventListener("click", () => {
 document.querySelector("#savePromptViewer")?.addEventListener("click", event => {
   event.stopPropagation();
   savePromptFromViewer().catch(error => showToast(error.message, true));
+});
+
+const templateMethodLabels = {
+  i2v: "이미지→영상",
+  frame: "프레임 연장",
+  official: "공식 연장",
+  image: "이미지 생성",
+  edit: "이미지 편집",
+};
+
+const templateTransitionLabels = {
+  cut: "컷",
+  fade: "페이드",
+  crossfade: "크로스페이드",
+  fade_in: "페이드 인",
+  fade_out: "페이드 아웃",
+};
+
+function videoTemplateForm() {
+  return document.querySelector("#videoTemplateForm");
+}
+
+function templateDefaultItem(seed = {}) {
+  return {
+    id: seed.id || "",
+    title: seed.title || "",
+    description: seed.description || "",
+    genre: seed.genre || "",
+    tags: seed.tags || [],
+    global_prompt: seed.global_prompt || "배우의 얼굴, 헤어스타일, 체형, 의상 톤을 일관되게 유지한다. 영화적인 조명과 자연스러운 움직임을 사용한다.",
+    negative_prompt: seed.negative_prompt || "얼굴 변형, 다른 인물로 변경, 과도한 손가락 왜곡, 어색한 눈과 치아, 갑작스러운 의상 변경을 피한다.",
+    variables: seed.variables || [
+      { key: "mood", label: "분위기", default: "몽환적인" },
+      { key: "location", label: "장소", default: "네온이 비치는 밤거리" },
+      { key: "outfit", label: "의상", default: "검은 코트" },
+    ],
+    slots: seed.slots || [
+      { key: "main_actor", label: "주연 배우", kind: "image", note: "얼굴과 헤어스타일 기준 사진" },
+      { key: "location_ref", label: "장소 레퍼런스", kind: "image", note: "장소 분위기 참고 이미지" },
+    ],
+    shots: seed.shots || [
+      {
+        id: "",
+        title: "오프닝 클로즈업",
+        method: "i2v",
+        duration: 6,
+        reference_slot: "main_actor",
+        prompt: "{{main_actor}}가 {{location}}에서 카메라를 바라본다. {{mood}} 분위기, {{outfit}}.",
+        camera: "천천히 앞으로 다가가는 클로즈업",
+        transition: "fade_in",
+        retry_prompt: "",
+        notes: "",
+      },
+      {
+        id: "",
+        title: "움직임 연결",
+        method: "frame",
+        duration: 6,
+        reference_slot: "main_actor",
+        prompt: "이전 장면의 감정과 자세를 이어서, {{main_actor}}가 천천히 걸어간다.",
+        camera: "측면 트래킹 샷",
+        transition: "crossfade",
+        retry_prompt: "",
+        notes: "",
+      },
+    ],
+    settings: {
+      target_duration: seed.settings?.target_duration || 60,
+      aspect_ratio: seed.settings?.aspect_ratio || "9:16",
+      resolution: seed.settings?.resolution || "720p",
+      default_method: seed.settings?.default_method || "i2v",
+      default_shot_duration: seed.settings?.default_shot_duration || 6,
+    },
+  };
+}
+
+function templateOptionList(labels, selected) {
+  return Object.entries(labels)
+    .map(([value, label]) => `<option value="${escapeHtml(value)}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`)
+    .join("");
+}
+
+function renderTemplateVariables(items = []) {
+  const list = document.querySelector("#templateVariables");
+  if (!list) return;
+  list.innerHTML = items.map(item => `
+    <div class="template-mini-row" data-template-variable>
+      <input type="text" data-var-key placeholder="key" value="${escapeHtml(item.key || "")}">
+      <input type="text" data-var-label placeholder="라벨" value="${escapeHtml(item.label || "")}">
+      <input type="text" data-var-default placeholder="기본값" value="${escapeHtml(item.default || "")}">
+      <button type="button" class="icon-button" data-remove-template-row aria-label="삭제">×</button>
+    </div>
+  `).join("");
+}
+
+function renderTemplateSlots(items = []) {
+  const list = document.querySelector("#templateSlots");
+  if (!list) return;
+  list.innerHTML = items.map(item => `
+    <div class="template-mini-row template-slot-row" data-template-slot>
+      <input type="text" data-slot-key placeholder="slot_key" value="${escapeHtml(item.key || "")}">
+      <input type="text" data-slot-label placeholder="슬롯 이름" value="${escapeHtml(item.label || "")}">
+      <select data-slot-kind>
+        <option value="image"${(item.kind || "image") === "image" ? " selected" : ""}>이미지</option>
+        <option value="video"${item.kind === "video" ? " selected" : ""}>영상</option>
+        <option value="text"${item.kind === "text" ? " selected" : ""}>텍스트</option>
+      </select>
+      <input type="text" data-slot-note placeholder="설명" value="${escapeHtml(item.note || "")}">
+      <button type="button" class="icon-button" data-remove-template-row aria-label="삭제">×</button>
+    </div>
+  `).join("");
+}
+
+function renderTemplateShots(items = []) {
+  const list = document.querySelector("#templateShots");
+  if (!list) return;
+  list.innerHTML = items.map((item, index) => `
+    <article class="template-shot-card" data-template-shot>
+      <input type="hidden" data-shot-id value="${escapeHtml(item.id || "")}">
+      <div class="template-shot-head">
+        <span>${String(index + 1).padStart(2, "0")}</span>
+        <input type="text" data-shot-title placeholder="컷 이름" value="${escapeHtml(item.title || `컷 ${index + 1}`)}">
+        <button type="button" class="icon-button" data-move-shot-up aria-label="위로">↑</button>
+        <button type="button" class="icon-button" data-move-shot-down aria-label="아래로">↓</button>
+        <button type="button" class="icon-button" data-duplicate-shot aria-label="복제">⧉</button>
+        <button type="button" class="icon-button" data-remove-template-row aria-label="삭제">×</button>
+      </div>
+      <div class="template-shot-grid">
+        <div>
+          <label>방식</label>
+          <select data-shot-method>${templateOptionList(templateMethodLabels, item.method || "i2v")}</select>
+        </div>
+        <div>
+          <label>길이</label>
+          <input type="number" data-shot-duration min="1" max="15" step="0.1" value="${escapeHtml(item.duration || 6)}">
+        </div>
+        <div>
+          <label>참조 슬롯</label>
+          <input type="text" data-shot-reference placeholder="main_actor" value="${escapeHtml(item.reference_slot || "")}">
+        </div>
+        <div>
+          <label>전환</label>
+          <select data-shot-transition>${templateOptionList(templateTransitionLabels, item.transition || "cut")}</select>
+        </div>
+      </div>
+      <label>컷 프롬프트</label>
+      <textarea data-shot-prompt placeholder="{{main_actor}}가 {{location}}에서 움직인다.">${escapeHtml(item.prompt || "")}</textarea>
+      <label>카메라</label>
+      <input type="text" data-shot-camera placeholder="예: 느린 돌리 인, 핸드헬드, 측면 트래킹" value="${escapeHtml(item.camera || "")}">
+      <label>실패 시 재시도 프롬프트</label>
+      <textarea data-shot-retry placeholder="실패한 컷을 재시도할 때 쓸 대체 지시">${escapeHtml(item.retry_prompt || "")}</textarea>
+      <label>메모</label>
+      <textarea data-shot-notes placeholder="작업자가 기억할 참고 사항">${escapeHtml(item.notes || "")}</textarea>
+    </article>
+  `).join("");
+}
+
+function collectTemplateVariables() {
+  return Array.from(document.querySelectorAll("[data-template-variable]")).map(row => ({
+    key: row.querySelector("[data-var-key]")?.value || "",
+    label: row.querySelector("[data-var-label]")?.value || "",
+    default: row.querySelector("[data-var-default]")?.value || "",
+  })).filter(item => item.key.trim() || item.label.trim() || item.default.trim());
+}
+
+function collectTemplateSlots() {
+  return Array.from(document.querySelectorAll("[data-template-slot]")).map(row => ({
+    key: row.querySelector("[data-slot-key]")?.value || "",
+    label: row.querySelector("[data-slot-label]")?.value || "",
+    kind: row.querySelector("[data-slot-kind]")?.value || "image",
+    note: row.querySelector("[data-slot-note]")?.value || "",
+  })).filter(item => item.key.trim() || item.label.trim() || item.note.trim());
+}
+
+function collectTemplateShots() {
+  return Array.from(document.querySelectorAll("[data-template-shot]")).map((row, index) => ({
+    id: row.querySelector("[data-shot-id]")?.value || "",
+    order: index + 1,
+    title: row.querySelector("[data-shot-title]")?.value || `컷 ${index + 1}`,
+    method: row.querySelector("[data-shot-method]")?.value || "i2v",
+    duration: Number.parseFloat(row.querySelector("[data-shot-duration]")?.value || "6") || 6,
+    reference_slot: row.querySelector("[data-shot-reference]")?.value || "",
+    transition: row.querySelector("[data-shot-transition]")?.value || "cut",
+    prompt: row.querySelector("[data-shot-prompt]")?.value || "",
+    camera: row.querySelector("[data-shot-camera]")?.value || "",
+    retry_prompt: row.querySelector("[data-shot-retry]")?.value || "",
+    notes: row.querySelector("[data-shot-notes]")?.value || "",
+  })).filter(item => item.title.trim() || item.prompt.trim());
+}
+
+function templatePayloadFromEditor() {
+  const form = videoTemplateForm();
+  const settings = {
+    target_duration: Number.parseInt(form?.elements.target_duration?.value || "60", 10) || 60,
+    aspect_ratio: form?.elements.aspect_ratio?.value || "9:16",
+    resolution: form?.elements.resolution?.value || "720p",
+    default_method: form?.elements.default_method?.value || "i2v",
+    default_shot_duration: Number.parseFloat(form?.elements.default_shot_duration?.value || "6") || 6,
+  };
+  return {
+    id: form?.elements.id?.value || "",
+    title: form?.elements.title?.value || "",
+    description: form?.elements.description?.value || "",
+    genre: form?.elements.genre?.value || "",
+    tags: form?.elements.tags?.value || "",
+    global_prompt: form?.elements.global_prompt?.value || "",
+    negative_prompt: form?.elements.negative_prompt?.value || "",
+    settings,
+    variables: collectTemplateVariables(),
+    slots: collectTemplateSlots(),
+    shots: collectTemplateShots(),
+  };
+}
+
+function substituteTemplateText(text, variables, slots) {
+  const variableMap = Object.fromEntries(variables.map(item => [String(item.key || "").trim(), item.default || ""]));
+  const slotMap = Object.fromEntries(slots.map(item => [String(item.key || "").trim(), item.label || item.key || "레퍼런스"]));
+  return String(text || "").replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (match, key) => {
+    if (Object.prototype.hasOwnProperty.call(variableMap, key)) return variableMap[key] || match;
+    if (Object.prototype.hasOwnProperty.call(slotMap, key)) return `[${slotMap[key]}]`;
+    return match;
+  });
+}
+
+function templateShotPromptText(payload, shot) {
+  const variables = payload.variables || [];
+  const slots = payload.slots || [];
+  const chunks = [
+    payload.global_prompt,
+    shot.prompt,
+    shot.camera ? `카메라: ${shot.camera}` : "",
+    shot.reference_slot ? `참조 슬롯: {{${shot.reference_slot}}}` : "",
+    payload.negative_prompt ? `제외/주의: ${payload.negative_prompt}` : "",
+  ].filter(Boolean);
+  return substituteTemplateText(chunks.join("\n"), variables, slots);
+}
+
+function renderTemplatePreview() {
+  const payload = templatePayloadFromEditor();
+  const stats = document.querySelector("#templatePreviewStats");
+  const preview = document.querySelector("#templatePreview");
+  const totalDuration = payload.shots.reduce((sum, shot) => sum + (Number(shot.duration) || 0), 0);
+  if (stats) {
+    stats.innerHTML = `
+      <span>${payload.shots.length} 컷</span>
+      <span>${Math.round(totalDuration * 10) / 10}초</span>
+      <span>요청 ${payload.shots.length}개 예상</span>
+      <span>${escapeHtml(payload.settings.aspect_ratio)} · ${escapeHtml(payload.settings.resolution)}</span>
+    `;
+  }
+  if (!preview) return;
+  if (!payload.shots.length) {
+    preview.innerHTML = `<p class="template-empty">컷을 추가하면 적용 미리보기가 표시됩니다.</p>`;
+    return;
+  }
+  preview.innerHTML = payload.shots.map((shot, index) => {
+    const prompt = templateShotPromptText(payload, shot);
+    return `
+      <article class="template-preview-shot">
+        <header>
+          <strong>${String(index + 1).padStart(2, "0")} · ${escapeHtml(shot.title || "컷")}</strong>
+          <span>${escapeHtml(templateMethodLabels[shot.method] || shot.method)} · ${escapeHtml(String(shot.duration || 0))}초 · ${escapeHtml(templateTransitionLabels[shot.transition] || shot.transition)}</span>
+        </header>
+        <pre>${escapeHtml(prompt)}</pre>
+      </article>
+    `;
+  }).join("");
+}
+
+function setTemplateEditorItem(item = {}) {
+  const form = videoTemplateForm();
+  if (!form) return;
+  const data = templateDefaultItem(item);
+  form.elements.id.value = data.id || "";
+  form.elements.title.value = data.title || "";
+  form.elements.description.value = data.description || "";
+  form.elements.genre.value = data.genre || "";
+  form.elements.tags.value = (data.tags || []).join(", ");
+  form.elements.target_duration.value = data.settings.target_duration || 60;
+  form.elements.default_shot_duration.value = data.settings.default_shot_duration || 6;
+  form.elements.aspect_ratio.value = data.settings.aspect_ratio || "9:16";
+  form.elements.resolution.value = data.settings.resolution || "720p";
+  form.elements.default_method.value = data.settings.default_method || "i2v";
+  form.elements.global_prompt.value = data.global_prompt || "";
+  form.elements.negative_prompt.value = data.negative_prompt || "";
+  renderTemplateVariables(data.variables || []);
+  renderTemplateSlots(data.slots || []);
+  renderTemplateShots(data.shots || []);
+  templateSelectedId = data.id || "";
+  const meta = document.querySelector("#templateEditorMeta");
+  if (meta) {
+    const total = data.stats?.total_duration ?? (data.shots || []).reduce((sum, shot) => sum + (Number(shot.duration) || 0), 0);
+    meta.textContent = data.id
+      ? `저장됨 · ${data.shots?.length || 0}컷 · ${Math.round(total * 10) / 10}초 · ${formatPromptTime(data.updated_at)}`
+      : "새 템플릿";
+  }
+  renderTemplateList();
+  renderTemplatePreview();
+}
+
+function resetTemplateEditor(seed = {}) {
+  setTemplateEditorItem(templateDefaultItem(seed));
+}
+
+function filteredTemplates() {
+  const query = templateSearch.trim().toLowerCase();
+  return templateItems
+    .filter(item => {
+      if (!query) return true;
+      const haystack = [
+        item.title,
+        item.description,
+        item.genre,
+        item.global_prompt,
+        ...(item.tags || []),
+        ...(item.shots || []).map(shot => `${shot.title} ${shot.prompt}`),
+      ].filter(Boolean).join(" ").toLowerCase();
+      return query.split(/\s+/).every(token => haystack.includes(token));
+    })
+    .sort((a, b) => Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+}
+
+function renderTemplateList() {
+  const list = document.querySelector("#templateList");
+  if (!list) return;
+  const items = filteredTemplates();
+  const stats = document.querySelector("#templateStats");
+  if (stats) stats.textContent = `${items.length} / ${templateItems.length}개`;
+  if (!items.length) {
+    list.innerHTML = `<p class="prompt-empty">저장된 영상 템플릿이 없습니다.</p>`;
+    return;
+  }
+  list.innerHTML = items.map(item => `
+    <article class="template-card${item.id === templateSelectedId ? " active" : ""}" data-template-id="${escapeHtml(item.id)}">
+      <strong>${escapeHtml(item.title || "영상 템플릿")}</strong>
+      <small>${escapeHtml(item.genre || "장르 없음")} · ${item.stats?.shot_count || 0}컷 · ${Math.round((item.stats?.total_duration || 0) * 10) / 10}초 · ${formatPromptTime(item.updated_at)}</small>
+      <p>${escapeHtml(item.description || item.global_prompt || "")}</p>
+      <div class="prompt-tags">${(item.tags || []).slice(0, 5).map(tag => `<span>${escapeHtml(tag)}</span>`).join("")}</div>
+    </article>
+  `).join("");
+}
+
+async function loadTemplateManager(force = false) {
+  if (templateItems.length && !force) {
+    renderTemplateList();
+    if (!templateSelectedId) resetTemplateEditor();
+    return;
+  }
+  const response = await fetch("/api/video-templates");
+  const data = await response.json();
+  if (!data.ok) rememberApiError(data, "영상 템플릿 조회 실패");
+  templateItems = data.items || [];
+  renderTemplateList();
+  if (!templateSelectedId && templateItems.length) setTemplateEditorItem(templateItems[0]);
+  if (!templateItems.length) resetTemplateEditor();
+}
+
+async function saveTemplateEditor() {
+  const payload = templatePayloadFromEditor();
+  if (!payload.title.trim()) {
+    showToast("템플릿 이름을 입력해 주세요.", true);
+    return null;
+  }
+  if (!payload.shots.length) {
+    showToast("컷 블록을 1개 이상 추가해 주세요.", true);
+    return null;
+  }
+  const data = await postJson("/api/video-templates", payload);
+  const index = templateItems.findIndex(item => item.id === data.item.id);
+  if (index >= 0) templateItems[index] = data.item;
+  else templateItems.unshift(data.item);
+  setTemplateEditorItem(data.item);
+  showToast(data.created ? "영상 템플릿을 저장했습니다." : "영상 템플릿을 업데이트했습니다.");
+  return data.item;
+}
+
+async function deleteTemplateEditor() {
+  const id = videoTemplateForm()?.elements.id?.value || "";
+  if (!id) {
+    resetTemplateEditor();
+    return;
+  }
+  const data = await postJson("/api/video-templates/delete", { ids: [id] });
+  templateItems = templateItems.filter(item => item.id !== id);
+  templateSelectedId = "";
+  if (templateItems.length) setTemplateEditorItem(templateItems[0]);
+  else resetTemplateEditor();
+  renderTemplateList();
+  showToast(`${data.deleted || 0}개 템플릿을 삭제했습니다.`);
+}
+
+function templatePreviewPlainText() {
+  const payload = templatePayloadFromEditor();
+  return payload.shots.map((shot, index) => [
+    `# ${String(index + 1).padStart(2, "0")} ${shot.title || "컷"}`,
+    `방식: ${templateMethodLabels[shot.method] || shot.method}`,
+    `길이: ${shot.duration || 0}초`,
+    `전환: ${templateTransitionLabels[shot.transition] || shot.transition}`,
+    templateShotPromptText(payload, shot),
+  ].filter(Boolean).join("\n")).join("\n\n");
+}
+
+document.querySelector("#templateList")?.addEventListener("click", event => {
+  const card = event.target.closest("[data-template-id]");
+  if (!card) return;
+  const item = templateItems.find(entry => entry.id === card.dataset.templateId);
+  if (item) setTemplateEditorItem(item);
+});
+
+document.querySelector("#templateSearch")?.addEventListener("input", event => {
+  templateSearch = event.target.value || "";
+  renderTemplateList();
+});
+
+videoTemplateForm()?.addEventListener("input", renderTemplatePreview);
+videoTemplateForm()?.addEventListener("change", renderTemplatePreview);
+videoTemplateForm()?.addEventListener("submit", event => {
+  event.preventDefault();
+  saveTemplateEditor().catch(error => showToast(error.message, true));
+});
+
+document.querySelector("#newVideoTemplate")?.addEventListener("click", () => resetTemplateEditor());
+document.querySelector("#addTemplateVariable")?.addEventListener("click", () => {
+  renderTemplateVariables([...collectTemplateVariables(), { key: "", label: "", default: "" }]);
+  renderTemplatePreview();
+});
+document.querySelector("#addTemplateSlot")?.addEventListener("click", () => {
+  renderTemplateSlots([...collectTemplateSlots(), { key: "", label: "", kind: "image", note: "" }]);
+  renderTemplatePreview();
+});
+document.querySelector("#addTemplateShot")?.addEventListener("click", () => {
+  const form = videoTemplateForm();
+  renderTemplateShots([...collectTemplateShots(), {
+    title: `컷 ${collectTemplateShots().length + 1}`,
+    method: form?.elements.default_method?.value || "i2v",
+    duration: form?.elements.default_shot_duration?.value || 6,
+    reference_slot: collectTemplateSlots()[0]?.key || "",
+    transition: "cut",
+    prompt: "",
+    camera: "",
+    retry_prompt: "",
+    notes: "",
+  }]);
+  renderTemplatePreview();
+});
+
+document.querySelector("#duplicateVideoTemplate")?.addEventListener("click", () => {
+  const payload = templatePayloadFromEditor();
+  payload.id = "";
+  payload.title = `${payload.title || "영상 템플릿"} 복사본`;
+  resetTemplateEditor(payload);
+});
+
+document.querySelector("#deleteVideoTemplate")?.addEventListener("click", () => {
+  deleteTemplateEditor().catch(error => showToast(error.message, true));
+});
+
+document.querySelector("#copyTemplatePreview")?.addEventListener("click", async () => {
+  const text = templatePreviewPlainText();
+  if (!text.trim()) {
+    showToast("복사할 미리보기가 없습니다.", true);
+    return;
+  }
+  await navigator.clipboard.writeText(text);
+  showToast("템플릿 미리보기를 복사했습니다.");
+});
+
+["#templateVariables", "#templateSlots", "#templateShots"].forEach(selector => {
+  document.querySelector(selector)?.addEventListener("click", event => {
+    const remove = event.target.closest("[data-remove-template-row]");
+    const shot = event.target.closest("[data-template-shot]");
+    if (remove) {
+      event.target.closest("[data-template-variable], [data-template-slot], [data-template-shot]")?.remove();
+      renderTemplatePreview();
+      return;
+    }
+    if (!shot) return;
+    if (event.target.closest("[data-duplicate-shot]")) {
+      const shots = collectTemplateShots();
+      const index = Array.from(document.querySelectorAll("[data-template-shot]")).indexOf(shot);
+      const copy = { ...shots[index], id: "", title: `${shots[index]?.title || "컷"} 복사본` };
+      shots.splice(index + 1, 0, copy);
+      renderTemplateShots(shots);
+      renderTemplatePreview();
+      return;
+    }
+    if (event.target.closest("[data-move-shot-up]") && shot.previousElementSibling) {
+      shot.parentElement.insertBefore(shot, shot.previousElementSibling);
+      renderTemplateShots(collectTemplateShots());
+      renderTemplatePreview();
+      return;
+    }
+    if (event.target.closest("[data-move-shot-down]") && shot.nextElementSibling) {
+      shot.parentElement.insertBefore(shot.nextElementSibling, shot);
+      renderTemplateShots(collectTemplateShots());
+      renderTemplatePreview();
+    }
+  });
 });
 
 async function loadLibrary(resetVisible = true) {

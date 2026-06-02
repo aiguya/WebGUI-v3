@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260603-v3-05">
+  <link rel="stylesheet" href="/static/styles.css?v=20260603-v3-06">
 </head>
 <body>
   <header class="topbar">
@@ -61,6 +61,9 @@
         </button>
         <button class="tab" data-tab="prompts" aria-label="프롬프트" data-tooltip="프롬프트">
           <span class="tab-icon icon-prompt-library" aria-hidden="true"></span>
+        </button>
+        <button class="tab" data-tab="templates" aria-label="영상 템플릿" data-tooltip="영상 템플릿">
+          <span class="tab-icon icon-template" aria-hidden="true"></span>
         </button>
         <button class="tab" data-tab="library" aria-label="라이브러리" data-tooltip="라이브러리">
           <span class="tab-icon icon-library" aria-hidden="true"></span>
@@ -707,6 +710,132 @@
       </div>
     </section>
 
+    <section class="panel" id="templates">
+      <div class="template-manager">
+        <aside class="template-list-panel">
+          <div class="template-manager-head">
+            <div>
+              <h2>영상 템플릿</h2>
+              <p>컷, 변수, 배우 슬롯을 묶어 자동 제작 레시피로 저장합니다.</p>
+            </div>
+            <button type="button" id="newVideoTemplate" class="secondary">새로 만들기</button>
+          </div>
+          <div class="template-manager-filters">
+            <input type="search" id="templateSearch" placeholder="템플릿 검색">
+          </div>
+          <div class="template-manager-stats" id="templateStats"></div>
+          <div class="template-list" id="templateList"></div>
+        </aside>
+
+        <form class="template-editor" id="videoTemplateForm">
+          <input type="hidden" name="id">
+          <div class="panel-head">
+            <h2>템플릿 작성</h2>
+            <span>Auto Film Template</span>
+          </div>
+          <label>이름</label>
+          <input type="text" name="title" placeholder="예: 네온 드라마 1분 템플릿">
+          <label>설명</label>
+          <textarea name="description" placeholder="이 템플릿이 어떤 영상에 어울리는지 적어 둡니다."></textarea>
+          <div class="template-grid-fields">
+            <div>
+              <label>장르</label>
+              <input type="text" name="genre" placeholder="예: 뮤직비디오, 드라마, 광고">
+            </div>
+            <div>
+              <label>태그</label>
+              <input type="text" name="tags" placeholder="cinematic, actor, neon">
+            </div>
+            <div>
+              <label>목표 길이(초)</label>
+              <input type="number" name="target_duration" min="10" max="3600" value="60">
+            </div>
+            <div>
+              <label>기본 컷 길이(초)</label>
+              <input type="number" name="default_shot_duration" min="1" max="15" step="0.1" value="6">
+            </div>
+            <div>
+              <label>기본 비율</label>
+              <select name="aspect_ratio">
+                <option value="9:16">9:16</option>
+                <option value="16:9">16:9</option>
+                <option value="1:1">1:1</option>
+                <option value="2:3">2:3</option>
+                <option value="3:2">3:2</option>
+                <option value="source">원본</option>
+                <option value="auto">auto</option>
+              </select>
+            </div>
+            <div>
+              <label>기본 해상도</label>
+              <select name="resolution">
+                <option value="720p">720p</option>
+                <option value="480p">480p</option>
+              </select>
+            </div>
+            <div>
+              <label>기본 생성 방식</label>
+              <select name="default_method">
+                <option value="i2v">이미지→영상</option>
+                <option value="frame">프레임 연장</option>
+                <option value="official">공식 연장</option>
+                <option value="image">이미지 생성</option>
+                <option value="edit">이미지 편집</option>
+              </select>
+            </div>
+          </div>
+          <label>전역 프롬프트</label>
+          <textarea name="global_prompt" placeholder="모든 컷에 공통으로 들어갈 스타일, 인물 유지, 카메라 톤 등을 작성합니다."></textarea>
+          <label>제외/주의 프롬프트</label>
+          <textarea name="negative_prompt" placeholder="원하지 않는 변화, 얼굴 변형, 색감 오류 등을 작성합니다."></textarea>
+
+          <div class="template-section-head">
+            <div>
+              <h3>변수</h3>
+              <p>{{mood}}, {{location}}처럼 컷 프롬프트에 재사용됩니다.</p>
+            </div>
+            <button type="button" class="secondary compact-btn" id="addTemplateVariable">변수 추가</button>
+          </div>
+          <div class="template-dynamic-list" id="templateVariables"></div>
+
+          <div class="template-section-head">
+            <div>
+              <h3>배우·레퍼런스 슬롯</h3>
+              <p>{{main_actor}} 같은 슬롯 이름을 프롬프트에 넣어 적용 시 사진을 매칭합니다.</p>
+            </div>
+            <button type="button" class="secondary compact-btn" id="addTemplateSlot">슬롯 추가</button>
+          </div>
+          <div class="template-dynamic-list" id="templateSlots"></div>
+
+          <div class="template-section-head">
+            <div>
+              <h3>컷 블록</h3>
+              <p>컷별 생성 방식, 길이, 카메라 움직임, 전환을 정의합니다.</p>
+            </div>
+            <button type="button" class="secondary compact-btn" id="addTemplateShot">컷 추가</button>
+          </div>
+          <div class="template-shot-list" id="templateShots"></div>
+
+          <div class="template-editor-actions">
+            <button type="submit">저장</button>
+            <button type="button" class="secondary" id="duplicateVideoTemplate">복제</button>
+            <button type="button" class="secondary" id="copyTemplatePreview">미리보기 복사</button>
+            <button type="button" class="danger-btn" id="deleteVideoTemplate">삭제</button>
+          </div>
+          <div class="template-editor-meta" id="templateEditorMeta"></div>
+        </form>
+
+        <aside class="template-preview-panel">
+          <div class="panel-head">
+            <h2>적용 미리보기</h2>
+            <span>Shot Plan</span>
+          </div>
+          <div class="template-preview-stats" id="templatePreviewStats"></div>
+          <div class="template-preview" id="templatePreview"></div>
+        </aside>
+      </div>
+    </section>
+
     <section class="panel" id="library">
       <div class="library-sticky-head">
         <div class="library-toolbar">
@@ -922,6 +1051,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260603-v3-05"></script>
+  <script src="/static/app.js?v=20260603-v3-06"></script>
 </body>
 </html>

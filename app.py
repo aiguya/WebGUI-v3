@@ -117,11 +117,14 @@ def ensure_media_dirs_for(root):
         (root / folder).mkdir(parents=True, exist_ok=True)
     meta = root / "metadata.json"
     prompts = root / "prompts.json"
+    video_templates = root / "video-templates.json"
     usage = root / "usage.json"
     if not meta.exists():
         meta.write_text("[]", encoding="utf-8")
     if not prompts.exists():
         prompts.write_text("[]", encoding="utf-8")
+    if not video_templates.exists():
+        video_templates.write_text("[]", encoding="utf-8")
     if not usage.exists():
         usage.write_text(json.dumps({"requests": 0, "tokens": 0, "cost_usd": 0, "last_usage": None}), encoding="utf-8")
 
@@ -166,6 +169,10 @@ def usage_path():
 
 def prompts_path():
     return media_path("prompts.json")
+
+
+def video_templates_path():
+    return media_path("video-templates.json")
 
 
 def oauth_token_path():
@@ -543,6 +550,19 @@ PROMPT_TASKS = {
     "general": "범용",
 }
 PROMPT_STRUCTURED_FIELDS = ("subject", "scene", "style", "lighting", "camera", "keep", "change", "negative", "extra")
+VIDEO_TEMPLATE_METHODS = {
+    "i2v": "이미지→영상",
+    "frame": "프레임 연장",
+    "official": "공식 연장",
+    "image": "이미지 생성",
+    "edit": "이미지 편집",
+}
+VIDEO_TEMPLATE_TRANSITIONS = {"cut", "fade", "crossfade", "fade_in", "fade_out"}
+
+
+def clean_template_key(value, fallback="var"):
+    key = re.sub(r"[^a-zA-Z0-9_]+", "_", str(value or "").strip()).strip("_").lower()
+    return (key or fallback)[:48]
 
 
 def clean_prompt_tag(tag):
@@ -645,6 +665,163 @@ def prompt_item_response(item):
     normalized = normalize_prompt_item(item)
     normalized["version_count"] = len(normalized.get("versions") or [])
     return normalized
+
+
+def normalize_template_variables(value):
+    raw = value if isinstance(value, list) else []
+    variables = []
+    seen = set()
+    for index, item in enumerate(raw, start=1):
+        if isinstance(item, dict):
+            key = clean_template_key(item.get("key"), f"var_{index}")
+            label = str(item.get("label") or key).strip()[:80]
+            default = str(item.get("default") if item.get("default") is not None else item.get("value") or "").strip()[:1000]
+        else:
+            key = clean_template_key(item, f"var_{index}")
+            label = key
+            default = ""
+        if key in seen:
+            continue
+        seen.add(key)
+        variables.append({"key": key, "label": label or key, "default": default})
+    return variables[:40]
+
+
+def normalize_template_slots(value):
+    raw = value if isinstance(value, list) else []
+    slots = []
+    seen = set()
+    for index, item in enumerate(raw, start=1):
+        if isinstance(item, dict):
+            key = clean_template_key(item.get("key"), f"slot_{index}")
+            label = str(item.get("label") or key).strip()[:80]
+            kind = str(item.get("kind") or "image").strip().lower()
+            note = str(item.get("note") or "").strip()[:1000]
+        else:
+            key = clean_template_key(item, f"slot_{index}")
+            label = key
+            kind = "image"
+            note = ""
+        if kind not in {"image", "video", "text"}:
+            kind = "image"
+        if key in seen:
+            continue
+        seen.add(key)
+        slots.append({"key": key, "label": label or key, "kind": kind, "note": note})
+    return slots[:24]
+
+
+def normalize_template_shots(value):
+    raw = value if isinstance(value, list) else []
+    shots = []
+    for index, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            continue
+        method = str(item.get("method") or "i2v").strip()
+        if method not in VIDEO_TEMPLATE_METHODS:
+            method = "i2v"
+        transition = str(item.get("transition") or "cut").strip()
+        if transition not in VIDEO_TEMPLATE_TRANSITIONS:
+            transition = "cut"
+        try:
+            duration = float(item.get("duration") or 6)
+        except (TypeError, ValueError):
+            duration = 6
+        duration = max(1, min(15, duration))
+        shots.append({
+            "id": str(item.get("id") or uuid.uuid4().hex),
+            "order": index,
+            "title": str(item.get("title") or f"컷 {index:02d}").strip()[:120],
+            "method": method,
+            "method_label": VIDEO_TEMPLATE_METHODS[method],
+            "duration": duration,
+            "reference_slot": clean_template_key(item.get("reference_slot"), ""),
+            "prompt": str(item.get("prompt") or "").strip()[:12000],
+            "camera": str(item.get("camera") or "").strip()[:2000],
+            "transition": transition,
+            "retry_prompt": str(item.get("retry_prompt") or "").strip()[:6000],
+            "notes": str(item.get("notes") or "").strip()[:4000],
+        })
+    return shots[:240]
+
+
+def normalize_video_template(item):
+    item = dict(item or {})
+    now = datetime.now(timezone.utc).isoformat()
+    settings = item.get("settings") if isinstance(item.get("settings"), dict) else {}
+    title = str(item.get("title") or "").strip()[:160]
+    if not title:
+        title = "새 영상 템플릿"
+    aspect_ratio = valid_aspect_ratio(settings.get("aspect_ratio") or item.get("aspect_ratio") or "9:16", allow_source=True)
+    resolution = str(settings.get("resolution") or item.get("resolution") or "720p").strip()
+    if resolution not in {"480p", "720p"}:
+        resolution = "720p"
+    default_method = str(settings.get("default_method") or item.get("default_method") or "i2v").strip()
+    if default_method not in VIDEO_TEMPLATE_METHODS:
+        default_method = "i2v"
+    variables = normalize_template_variables(item.get("variables"))
+    slots = normalize_template_slots(item.get("slots"))
+    shots = normalize_template_shots(item.get("shots"))
+    total_duration = sum(float(shot.get("duration") or 0) for shot in shots)
+    request_count = len(shots)
+    try:
+        target_duration = int(float(settings.get("target_duration") or item.get("target_duration") or max(total_duration, 60)))
+    except (TypeError, ValueError):
+        target_duration = int(max(total_duration, 60))
+    try:
+        default_shot_duration = float(settings.get("default_shot_duration") or item.get("default_shot_duration") or 6)
+    except (TypeError, ValueError):
+        default_shot_duration = 6
+    return {
+        "id": str(item.get("id") or uuid.uuid4().hex),
+        "title": title,
+        "description": str(item.get("description") or "").strip()[:3000],
+        "genre": str(item.get("genre") or "").strip()[:80],
+        "tags": normalize_prompt_tags(item.get("tags")),
+        "favorite": bool(item.get("favorite")),
+        "global_prompt": str(item.get("global_prompt") or "").strip()[:20000],
+        "negative_prompt": str(item.get("negative_prompt") or "").strip()[:12000],
+        "variables": variables,
+        "slots": slots,
+        "shots": shots,
+        "settings": {
+            "target_duration": max(1, target_duration),
+            "aspect_ratio": aspect_ratio,
+            "resolution": resolution,
+            "default_method": default_method,
+            "default_shot_duration": max(1, min(15, default_shot_duration)),
+        },
+        "stats": {
+            "shot_count": len(shots),
+            "total_duration": round(total_duration, 2),
+            "request_count": request_count,
+        },
+        "created_at": item.get("created_at") or now,
+        "updated_at": item.get("updated_at") or item.get("created_at") or now,
+    }
+
+
+def read_video_templates():
+    try:
+        data = json.loads(video_templates_path().read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, FileNotFoundError):
+        data = []
+    if not isinstance(data, list):
+        data = []
+    return [normalize_video_template(item) for item in data if isinstance(item, dict)]
+
+
+def write_video_templates(items):
+    target = video_templates_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [normalize_video_template(item) for item in items if isinstance(item, dict)]
+    temp = target.with_name(f"{target.name}.tmp")
+    temp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(target)
+
+
+def video_template_response(item):
+    return normalize_video_template(item)
 
 
 def read_usage():
@@ -3786,6 +3963,59 @@ def save_prompt_from_library():
     items.insert(0, prompt_item)
     write_prompts(items)
     return jsonify({"ok": True, "item": prompt_item_response(prompt_item)})
+
+
+@app.get("/api/video-templates")
+def video_template_library():
+    items = [video_template_response(item) for item in read_video_templates()]
+    items.sort(key=lambda item: (bool(item.get("favorite")), item.get("updated_at") or ""), reverse=True)
+    tags = sorted({tag for item in items for tag in item.get("tags", [])}, key=str.lower)
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "tags": tags,
+        "methods": VIDEO_TEMPLATE_METHODS,
+    })
+
+
+@app.post("/api/video-templates")
+def save_video_template():
+    payload = request.get_json(silent=True) or {}
+    item_id = str(payload.get("id") or "").strip()
+    items = read_video_templates()
+    now = datetime.now(timezone.utc).isoformat()
+    incoming = normalize_video_template({
+        **payload,
+        "id": item_id or uuid.uuid4().hex,
+        "created_at": now,
+        "updated_at": now,
+    })
+
+    for index, item in enumerate(items):
+        if item.get("id") != item_id:
+            continue
+        previous = normalize_video_template(item)
+        incoming["created_at"] = previous.get("created_at") or now
+        incoming["updated_at"] = now
+        items[index] = incoming
+        write_video_templates(items)
+        return jsonify({"ok": True, "item": video_template_response(incoming), "created": False})
+
+    items.insert(0, incoming)
+    write_video_templates(items)
+    return jsonify({"ok": True, "item": video_template_response(incoming), "created": True})
+
+
+@app.post("/api/video-templates/delete")
+def delete_video_templates():
+    payload = request.get_json(silent=True) or {}
+    ids = set(str(item) for item in (payload.get("ids") or []) if item)
+    if not ids:
+        return safe_error("삭제할 템플릿을 선택해 주세요.")
+    items = read_video_templates()
+    keep = [item for item in items if item.get("id") not in ids]
+    write_video_templates(keep)
+    return jsonify({"ok": True, "deleted": len(items) - len(keep)})
 
 
 @app.post("/api/t2i")
