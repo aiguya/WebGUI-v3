@@ -195,3 +195,25 @@
   - 가짜 `requests` payload 테스트로 이미지 편집, 이미지 생성, 이미지->영상, reference-to-video payload 확인.
   - `git diff --check` 통과.
 - 백업: `backups/before-remote-url-input-20260603-144117`
+
+### 템플릿 순차 실행기 1차
+
+- 목표: 저장된 영상 템플릿을 단순 미리보기에서 끝내지 않고, 변수와 레퍼런스 슬롯을 채워 실제 작업 큐에 등록할 수 있게 한다.
+- 결정:
+  - 서버 생성 API는 바꾸지 않고 프론트 큐에 `template-run` 특수 작업을 추가한다.
+  - 템플릿 작업은 큐 카드 하나로 표시하되 내부 컷은 순차 실행한다.
+  - 컷 결과가 이미지면 다음 이미지 편집/이미지->영상 컷의 입력으로, 영상이면 공식/프레임 연장 컷의 입력으로 이어받는다.
+  - 슬롯 레퍼런스는 이번 실행 상태로만 저장하고 템플릿 원본 JSON은 바꾸지 않는다.
+- 변경:
+  - `templates/index.html`: 템플릿 오른쪽 패널에 실행 준비 카드, 변수 입력, 슬롯 선택, 실행 계획 복사, 큐 등록 버튼 추가.
+  - `static/app.js`: 템플릿 런타임 상태, 라이브러리 슬롯 선택, 실행 계획 생성, 순차 실행 큐 작업, 결과 보기 fallback 추가.
+  - `static/styles.css`: 실행 준비 카드, 변수 입력, 슬롯 미리보기/버튼 스타일 추가.
+  - `templates/index.html`, `static/app.js`, `static/service-worker.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-20` / `webgui-shell-v3-20`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - Flask test client로 `/`, `/api/video-templates`, `/api/video-template-blocks` 확인.
+  - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-20`에서 새 HTML/JS 반영 확인.
+  - headless Chrome 스크린샷 생성 확인. 단, Chrome crashpad 경고가 출력되어 스크린샷은 임시 검증 후 삭제.
+- 백업: `backups/before-template-runner-20260603-150131`

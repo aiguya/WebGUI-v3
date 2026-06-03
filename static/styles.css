@@ -6988,6 +6988,123 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   padding-top: 2px;
 }
 
+.template-runner {
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid rgba(235, 239, 244, .10);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .024);
+}
+
+.template-runner .template-section-head {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.template-run-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.template-run-var {
+  display: grid;
+  gap: 4px;
+}
+
+.template-run-var span {
+  color: rgba(245, 245, 242, .62);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.template-run-slots {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.template-run-slot {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid rgba(235, 239, 244, .08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .12);
+}
+
+.template-slot-preview {
+  width: 58px;
+  height: 58px;
+  min-height: 58px !important;
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid rgba(235, 239, 244, .12) !important;
+  border-radius: 7px !important;
+  background: rgba(255, 255, 255, .030) !important;
+}
+
+.template-slot-preview img,
+.template-slot-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.template-slot-empty {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: rgba(245, 245, 242, .46);
+  font-size: 10px;
+}
+
+.template-run-slot strong {
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-run-slot small {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: rgba(245, 245, 242, .46);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-slot-actions,
+.template-run-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 7px;
+}
+
+.template-slot-actions button,
+.template-run-actions button {
+  min-height: 30px !important;
+  padding: 5px 8px !important;
+  font-size: 12px;
+}
+
+.template-run-note {
+  margin-top: 8px;
+  color: rgba(245, 245, 242, .52);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .template-block-filters {
   padding: 10px 0 7px;
 }

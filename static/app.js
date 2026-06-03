@@ -74,6 +74,11 @@ let templateShotFocusTimer = null;
 let templateShotAutoScrollFrame = null;
 let templateShotAutoScrollVelocity = 0;
 let templateShotAutoScrollTarget = null;
+let templatePickerSlotKey = "";
+const templateRunState = {
+  variables: {},
+  slots: {},
+};
 let pickerVisibleCount = 80;
 let pickerPageSize = 80;
 const multiImageSources = new WeakMap();
@@ -199,8 +204,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-19";
-const appShellCacheName = "webgui-shell-v3-19";
+const appStaticVersion = "20260603-v3-20";
+const appShellCacheName = "webgui-shell-v3-20";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -421,7 +426,7 @@ function appendPlannerFields(body, plan) {
 }
 
 function createProgress(panel, label = "진행 중") {
-  if (!panel) return { set() {}, done() {} };
+  if (!panel) return { set() {}, setCount() {}, done() {} };
   const overlay = document.createElement("div");
   overlay.className = "progress-overlay";
   overlay.innerHTML = `
@@ -714,7 +719,13 @@ function tabIdForEndpoint(endpoint) {
 }
 
 function showJobResult(job) {
-  if (!job?.previewSelector || !job.result) return false;
+  if (!job?.result) return false;
+  if (!job.previewSelector) {
+    const item = job.result?.item || job.result?.items?.[0];
+    if (!item?.file_path) return false;
+    openMediaViewer(item.file_path, item.kind === "video" ? "video" : "image");
+    return true;
+  }
   if (job.result?.items?.length) {
     previewBatchItems(job.previewSelector, job.result.items);
   } else if (job.result?.item) {
@@ -971,6 +982,10 @@ function processQueue() {
 }
 
 async function runJob(job) {
+  if (job.templateRun) {
+    await runTemplateJob(job);
+    return;
+  }
   activeJobs += 1;
   updateJob(job, { status: "running" });
   const previewPanel = job.previewSelector ? document.querySelector(job.previewSelector) : document.querySelector(".prompt-result");
@@ -1038,6 +1053,193 @@ async function pollMangaBatch(job, batchId, progress) {
     await sleep(1000);
   }
   return latest;
+}
+
+function templateRunPlanText() {
+  const payload = templateRuntimePayload();
+  return payload.shots.map((shot, index) => [
+    `# ${String(index + 1).padStart(2, "0")} ${shot.title || "컷"}`,
+    `방식: ${templateMethodLabels[shot.method] || shot.method}`,
+    `길이: ${shot.duration || payload.settings.default_shot_duration || 6}초`,
+    `참조: ${shot.reference_slot || "이전 결과 또는 첫 슬롯"}`,
+    templateShotPromptText(payload, shot),
+  ].filter(Boolean).join("\n")).join("\n\n");
+}
+
+function templateSlotEntry(key, expectedKind = "image", slotState = templateRunState.slots) {
+  if (key && slotState[key]) return slotState[key];
+  return Object.values(slotState).find(slot => {
+    if (!slot?.path) return false;
+    if (expectedKind === "video") return slot.kind === "video";
+    return slot.kind !== "video";
+  }) || null;
+}
+
+function templateImageSourcePath(shot, previous, slotState) {
+  const slot = templateSlotEntry(shot.reference_slot, "image", slotState);
+  if (slot?.path) return slot.path;
+  return previous.lastImagePath || "";
+}
+
+function templateVideoSourcePath(shot, previous, slotState) {
+  const slot = templateSlotEntry(shot.reference_slot, "video", slotState);
+  if (slot?.path) return slot.path;
+  return previous.lastVideoPath || "";
+}
+
+function appendTemplateImageReference(body, path) {
+  if (!path) throw new Error("이 컷에 사용할 이미지 레퍼런스가 없습니다.");
+  body.append("image_source_order", `library:${path}`);
+  body.append("library_image_paths", path);
+}
+
+function buildTemplateShotRequest(payload, shot, previous, slotState = templateRunState.slots) {
+  const prompt = templateShotPromptText(payload, shot);
+  const duration = String(shot.duration || payload.settings.default_shot_duration || 6);
+  const aspectRatio = payload.settings.aspect_ratio || "9:16";
+  const resolution = payload.settings.resolution || "720p";
+  if (shot.method === "image") {
+    return {
+      endpoint: "/api/t2i",
+      prompt,
+      options: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, aspect_ratio: aspectRatio }),
+      },
+    };
+  }
+  if (shot.method === "edit") {
+    const body = new FormData();
+    body.set("prompt", prompt);
+    body.set("aspect_ratio", aspectRatio);
+    body.set("image_resolution", "auto");
+    body.set("edit_input_mode", "multi");
+    appendTemplateImageReference(body, templateImageSourcePath(shot, previous, slotState));
+    return { endpoint: "/api/i2i", prompt, options: { method: "POST", body } };
+  }
+  if (shot.method === "i2v") {
+    const body = new FormData();
+    body.set("prompt", prompt);
+    body.set("duration", duration);
+    body.set("aspect_ratio", aspectRatio);
+    body.set("resolution", resolution);
+    appendTemplateImageReference(body, templateImageSourcePath(shot, previous, slotState));
+    return { endpoint: "/api/i2v", prompt, options: { method: "POST", body } };
+  }
+  if (shot.method === "official" || shot.method === "frame") {
+    const source = templateVideoSourcePath(shot, previous, slotState);
+    if (!source) throw new Error("이 컷에 사용할 영상 레퍼런스가 없습니다.");
+    const body = new FormData();
+    body.set("prompt", prompt);
+    body.set("duration", duration);
+    body.set("aspect_ratio", aspectRatio);
+    body.set("resolution", resolution);
+    body.set("library_video_path", source);
+    if (shot.method === "frame") body.set("mute", "false");
+    return {
+      endpoint: shot.method === "official" ? "/api/v2v-extend" : "/api/v2v-frame-extend",
+      prompt,
+      options: { method: "POST", body },
+    };
+  }
+  throw new Error(`지원하지 않는 템플릿 컷 방식입니다: ${shot.method}`);
+}
+
+async function fetchTemplateShot(request) {
+  const response = await fetch(request.endpoint, request.options);
+  const data = await response.json();
+  if (!data.ok) rememberApiError(data);
+  if (!data.ok) throw new Error(data.error || data.detail || "템플릿 컷 실행에 실패했습니다.");
+  return data;
+}
+
+function updateTemplatePreviousResult(previous, data) {
+  const item = data.item || data.items?.[0];
+  if (!item?.file_path) return;
+  if (item.kind === "video") {
+    previous.lastVideoPath = item.file_path;
+  } else {
+    previous.lastImagePath = item.file_path;
+  }
+}
+
+function enqueueTemplateRun() {
+  const payload = templateRuntimePayload();
+  if (!payload.title.trim()) {
+    showToast("템플릿 이름을 입력해 주세요.", true);
+    return;
+  }
+  if (!payload.shots.length) {
+    showToast("실행할 컷 블록이 없습니다.", true);
+    return;
+  }
+  const job = {
+    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+    type: `템플릿 · ${payload.title}`,
+    shortType: "템플릿",
+    status: "queued",
+    endpoint: "template-run",
+    previewSelector: "",
+    templateRun: {
+      payload,
+      slotState: JSON.parse(JSON.stringify(templateRunState.slots)),
+    },
+    prompt: `${payload.shots.length}개 컷 순차 실행`,
+    result: null,
+    error: null,
+  };
+  jobQueue.unshift(job);
+  renderQueue();
+  processQueue();
+  showToast("템플릿 실행 작업을 큐에 추가했습니다.");
+}
+
+async function runTemplateJob(job) {
+  activeJobs += 1;
+  updateJob(job, { status: "running", progressPercent: 0, progressText: "템플릿 실행 시작" });
+  const progress = createProgress(document.querySelector("#templateRunner"), job.type);
+  const payload = job.templateRun.payload;
+  const slotState = job.templateRun.slotState || {};
+  const previous = { lastImagePath: "", lastVideoPath: "" };
+  const items = [];
+  try {
+    for (let index = 0; index < payload.shots.length; index += 1) {
+      if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
+      const shot = payload.shots[index];
+      const request = buildTemplateShotRequest(payload, shot, previous, slotState);
+      const label = `${index + 1}/${payload.shots.length} · ${shot.title || "컷"}`;
+      progress.setCount(index, payload.shots.length, 0, 1);
+      updateJob(job, {
+        progressPercent: Math.round((index / payload.shots.length) * 100),
+        progressText: `${label} 실행 중`,
+        prompt: request.prompt,
+      });
+      const data = await fetchTemplateShot(request);
+      if (data.item) items.push(data.item);
+      if (data.items?.length) items.push(...data.items);
+      updateTemplatePreviousResult(previous, data);
+      progress.setCount(index + 1, payload.shots.length, 0, index + 1 < payload.shots.length ? 1 : 0);
+      updateJob(job, {
+        result: { ok: true, items },
+        progressPercent: Math.round(((index + 1) / payload.shots.length) * 100),
+        progressText: `${index + 1}/${payload.shots.length} 컷 완료`,
+      });
+      loadLibrary();
+    }
+    progress.set(100);
+    updateJob(job, { status: "done", result: { ok: true, items }, progressPercent: 100, progressText: "템플릿 실행 완료" });
+    showToast("템플릿 실행이 완료되었습니다.");
+  } catch (error) {
+    updateJob(job, { status: job.status === "cancelled" ? "cancelled" : "failed", error: error.message, progressText: error.message });
+    showToast(error.message, true);
+  } finally {
+    progress.done();
+    activeJobs -= 1;
+    loadHealth();
+    refreshQuota(true);
+    processQueue();
+  }
 }
 
 document.querySelectorAll("form[data-endpoint]").forEach(form => {
@@ -2345,6 +2547,97 @@ function templateShotPromptText(payload, shot) {
   return substituteTemplateText(chunks.join("\n"), variables, slots);
 }
 
+function templateSlotLabel(slot, selected) {
+  if (selected?.label) return selected.label;
+  if (selected?.path) return selected.path.split("/").pop();
+  return slot.label || slot.key || "slot";
+}
+
+function syncTemplateRunDefaults(payload = templatePayloadFromEditor()) {
+  (payload.variables || []).forEach(variable => {
+    if (!variable.key) return;
+    if (!Object.prototype.hasOwnProperty.call(templateRunState.variables, variable.key)) {
+      templateRunState.variables[variable.key] = variable.default || "";
+    }
+  });
+}
+
+function resetTemplateRunState(payload = templatePayloadFromEditor()) {
+  templateRunState.variables = {};
+  templateRunState.slots = {};
+  (payload.variables || []).forEach(variable => {
+    if (variable.key) templateRunState.variables[variable.key] = variable.default || "";
+  });
+}
+
+function templateRuntimePayload() {
+  const payload = templatePayloadFromEditor();
+  syncTemplateRunDefaults(payload);
+  const variables = (payload.variables || []).map(variable => ({
+    ...variable,
+    default: templateRunState.variables[variable.key] ?? variable.default ?? "",
+  }));
+  const slots = (payload.slots || []).map(slot => {
+    const selected = templateRunState.slots[slot.key];
+    return {
+      ...slot,
+      label: templateSlotLabel(slot, selected),
+      selected_path: selected?.path || "",
+      selected_kind: selected?.kind || slot.kind || "image",
+    };
+  });
+  return { ...payload, variables, slots };
+}
+
+function renderTemplateRunPanel() {
+  const payload = templatePayloadFromEditor();
+  syncTemplateRunDefaults(payload);
+  const variables = document.querySelector("#templateRunVariables");
+  const slots = document.querySelector("#templateRunSlots");
+  const note = document.querySelector("#templateRunNote");
+  if (variables) {
+    variables.innerHTML = (payload.variables || []).length
+      ? payload.variables.map(variable => `
+        <label class="template-run-var">
+          <span>${escapeHtml(variable.label || variable.key)}</span>
+          <input type="text" data-template-run-var="${escapeHtml(variable.key)}" value="${escapeHtml(templateRunState.variables[variable.key] ?? variable.default ?? "")}">
+        </label>`).join("")
+      : `<p class="template-empty">변수가 없습니다. 기본 프롬프트 그대로 실행됩니다.</p>`;
+  }
+  if (slots) {
+    slots.innerHTML = (payload.slots || []).length
+      ? payload.slots.map(slot => {
+        const selected = templateRunState.slots[slot.key];
+        const kind = slot.kind === "video" ? "video" : "image";
+        const preview = selected
+          ? (kind === "video"
+            ? `<video src="${selected.path}" muted playsinline loop></video>`
+            : `<img src="${selected.path}" alt="">`)
+          : `<span class="template-slot-empty">${kind === "video" ? "영상 미선택" : "이미지 미선택"}</span>`;
+        return `
+          <article class="template-run-slot" data-template-run-slot="${escapeHtml(slot.key)}">
+            <button type="button" class="template-slot-preview" data-template-slot-preview ${selected ? "" : "disabled"}>${preview}</button>
+            <div>
+              <strong>${escapeHtml(slot.label || slot.key)}</strong>
+              <small>${escapeHtml(slot.key)} · ${kind}${slot.note ? ` · ${escapeHtml(slot.note)}` : ""}</small>
+              <div class="template-slot-actions">
+                <button type="button" class="secondary" data-template-slot-pick data-template-slot-kind="${kind}">라이브러리</button>
+                <button type="button" class="secondary" data-template-slot-clear ${selected ? "" : "disabled"}>해제</button>
+              </div>
+            </div>
+          </article>`;
+      }).join("")
+      : `<p class="template-empty">레퍼런스 슬롯이 없습니다. 이전 컷 결과 위주로 실행됩니다.</p>`;
+  }
+  if (note) {
+    const first = payload.shots?.[0];
+    const needsReference = first && ["edit", "i2v", "official", "frame"].includes(first.method);
+    note.textContent = payload.shots?.length
+      ? `${payload.shots.length}개 컷을 순차 실행합니다.${needsReference ? " 첫 컷에 필요한 이미지/영상 슬롯이 없으면 실행 시 오류가 납니다." : ""}`
+      : "컷을 추가하면 실행할 수 있습니다.";
+  }
+}
+
 function renderTemplatePreview() {
   const payload = templatePayloadFromEditor();
   const stats = document.querySelector("#templatePreviewStats");
@@ -2361,6 +2654,7 @@ function renderTemplatePreview() {
   if (!preview) return;
   if (!payload.shots.length) {
     preview.innerHTML = `<p class="template-empty">컷을 추가하면 적용 미리보기가 표시됩니다.</p>`;
+    renderTemplateRunPanel();
     return;
   }
   preview.innerHTML = payload.shots.map((shot, index) => {
@@ -2376,6 +2670,7 @@ function renderTemplatePreview() {
       </article>
     `;
   }).join("");
+  renderTemplateRunPanel();
 }
 
 function focusTemplateShot(index) {
@@ -2545,6 +2840,7 @@ function setTemplateEditorItem(item = {}) {
   const form = videoTemplateForm();
   if (!form) return;
   const data = templateDefaultItem(item);
+  resetTemplateRunState(data);
   form.elements.id.value = data.id || "";
   form.elements.title.value = data.title || "";
   form.elements.description.value = data.description || "";
@@ -3053,6 +3349,51 @@ document.querySelector("#copyTemplatePreview")?.addEventListener("click", async 
   }
   await navigator.clipboard.writeText(text);
   showToast("템플릿 미리보기를 복사했습니다.");
+});
+
+document.querySelector("#templateRunVariables")?.addEventListener("input", event => {
+  const input = event.target.closest("[data-template-run-var]");
+  if (!input) return;
+  templateRunState.variables[input.dataset.templateRunVar] = input.value;
+});
+
+document.querySelector("#templateRunSlots")?.addEventListener("click", event => {
+  const row = event.target.closest("[data-template-run-slot]");
+  if (!row) return;
+  const key = row.dataset.templateRunSlot;
+  if (event.target.closest("[data-template-slot-pick]")) {
+    const kind = event.target.closest("[data-template-slot-pick]").dataset.templateSlotKind || "image";
+    openTemplateSlotPicker(key, kind);
+    return;
+  }
+  if (event.target.closest("[data-template-slot-clear]")) {
+    delete templateRunState.slots[key];
+    renderTemplateRunPanel();
+    showToast("템플릿 슬롯 연결을 해제했습니다.");
+    return;
+  }
+  if (event.target.closest("[data-template-slot-preview]")) {
+    const slot = templateRunState.slots[key];
+    if (slot?.path) openMediaViewer(slot.path, slot.kind === "video" ? "video" : "image");
+  }
+});
+
+document.querySelector("#resetTemplateRun")?.addEventListener("click", () => {
+  resetTemplateRunState();
+  renderTemplatePreview();
+  showToast("템플릿 실행값을 초기화했습니다.");
+});
+
+document.querySelector("#queueTemplateRun")?.addEventListener("click", enqueueTemplateRun);
+
+document.querySelector("#copyTemplateRunPlan")?.addEventListener("click", async () => {
+  const text = templateRunPlanText();
+  if (!text.trim()) {
+    showToast("복사할 실행 계획이 없습니다.", true);
+    return;
+  }
+  await navigator.clipboard.writeText(text);
+  showToast("템플릿 실행 계획을 복사했습니다.");
 });
 
 document.querySelector("#templatePreview")?.addEventListener("click", event => {
@@ -4124,11 +4465,12 @@ async function togglePickerFavorite(node, button) {
   }
 }
 
-async function openLibraryPicker(form) {
+async function openLibraryPicker(form, options = {}) {
   pickerTargetForm = form;
   const modal = document.querySelector("#libraryPickerModal");
   const grid = document.querySelector("#libraryPickerGrid");
-  pickerMediaType = mediaTypeForForm(form);
+  templatePickerSlotKey = options.templateSlotKey || "";
+  pickerMediaType = options.mediaType || mediaTypeForForm(form);
   resetPickerControls();
   document.querySelector("#libraryPickerTitle").textContent = pickerMediaType === "video" ? "라이브러리 영상 선택" : "라이브러리 이미지 선택";
   grid.innerHTML = "<p>불러오는 중입니다.</p>";
@@ -4148,6 +4490,13 @@ function previewPickerMedia(path, mediaType) {
   openMediaViewer(path, mediaType);
 }
 
+function openTemplateSlotPicker(slotKey, mediaType = "image") {
+  openLibraryPicker(videoTemplateForm(), {
+    templateSlotKey: slotKey,
+    mediaType,
+  }).catch(error => showToast(error.message, true));
+}
+
 document.querySelectorAll("[data-open-library-picker]").forEach(button => {
   button.addEventListener("click", () => openLibraryPicker(button.closest("form")));
 });
@@ -4165,6 +4514,7 @@ document.querySelector("#libraryPickerModal")?.addEventListener("click", event =
 document.querySelector("#libraryPickerModal")?.addEventListener("close", () => {
   pickerTargetForm = null;
   pickerItems = [];
+  templatePickerSlotKey = "";
 });
 
 document.querySelector("#pickerSearch")?.addEventListener("input", event => {
@@ -4268,6 +4618,17 @@ document.querySelector("#libraryPickerGrid").addEventListener("click", async eve
   }
   if (mediaType !== "video" && event.target.closest(".picker-zoom-symbol")) {
     previewPickerMedia(item.dataset.path, "image");
+    return;
+  }
+  if (templatePickerSlotKey) {
+    templateRunState.slots[templatePickerSlotKey] = {
+      path: item.dataset.path,
+      label: item.querySelector(".picker-label")?.textContent || item.dataset.path,
+      kind: mediaType,
+    };
+    renderTemplateRunPanel();
+    document.querySelector("#libraryPickerModal").close();
+    showToast("템플릿 슬롯에 라이브러리 항목을 연결했습니다.");
     return;
   }
   try {
