@@ -1824,15 +1824,15 @@ def remote_url_for_media_path(path):
     return metadata_remote_url(item)
 
 
-def image_input_url(path):
-    remote_url = remote_url_for_media_path(path)
+def image_input_url(path, allow_remote=True):
+    remote_url = remote_url_for_media_path(path) if allow_remote else None
     if remote_url:
         return remote_url, True
     return data_uri(Path(path)), False
 
 
-def image_input_object(path, include_type=False):
-    url, used_remote = image_input_url(path)
+def image_input_object(path, include_type=False, allow_remote=True):
+    url, used_remote = image_input_url(path, allow_remote=allow_remote)
     payload = {"url": url}
     if include_type:
         payload["type"] = "image_url"
@@ -2993,13 +2993,13 @@ def live_image(prompt, dest_dir, edit_source=None, edit_sources=None, aspect_rat
     input_remote_urls = []
     if sources:
         if len(sources) == 1:
-            body["image"], used_remote = image_input_object(sources[0], include_type=True)
+            body["image"], used_remote = image_input_object(sources[0], include_type=True, allow_remote=False)
             if used_remote:
                 input_remote_urls.append(body["image"]["url"])
         else:
             images = []
             for source in sources[:3]:
-                image, used_remote = image_input_object(source, include_type=True)
+                image, used_remote = image_input_object(source, include_type=True, allow_remote=False)
                 images.append(image)
                 if used_remote:
                     input_remote_urls.append(image["url"])
@@ -3028,7 +3028,7 @@ def edit_image_with_config(prompt, source_path, dest_dir, cfg, auth_header, aspe
         "model": cfg["image_model"],
         "prompt": prompt,
     }
-    body["image"], used_remote = image_input_object(source_path, include_type=True)
+    body["image"], used_remote = image_input_object(source_path, include_type=True, allow_remote=False)
     if aspect_ratio != "auto":
         body["aspect_ratio"] = aspect_ratio
     if resolution != "auto":
@@ -3070,13 +3070,13 @@ def edit_image_sources_with_config(prompt, source_paths, dest_dir, cfg, auth_hea
         body["resolution"] = resolution
     input_remote_urls = []
     if len(sources) == 1:
-        body["image"], used_remote = image_input_object(sources[0], include_type=True)
+        body["image"], used_remote = image_input_object(sources[0], include_type=True, allow_remote=False)
         if used_remote:
             input_remote_urls.append(body["image"]["url"])
     else:
         images = []
         for source in sources[:3]:
-            image, used_remote = image_input_object(source, include_type=True)
+            image, used_remote = image_input_object(source, include_type=True, allow_remote=False)
             images.append(image)
             if used_remote:
                 input_remote_urls.append(image["url"])

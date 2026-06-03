@@ -328,3 +328,22 @@
   - `normalize_video_template`, `normalize_template_block`에서 `output_slot` 보존 확인.
   - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-26`에서 새 HTML/JS 반영 확인.
 - 백업: `backups/before-template-result-slot-output-20260603-213000`
+
+### 이미지 편집 입력 로컬 파일 강제
+- 목표: 이미지 편집 탭에서 라이브러리 이미지의 `remote_url` 메타데이터를 우선 사용하다가 만료된 `imgen.x.ai` URL 404로 실패하는 문제를 막는다.
+- 원인:
+  - 라이브러리 결과 이미지에 `remote_url`이 남아 있으면 `image_input_object()`가 로컬 파일 대신 원격 URL을 API 입력으로 전달했다.
+  - 해당 원격 URL이 만료되거나 삭제되면 xAI 이미지 편집 API가 `Fetching image failed with HTTP status 404 Not Found`를 반환했다.
+- 결정:
+  - `remote_url` 메타데이터 저장 자체는 유지한다.
+  - 이미지 편집 계열 요청에서는 원격 URL을 사용하지 않고 실제 로컬 파일을 base64 data URI로 전송한다.
+  - 영상 생성/참조 이미지 기반 영상 쪽의 원격 URL 재사용은 기존처럼 유지한다.
+- 변경:
+  - `app.py`: `image_input_url`, `image_input_object`에 `allow_remote` 옵션 추가.
+  - `app.py`: xAI 이미지 편집 경로인 `live_image`, `edit_image_with_config`, `edit_image_sources_with_config`에서 `allow_remote=False` 적용.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `remote_url_for_media_path`를 mock 처리한 상태에서 `allow_remote=False`가 원격 URL 대신 `data:image/...`를 반환하는지 확인.
+  - v3 서버 재시작 후 `/health` 응답 `200 ok` 확인.
+- 백업: `backups/before-i2i-force-local-inputs-20260603-222500`
