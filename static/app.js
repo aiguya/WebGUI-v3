@@ -205,8 +205,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-27";
-const appShellCacheName = "webgui-shell-v3-27";
+const appStaticVersion = "20260603-v3-28";
+const appShellCacheName = "webgui-shell-v3-28";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -435,11 +435,13 @@ function createProgress(panel, label = "진행 중") {
       <div class="progress-title"><span>${label}</span><span data-percent>0%</span></div>
       <div class="progress-detail" data-progress-detail hidden></div>
       <div class="progress-bar"><span></span></div>
+      <div class="progress-actions" data-progress-actions hidden></div>
     </div>`;
   panel.appendChild(overlay);
   const bar = overlay.querySelector(".progress-bar span");
   const percent = overlay.querySelector("[data-percent]");
   const detail = overlay.querySelector("[data-progress-detail]");
+  const actions = overlay.querySelector("[data-progress-actions]");
   let value = 0;
   const timer = setInterval(() => {
     value = Math.min(92, value + Math.max(1, Math.round((95 - value) * 0.08)));
@@ -452,12 +454,16 @@ function createProgress(panel, label = "진행 중") {
   }, 700);
   return {
     set(next) {
+      actions.hidden = true;
+      actions.innerHTML = "";
       value = Math.max(value, Math.min(100, next));
       bar.style.width = `${value}%`;
       percent.textContent = `${value}%`;
     },
     setCount(done, total, failed = 0, running = 0) {
       clearInterval(timer);
+      actions.hidden = true;
+      actions.innerHTML = "";
       overlay.classList.remove("is-review", "is-error");
       value = total ? Math.round((done / total) * 100) : 0;
       bar.style.width = `${value}%`;
@@ -465,7 +471,7 @@ function createProgress(panel, label = "진행 중") {
       detail.hidden = false;
       detail.textContent = `${done}/${total} 처리 완료${running ? ` · ${running}개 처리 중` : ""}${failed ? ` · 실패 ${failed}` : ""}`;
     },
-    message(text, percentValue = value, state = "") {
+    message(text, percentValue = value, state = "", actionItems = []) {
       clearInterval(timer);
       overlay.classList.toggle("is-review", state === "review");
       overlay.classList.toggle("is-error", state === "error");
@@ -474,9 +480,28 @@ function createProgress(panel, label = "진행 중") {
       percent.textContent = `${value}%`;
       detail.hidden = false;
       detail.textContent = text;
+      actions.innerHTML = "";
+      if (actionItems.length) {
+        actionItems.forEach(item => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = item.label;
+          if (item.className) button.className = item.className;
+          button.addEventListener("click", event => {
+            event.preventDefault();
+            item.action?.();
+          });
+          actions.appendChild(button);
+        });
+        actions.hidden = false;
+      } else {
+        actions.hidden = true;
+      }
     },
     done() {
       clearInterval(timer);
+      actions.hidden = true;
+      actions.innerHTML = "";
       bar.style.width = "100%";
       percent.textContent = "100%";
       setTimeout(() => overlay.remove(), 260);
@@ -1252,7 +1277,7 @@ function resolveTemplateReview(job, action) {
   return true;
 }
 
-function waitForTemplateReview(job, detail) {
+function waitForTemplateReview(job, detail, progress) {
   return new Promise(resolve => {
     job.templateRun.review = { ...detail, resolve };
     updateJob(job, {
@@ -1262,6 +1287,16 @@ function waitForTemplateReview(job, detail) {
       prompt: detail.prompt,
       result: { ok: true, items: detail.items },
     });
+    progress?.message?.(
+      `${detail.label} 확인 대기 · 다음 진행 방식을 선택하세요.`,
+      detail.progressPercent,
+      "review",
+      [
+        { label: detail.isLast ? "완료" : "다음 컷", action: () => resolveTemplateReview(job, "next") },
+        { label: "재시도", className: "secondary", action: () => resolveTemplateReview(job, "retry") },
+        { label: "중단", className: "secondary", action: () => resolveTemplateReview(job, "cancel") },
+      ],
+    );
   });
 }
 
@@ -1348,7 +1383,6 @@ async function runTemplateJob(job) {
         loadLibrary();
         if (manualMode) {
           const reviewPercent = Math.round(((index + 1) / payload.shots.length) * 100);
-          progress.message(`${label} 확인 대기 · 큐 카드에서 다음 컷/재시도/중단을 선택하세요.`, reviewPercent, "review");
           const action = await waitForTemplateReview(job, {
             index,
             isLast: index + 1 >= payload.shots.length,
@@ -1356,7 +1390,7 @@ async function runTemplateJob(job) {
             prompt: request.prompt,
             items: [...items],
             progressPercent: reviewPercent,
-          });
+          }, progress);
           if (action === "cancel") throw new Error("템플릿 실행이 취소되었습니다.");
           if (action === "retry") {
             items.splice(committedCount);
@@ -2578,6 +2612,7 @@ function templateDefaultItem(seed = {}) {
       resolution: seed.settings?.resolution || "720p",
       default_method: seed.settings?.default_method || "i2v",
       default_shot_duration: seed.settings?.default_shot_duration || 6,
+      run_mode: seed.settings?.run_mode || seed.run_mode || "auto",
     },
   };
 }
@@ -2775,7 +2810,16 @@ function collectTemplateSlots() {
     label: row.querySelector("[data-slot-label]")?.value || "",
     kind: row.querySelector("[data-slot-kind]")?.value || "image",
     note: row.querySelector("[data-slot-note]")?.value || "",
-  })).filter(item => item.key.trim() || item.label.trim() || item.note.trim());
+  })).filter(item => item.key.trim() || item.label.trim() || item.note.trim()).map(item => {
+    const key = item.key.trim();
+    const selected = key ? templateRunState.slots[key] : null;
+    return selected?.path ? {
+      ...item,
+      selected_path: selected.path,
+      selected_kind: selected.kind || item.kind || "image",
+      selected_label: selected.label || "",
+    } : item;
+  });
 }
 
 function collectTemplateShots() {
@@ -2811,12 +2855,15 @@ function collectTemplateShots() {
 
 function templatePayloadFromEditor() {
   const form = videoTemplateForm();
+  const runMode = document.querySelector("#templateRunMode")?.value === "manual" ? "manual" : "auto";
+  templateRunState.mode = runMode;
   const settings = {
     target_duration: Number.parseInt(form?.elements.target_duration?.value || "60", 10) || 60,
     aspect_ratio: form?.elements.aspect_ratio?.value || "9:16",
     resolution: form?.elements.resolution?.value || "720p",
     default_method: form?.elements.default_method?.value || "i2v",
     default_shot_duration: Number.parseFloat(form?.elements.default_shot_duration?.value || "6") || 6,
+    run_mode: runMode,
   };
   return {
     id: form?.elements.id?.value || "",
@@ -2878,9 +2925,17 @@ function syncTemplateRunDefaults(payload = templatePayloadFromEditor()) {
 function resetTemplateRunState(payload = templatePayloadFromEditor()) {
   templateRunState.variables = {};
   templateRunState.slots = {};
-  templateRunState.mode = "auto";
+  templateRunState.mode = payload.settings?.run_mode === "manual" ? "manual" : "auto";
   (payload.variables || []).forEach(variable => {
     if (variable.key) templateRunState.variables[variable.key] = variable.default || "";
+  });
+  (payload.slots || []).forEach(slot => {
+    if (!slot.key || !slot.selected_path) return;
+    templateRunState.slots[slot.key] = {
+      path: slot.selected_path,
+      label: slot.selected_label || slot.label || slot.key,
+      kind: slot.selected_kind || slot.kind || "image",
+    };
   });
 }
 

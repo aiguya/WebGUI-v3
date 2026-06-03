@@ -734,17 +734,35 @@ def normalize_template_slots(value):
             label = str(item.get("label") or key).strip()[:80]
             kind = str(item.get("kind") or "image").strip().lower()
             note = str(item.get("note") or "").strip()[:1000]
+            selected_path = str(item.get("selected_path") or item.get("default_path") or "").strip()[:1000]
+            selected_label = str(item.get("selected_label") or "").strip()[:160]
+            selected_kind = str(item.get("selected_kind") or kind).strip().lower()
         else:
             key = clean_template_key(item, f"slot_{index}")
             label = key
             kind = "image"
             note = ""
+            selected_path = ""
+            selected_label = ""
+            selected_kind = kind
         if kind not in {"image", "video", "text"}:
             kind = "image"
+        if selected_kind not in {"image", "video"}:
+            selected_kind = "video" if kind == "video" else "image"
+        if selected_path and not selected_path.startswith("/media-library/"):
+            selected_path = ""
         if key in seen:
             continue
         seen.add(key)
-        slots.append({"key": key, "label": label or key, "kind": kind, "note": note})
+        slots.append({
+            "key": key,
+            "label": label or key,
+            "kind": kind,
+            "note": note,
+            "selected_path": selected_path,
+            "selected_kind": selected_kind if selected_path else "",
+            "selected_label": selected_label if selected_path else "",
+        })
     return slots[:24]
 
 
@@ -802,6 +820,9 @@ def normalize_video_template(item):
     default_method = str(settings.get("default_method") or item.get("default_method") or "i2v").strip()
     if default_method not in VIDEO_TEMPLATE_METHODS:
         default_method = "i2v"
+    run_mode = str(settings.get("run_mode") or item.get("run_mode") or "auto").strip().lower()
+    if run_mode not in {"auto", "manual"}:
+        run_mode = "auto"
     variables = normalize_template_variables(item.get("variables"))
     slots = normalize_template_slots(item.get("slots"))
     shots = normalize_template_shots(item.get("shots"))
@@ -833,6 +854,7 @@ def normalize_video_template(item):
             "resolution": resolution,
             "default_method": default_method,
             "default_shot_duration": max(1, min(15, default_shot_duration)),
+            "run_mode": run_mode,
         },
         "stats": {
             "shot_count": len(shots),

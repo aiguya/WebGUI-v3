@@ -366,3 +366,34 @@
   - `git diff --check` 통과.
   - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-27`에서 새 HTML/JS/CSS 반영 확인.
 - 백업: `backups/before-template-run-mode-status-20260603-225500`
+
+### 템플릿 실행 슬롯/모드 저장과 확인 조작 UI
+- 목표: 템플릿 저장 후 실행 준비에 연결한 레퍼런스 이미지가 사라지고, 수동/자동 실행 모드가 저장되지 않으며, 수동 확인 버튼이 보이지 않는 문제를 고친다.
+- 원인:
+  - `saveTemplateEditor()`가 저장 후 `setTemplateEditorItem()`을 다시 호출하면서 `resetTemplateRunState()`가 `templateRunState.slots`와 모드를 초기화했다.
+  - 템플릿 JSON의 슬롯 정의에는 선택한 라이브러리 파일 경로와 실행 모드가 저장되지 않았다.
+  - 큐 카드의 액션 버튼을 숨기는 CSS 규칙 때문에 확인 대기 상태에서도 `다음 컷`/`재시도`/`중단` 버튼이 보이지 않을 수 있었다.
+- 결정:
+  - 템플릿 슬롯에 `selected_path`, `selected_kind`, `selected_label`을 저장한다.
+  - 템플릿 설정에 `run_mode`를 저장한다.
+  - 템플릿 로드/저장 직후 실행 준비 상태를 저장된 슬롯과 모드로 복원한다.
+  - 수동 확인 조작은 큐 카드뿐 아니라 중앙 진행 패널에서도 바로 누를 수 있게 한다.
+- 변경:
+  - `app.py`: 템플릿 슬롯 선택값과 `settings.run_mode` 정규화/저장 추가.
+  - `static/app.js`: 저장 payload에 현재 슬롯 선택과 실행 모드 포함, 로드 시 복원, 중앙 진행 패널 액션 버튼 추가.
+  - `static/styles.css`: 중앙 진행 패널 액션 버튼 및 확인 대기 큐 액션 버튼 표시 override 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-28` / `webgui-shell-v3-28`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `normalize_video_template`에서 `run_mode`, `selected_path`, `selected_kind`, `selected_label` 보존 확인.
+- 백업: `backups/before-template-slot-selection-persist-20260603-232500`
+
+### 템플릿 슬롯 저장/수동 확인 UI 추가 검증
+- 확인 시각: 2026-06-03 23:40 KST 전후.
+- 추가 확인:
+  - 기존 `v3-27` 서버가 살아 있어 HTML만 이전 버전을 내보내던 상태를 확인하고, 해당 서버 프로세스를 종료한 뒤 v3 서버를 재시작했다.
+  - `http://127.0.0.1:7863/?v=20260603-v3-28` HTML이 `20260603-v3-28` 정적 파일을 참조하는 것을 확인했다.
+  - `/static/app.js?v=20260603-v3-28`에 슬롯 선택 저장(`selected_path`)과 중앙 진행 패널 조작 UI(`progress-actions`)가 포함된 것을 확인했다.
+  - `/static/styles.css?v=20260603-v3-28`에 수동 확인 대기 상태 버튼 표시 override가 포함된 것을 확인했다.

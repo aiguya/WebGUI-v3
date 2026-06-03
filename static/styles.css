@@ -1004,6 +1004,18 @@ input[type="range"] {
   margin: -4px 0 12px;
 }
 
+.progress-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.progress-actions button {
+  min-height: 34px;
+  padding: 0 14px;
+}
+
 .progress-bar {
   height: 10px;
   border-radius: 999px;
@@ -1033,6 +1045,12 @@ input[type="range"] {
 
 .progress-overlay.is-error .progress-bar span {
   background: var(--danger);
+}
+
+.queue-job.is-review .queue-actions {
+  display: flex !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
 
 .progress-indeterminate span {
@@ -7402,4 +7420,10 @@ html body button.template-favorite-filter.template-favorite-filter.template-favo
 html body button.favorite-button.favorite-button.favorite-button.favorite-button::before,
 html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter::before {
   background: currentColor !important;
+}
+
+html body .queue-job.is-review .queue-actions {
+  display: flex !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
