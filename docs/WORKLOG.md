@@ -166,3 +166,15 @@
   - `static/styles.css`: 드래그 중 카드 축소/투명도, 드롭 영역, 자동 스크롤 방향 힌트 스타일 추가.
   - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-18` / `webgui-shell-v3-18`로 갱신.
 - 백업: `backups/before-template-dnd-motion-scroll-20260603-123825`
+
+### 적용 미리보기 컷 드래그 정렬
+
+- 목표: 적용 미리보기 패널에서도 컷 카드를 드래그해 순서를 바꿀 수 있게 하고, 변경된 순서를 실제 템플릿 컷 블록에 반영한다.
+- 결정:
+  - 미리보기 카드 전체가 아니라 카드 헤더의 전용 `↕` 핸들을 드래그 대상으로 둬서 기존 클릭 시 편집 위치 이동 동작과 충돌하지 않게 한다.
+  - 미리보기에서 순서를 바꾸면 가운데 컷 블록 목록도 같은 순서로 다시 렌더링한다.
+- 변경:
+  - `static/app.js`: 미리보기 카드 드래그 핸들, 미리보기 순서 수집, 실제 컷 블록 재정렬, 드래그 애니메이션/자동 스크롤 연결 추가.
+  - `static/styles.css`: 미리보기 드래그 핸들, 드래그 중 카드 상태, 드롭 영역/자동 스크롤 힌트 스타일 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-19` / `webgui-shell-v3-19`로 갱신.
+- 백업: `backups/before-template-preview-dnd-20260603-124718`

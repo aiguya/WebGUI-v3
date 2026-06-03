@@ -199,8 +199,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-18";
-const appShellCacheName = "webgui-shell-v3-18";
+const appStaticVersion = "20260603-v3-19";
+const appShellCacheName = "webgui-shell-v3-19";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -2370,6 +2370,7 @@ function renderTemplatePreview() {
         <header>
           <strong>${String(index + 1).padStart(2, "0")} · ${escapeHtml(shot.title || "컷")}</strong>
           <span>${escapeHtml(templateMethodLabels[shot.method] || shot.method)} · ${escapeHtml(String(shot.duration || 0))}초 · ${escapeHtml(templateTransitionLabels[shot.transition] || shot.transition)}</span>
+          <i class="template-preview-drag" data-preview-drag-handle draggable="true" aria-label="드래그로 컷 순서 변경">↕</i>
         </header>
         <pre>${escapeHtml(prompt)}</pre>
       </article>
@@ -2396,15 +2397,17 @@ function focusTemplateShot(index) {
 }
 
 function templateShotDragTarget(list, clientY) {
-  return Array.from(list.querySelectorAll("[data-template-shot]:not(.is-dragging)")).find(card => {
+  const selector = list?.id === "templatePreview" ? "[data-template-preview-shot]" : "[data-template-shot]";
+  return Array.from(list.querySelectorAll(`${selector}:not(.is-dragging)`)).find(card => {
     const box = card.getBoundingClientRect();
     return clientY < box.top + (box.height / 2);
   });
 }
 
 function templateShotRects(list) {
+  const selector = list?.id === "templatePreview" ? "[data-template-preview-shot]" : "[data-template-shot]";
   const rects = new Map();
-  list?.querySelectorAll("[data-template-shot]").forEach(card => {
+  list?.querySelectorAll(selector).forEach(card => {
     rects.set(card, card.getBoundingClientRect());
   });
   return rects;
@@ -2412,7 +2415,8 @@ function templateShotRects(list) {
 
 function animateTemplateShotMove(list, beforeRects) {
   if (!list || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  list.querySelectorAll("[data-template-shot]:not(.is-dragging)").forEach(card => {
+  const selector = list.id === "templatePreview" ? "[data-template-preview-shot]" : "[data-template-shot]";
+  list.querySelectorAll(`${selector}:not(.is-dragging)`).forEach(card => {
     const before = beforeRects.get(card);
     if (!before) return;
     const after = card.getBoundingClientRect();
@@ -2498,6 +2502,43 @@ function finishTemplateShotDrag(list) {
   dragging?.classList.remove("is-dragging");
   renderTemplateShots(collectTemplateShots());
   renderTemplatePreview();
+}
+
+function templatePreviewOrder() {
+  return Array.from(document.querySelectorAll("#templatePreview [data-template-preview-shot]"))
+    .map(node => Number.parseInt(node.dataset.templatePreviewShot || "-1", 10))
+    .filter(index => Number.isInteger(index) && index >= 0);
+}
+
+function applyTemplatePreviewOrder() {
+  const order = templatePreviewOrder();
+  const shots = collectTemplateShots();
+  if (order.length !== shots.length) {
+    renderTemplatePreview();
+    return;
+  }
+  const used = new Set();
+  const reordered = [];
+  order.forEach(index => {
+    if (used.has(index) || !shots[index]) return;
+    used.add(index);
+    reordered.push(shots[index]);
+  });
+  if (reordered.length !== shots.length) {
+    renderTemplatePreview();
+    return;
+  }
+  renderTemplateShots(reordered);
+  renderTemplatePreview();
+}
+
+function finishTemplatePreviewDrag(list) {
+  if (!list) return;
+  const dragging = list.querySelector("[data-template-preview-shot].is-dragging");
+  stopTemplateShotAutoScroll(list);
+  list.classList.remove("is-drop-active");
+  dragging?.classList.remove("is-dragging");
+  if (dragging) applyTemplatePreviewOrder();
 }
 
 function setTemplateEditorItem(item = {}) {
@@ -3015,6 +3056,7 @@ document.querySelector("#copyTemplatePreview")?.addEventListener("click", async 
 });
 
 document.querySelector("#templatePreview")?.addEventListener("click", event => {
+  if (event.target.closest("[data-preview-drag-handle]")) return;
   const item = event.target.closest("[data-template-preview-shot]");
   if (!item) return;
   focusTemplateShot(Number.parseInt(item.dataset.templatePreviewShot || "0", 10));
@@ -3022,6 +3064,7 @@ document.querySelector("#templatePreview")?.addEventListener("click", event => {
 
 document.querySelector("#templatePreview")?.addEventListener("keydown", event => {
   if (event.key !== "Enter" && event.key !== " ") return;
+  if (event.target.closest("[data-preview-drag-handle]")) return;
   const item = event.target.closest("[data-template-preview-shot]");
   if (!item) return;
   event.preventDefault();
@@ -3102,6 +3145,44 @@ document.querySelector("#templateShots")?.addEventListener("drop", event => {
 document.querySelector("#templateShots")?.addEventListener("dragend", event => {
   if (!event.target.closest("[data-shot-drag-handle]")) return;
   finishTemplateShotDrag(event.currentTarget);
+});
+
+document.querySelector("#templatePreview")?.addEventListener("dragstart", event => {
+  const handle = event.target.closest("[data-preview-drag-handle]");
+  if (!handle) return;
+  const card = handle.closest("[data-template-preview-shot]");
+  if (!card) return;
+  card.classList.add("is-dragging");
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", "template-preview-shot");
+});
+
+document.querySelector("#templatePreview")?.addEventListener("dragover", event => {
+  const list = event.currentTarget;
+  const dragging = list.querySelector("[data-template-preview-shot].is-dragging");
+  if (!dragging) return;
+  event.preventDefault();
+  list.classList.add("is-drop-active");
+  event.dataTransfer.dropEffect = "move";
+  updateTemplateShotAutoScroll(list, event.clientY);
+  const target = templateShotDragTarget(list, event.clientY);
+  if (!target && dragging.nextElementSibling) {
+    moveTemplateShotWithAnimation(list, () => list.appendChild(dragging));
+  } else if (target && target !== dragging.nextElementSibling) {
+    moveTemplateShotWithAnimation(list, () => list.insertBefore(dragging, target));
+  }
+});
+
+document.querySelector("#templatePreview")?.addEventListener("drop", event => {
+  const list = event.currentTarget;
+  if (!list.querySelector("[data-template-preview-shot].is-dragging")) return;
+  event.preventDefault();
+  finishTemplatePreviewDrag(list);
+});
+
+document.querySelector("#templatePreview")?.addEventListener("dragend", event => {
+  if (!event.target.closest("[data-preview-drag-handle]")) return;
+  finishTemplatePreviewDrag(event.currentTarget);
 });
 
 async function loadLibrary(resetVisible = true) {
