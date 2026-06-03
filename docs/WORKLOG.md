@@ -309,3 +309,22 @@
   - `normalize_video_template`, `normalize_template_block`에서 `image_model`, `video_model` 보존 확인.
   - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-25`에서 새 HTML/JS 반영 확인.
 - 백업: `backups/before-template-shot-model-select-20260603-164500`
+
+### 템플릿 이미지 결과 슬롯 등록
+- 목표: 템플릿의 `이미지 생성`, `이미지 편집` 컷 결과물을 배우/레퍼런스 이미지 슬롯에 다시 등록해서 뒤쪽 컷이 해당 결과물을 참조할 수 있게 한다.
+- 결정:
+  - 컷 카드에 `결과 저장 슬롯` 입력을 추가하고, 이미지 생성/이미지 편집 방식에서만 표시한다.
+  - 결과 저장 슬롯은 템플릿 JSON과 블록 JSON에 `output_slot`으로 저장한다.
+  - 자동 실행에서는 컷 성공 직후 슬롯에 등록하고, 수동 확인 모드에서는 사용자가 결과를 확정한 뒤에만 등록한다.
+  - retry를 선택한 경우 잘못 생성된 결과는 슬롯에 등록하지 않는다.
+- 변경:
+  - `app.py`: 템플릿 컷/블록 정규화에 `output_slot` 저장 추가.
+  - `static/app.js`: 결과 저장 슬롯 UI, 저장/블록 보관/실행 계획 표시, 실행 중 슬롯 등록 로직 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-26` / `webgui-shell-v3-26`으로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `normalize_video_template`, `normalize_template_block`에서 `output_slot` 보존 확인.
+  - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-26`에서 새 HTML/JS 반영 확인.
+- 백업: `backups/before-template-result-slot-output-20260603-213000`

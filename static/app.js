@@ -205,8 +205,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-25";
-const appShellCacheName = "webgui-shell-v3-25";
+const appStaticVersion = "20260603-v3-26";
+const appShellCacheName = "webgui-shell-v3-26";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1067,6 +1067,7 @@ function templateRunPlanText() {
     `# ${String(index + 1).padStart(2, "0")} ${shot.title || "컷"}`,
     `방식: ${templateMethodLabels[shot.method] || shot.method}`,
     shot.image_model || shot.video_model ? `모델: ${shot.image_model || shot.video_model}` : "",
+    shot.output_slot ? `결과 슬롯: ${shot.output_slot}` : "",
     `길이: ${shot.duration || payload.settings.default_shot_duration || 6}초`,
     `참조: ${templateReferenceSlots(shot).join(", ") || "이전 결과 또는 첫 슬롯"}`,
     templateShotPromptText(payload, shot),
@@ -1204,6 +1205,28 @@ function updateTemplatePreviousResult(previous, data) {
   }
 }
 
+function registerTemplateShotOutputSlot(payload, shot, produced, slotState) {
+  const key = String(shot.output_slot || "").trim();
+  if (!key || !["image", "edit"].includes(shot.method)) return null;
+  const item = (produced || []).find(entry => entry?.file_path && entry.kind !== "video");
+  if (!item) return null;
+  const slot = {
+    path: item.file_path,
+    kind: "image",
+    label: shot.title || item.prompt || key,
+    source: "template-result",
+    source_template_id: payload?.id || "",
+    source_shot_id: shot.id || "",
+    updated_at: new Date().toISOString(),
+  };
+  slotState[key] = slot;
+  if (!payload?.id || templateSelectedId === payload.id) {
+    templateRunState.slots[key] = { ...slot };
+    renderTemplateRunPanel();
+  }
+  return slot;
+}
+
 function templateResultItems(data) {
   if (data?.items?.length) return data.items;
   if (data?.item) return [data.item];
@@ -1322,6 +1345,7 @@ async function runTemplateJob(job) {
         }
         previous.lastImagePath = nextPrevious.lastImagePath;
         previous.lastVideoPath = nextPrevious.lastVideoPath;
+        registerTemplateShotOutputSlot(payload, shot, produced, slotState);
         accepted = true;
       }
     }
@@ -2416,11 +2440,11 @@ const templateMethodLabels = {
 
 const templateMethodUi = {
   image: {
-    fields: new Set(["image_model", "prompt", "retry", "notes"]),
+    fields: new Set(["image_model", "output_slot", "prompt", "retry", "notes"]),
     hint: "텍스트 프롬프트로 이미지를 생성하고, 다음 컷의 이미지 입력으로 넘깁니다.",
   },
   edit: {
-    fields: new Set(["image_model", "references", "prompt", "retry", "notes"]),
+    fields: new Set(["image_model", "references", "output_slot", "prompt", "retry", "notes"]),
     hint: "이미지 슬롯을 1~3개 참조해 편집합니다. 첫 번째 슬롯이 메인 이미지가 됩니다.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
@@ -2659,6 +2683,10 @@ function renderTemplateShots(items = []) {
           <label>영상 모델</label>
           <select data-shot-video-model>${templateModelOptionList((item.method || "i2v") === "official" ? templateOfficialVideoModelLabels : templateVideoModelLabels, item.video_model || "grok-imagine-video", "grok-imagine-video")}</select>
         </div>
+        <div data-shot-field="output_slot">
+          <label>결과 저장 슬롯</label>
+          <input type="text" data-shot-output-slot placeholder="main_actor" value="${escapeHtml(item.output_slot || "")}">
+        </div>
         <div data-shot-field="duration">
           <label>길이</label>
           <input type="number" data-shot-duration min="1" max="15" step="0.1" value="${escapeHtml(item.duration || 6)}">
@@ -2739,6 +2767,7 @@ function collectTemplateShots() {
       method,
       image_model: row.querySelector("[data-shot-image-model]")?.value || "",
       video_model: row.querySelector("[data-shot-video-model]")?.value || "",
+      output_slot: row.querySelector("[data-shot-output-slot]")?.value || "",
       duration: Number.parseFloat(row.querySelector("[data-shot-duration]")?.value || "6") || 6,
       reference_slot: referenceSlots[0] || "",
       reference_slots: referenceSlots,
@@ -2922,6 +2951,7 @@ function renderTemplatePreview() {
         <header>
           <strong>${String(index + 1).padStart(2, "0")} · ${escapeHtml(shot.title || "컷")}</strong>
           <span>${escapeHtml(templateMethodLabels[shot.method] || shot.method)} · ${escapeHtml(String(shot.duration || 0))}초 · ${escapeHtml(templateTransitionLabels[shot.transition] || shot.transition)}</span>
+          ${shot.output_slot ? `<span>결과 → ${escapeHtml(shot.output_slot)}</span>` : ""}
           <i class="template-preview-drag" data-preview-drag-handle draggable="true" aria-label="드래그로 컷 순서 변경">↕</i>
         </header>
         <pre>${escapeHtml(prompt)}</pre>
@@ -3192,6 +3222,7 @@ function templateBlockToShot(block = {}) {
     duration: block.duration || 6,
     reference_slot: block.reference_slot || referenceSlots[0] || "",
     reference_slots: referenceSlots,
+    output_slot: block.output_slot || "",
     transition: block.transition || "cut",
     prompt: block.prompt || "",
     camera: block.camera || "",
@@ -3211,6 +3242,7 @@ function filteredTemplateBlocks() {
         item.method_label,
         item.image_model,
         item.video_model,
+        item.output_slot,
         item.reference_slot,
         ...(item.reference_slots || []),
         item.prompt,
@@ -3247,7 +3279,7 @@ function renderTemplateBlocks() {
       <button type="button" class="favorite-button template-block-favorite${item.favorite ? " active" : ""}" data-template-block-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}"></button>
       <div class="template-block-body">
         <strong>${escapeHtml(item.title || "컷 블록")}</strong>
-        <small>${escapeHtml(item.method_label || item.method || "방식 없음")} · ${escapeHtml(item.image_model || item.video_model || "기본 모델")} · ${escapeHtml(templateReferenceSlots(item).join(", ") || "참조 없음")} · ${Math.round((Number(item.duration) || 0) * 10) / 10}초</small>
+        <small>${escapeHtml(item.method_label || item.method || "방식 없음")} · ${escapeHtml(item.image_model || item.video_model || "기본 모델")} · 참조 ${escapeHtml(templateReferenceSlots(item).join(", ") || "없음")} · 결과 ${escapeHtml(item.output_slot || "없음")} · ${Math.round((Number(item.duration) || 0) * 10) / 10}초</small>
         <p>${escapeHtml(item.prompt || item.camera || item.notes || "")}</p>
       </div>
       <div class="template-block-actions">
@@ -3340,6 +3372,7 @@ function templateShotBlockPayload(shot, index) {
     duration: shot.duration || payload.settings.default_shot_duration || 6,
     reference_slot: shot.reference_slot || "",
     reference_slots: shot.reference_slots || [],
+    output_slot: shot.output_slot || "",
     transition: shot.transition || "cut",
     prompt: shot.prompt || "",
     camera: shot.camera || "",
