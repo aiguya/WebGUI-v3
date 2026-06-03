@@ -452,3 +452,24 @@
   - `git diff --check` 통과.
   - `20260604-v3-30` 잔여 참조 없음 확인.
 - 백업: `backups/before-template-fetch-retry-review-20260604-004500`
+
+### 템플릿 참조 슬롯 해석 보정
+- 목표: 템플릿 이미지/영상 단계에서 프롬프트가 슬롯 문구로 꼬이거나, 명시한 참조 슬롯 대신 다른 슬롯/이전 결과가 사용되는 문제를 줄인다.
+- 원인:
+  - 이미지 생성 블록은 참조 슬롯을 프롬프트 텍스트에는 넣을 수 있었지만 실제 이미지 파일을 API에 첨부하지 않았다.
+  - 명시 참조 슬롯이 비어 있어도 `templateSlotEntry()`가 첫 번째 같은 종류 슬롯으로 fallback할 수 있어, 의도와 다른 이미지/영상이 참조될 수 있었다.
+  - 실제 API 전송 프롬프트에 `참조 슬롯: [슬롯명]` 같은 내부 UI 문구가 함께 들어가 프롬프트가 불필요하게 섞였다.
+- 결정:
+  - `이미지 생성` 블록도 1~3개 이미지 참조 슬롯을 선택할 수 있게 한다.
+  - 이미지 생성 블록에 참조 슬롯이 있으면 `/api/t2i`가 아니라 `/api/i2i`로 보내 실제 참조 이미지를 첨부한다.
+  - 명시 참조 슬롯은 정확히 해당 슬롯만 사용하고, 비어 있으면 다른 슬롯으로 대체하지 않는다.
+  - 실제 API 프롬프트에서는 내부 `참조 슬롯` 문구를 제거하되, 미리보기/계획 표시에는 유지한다.
+- 변경:
+  - `static/app.js`: 이미지 생성 블록 참조 UI 활성화, `image` 블록 참조 기반 `/api/i2i` 라우팅, 명시 참조 슬롯 strict lookup, 누락 슬롯 오류 메시지, 실행 프롬프트의 참조 슬롯 문구 제거.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260604-v3-32` / `webgui-shell-v3-32`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `20260604-v3-31` 잔여 참조 없음 확인.
+- 백업: `backups/before-template-reference-resolution-20260604-010500`

@@ -207,8 +207,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-31";
-const appShellCacheName = "webgui-shell-v3-31";
+const appStaticVersion = "20260604-v3-32";
+const appShellCacheName = "webgui-shell-v3-32";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1206,9 +1206,24 @@ function templateExactSlotEntry(key, expectedKind = "image", slotState = templat
   return templateSlotMatchesKind(slotState[key], expectedKind) ? slotState[key] : null;
 }
 
+function missingTemplateReferenceKeys(keys, expectedKind, slotState) {
+  return (keys || []).filter(key => !templateExactSlotEntry(key, expectedKind, slotState)?.path);
+}
+
+function assertTemplateReferencesReady(shot, expectedKind, slotState) {
+  const keys = templateReferenceSlots(shot);
+  const missing = missingTemplateReferenceKeys(keys, expectedKind, slotState);
+  if (!missing.length) return;
+  const label = expectedKind === "video" ? "영상" : "이미지";
+  throw new Error(`${shot.title || "컷"}: 참조 ${label} 슬롯이 비어 있거나 형식이 맞지 않습니다. (${missing.join(", ")})`);
+}
+
 function templateImageSourcePath(shot, previous, slotState) {
-  const slot = templateSlotEntry(shot.reference_slot, "image", slotState);
-  if (slot?.path) return slot.path;
+  const keys = templateReferenceSlots(shot);
+  if (keys.length) {
+    const slot = templateExactSlotEntry(keys[0], "image", slotState);
+    return slot?.path || "";
+  }
   return previous.lastImagePath || "";
 }
 
@@ -1223,13 +1238,17 @@ function templateImageSourcePaths(shot, previous, slotState, limit = 3) {
       paths.push(slot.path);
     }
   });
+  if (keys.length) return paths.slice(0, limit);
   if (!paths.length && previous.lastImagePath) paths.push(previous.lastImagePath);
   return paths.slice(0, limit);
 }
 
 function templateVideoSourcePath(shot, previous, slotState) {
-  const slot = templateSlotEntry(shot.reference_slot, "video", slotState);
-  if (slot?.path) return slot.path;
+  const keys = templateReferenceSlots(shot);
+  if (keys.length) {
+    const slot = templateExactSlotEntry(keys[0], "video", slotState);
+    return slot?.path || "";
+  }
   return previous.lastVideoPath || "";
 }
 
@@ -1246,11 +1265,23 @@ function appendTemplateImageReferences(body, paths) {
 }
 
 function buildTemplateShotRequest(payload, shot, previous, slotState = templateRunState.slots) {
-  const prompt = templateShotPromptText(payload, shot);
+  const prompt = templateShotPromptText(payload, shot, { includeReferenceText: false });
   const duration = String(shot.duration || payload.settings.default_shot_duration || 6);
   const aspectRatio = payload.settings.aspect_ratio || "9:16";
   const resolution = payload.settings.resolution || "720p";
   if (shot.method === "image") {
+    const referencePaths = templateImageSourcePaths(shot, previous, slotState, 3);
+    if (templateReferenceSlots(shot).length) {
+      assertTemplateReferencesReady(shot, "image", slotState);
+      const body = new FormData();
+      body.set("prompt", prompt);
+      body.set("aspect_ratio", aspectRatio);
+      body.set("image_resolution", "auto");
+      if (shot.image_model) body.set("image_model", shot.image_model);
+      body.set("edit_input_mode", "multi");
+      appendTemplateImageReferences(body, referencePaths);
+      return { endpoint: "/api/i2i", prompt, options: { method: "POST", body }, effectiveMethod: "edit" };
+    }
     return {
       endpoint: "/api/t2i",
       prompt,
@@ -1262,6 +1293,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     };
   }
   if (shot.method === "edit") {
+    if (templateReferenceSlots(shot).length) assertTemplateReferencesReady(shot, "image", slotState);
     const body = new FormData();
     body.set("prompt", prompt);
     body.set("aspect_ratio", aspectRatio);
@@ -1272,6 +1304,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     return { endpoint: "/api/i2i", prompt, options: { method: "POST", body } };
   }
   if (shot.method === "i2v") {
+    if (templateReferenceSlots(shot).length) assertTemplateReferencesReady(shot, "image", slotState);
     const body = new FormData();
     body.set("prompt", prompt);
     body.set("duration", duration);
@@ -1282,6 +1315,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     return { endpoint: "/api/i2v", prompt, options: { method: "POST", body } };
   }
   if (shot.method === "official" || shot.method === "frame") {
+    if (templateReferenceSlots(shot).length) assertTemplateReferencesReady(shot, "video", slotState);
     const source = templateVideoSourcePath(shot, previous, slotState);
     if (!source) throw new Error("이 컷에는 영상 레퍼런스가 필요합니다. 앞 컷에서 영상을 생성하거나 영상 슬롯을 연결해 주세요.");
     const body = new FormData();
@@ -2641,8 +2675,10 @@ const templateMethodLabels = {
 
 const templateMethodUi = {
   image: {
-    fields: new Set(["image_model", "output_slot", "prompt", "retry", "notes"]),
-    hint: "텍스트 프롬프트로 이미지를 생성하고, 다음 컷의 이미지 입력으로 넘깁니다.",
+    fields: new Set(["image_model", "references", "output_slot", "prompt", "retry", "notes"]),
+    hint: "텍스트 프롬프트로 이미지를 생성합니다. 이미지 슬롯을 지정하면 해당 이미지를 실제 참조로 첨부해 참조 기반 이미지 생성으로 처리합니다.",
+    referenceLabel: "이미지 슬롯",
+    referencePlaceholder: "main_actor",
   },
   edit: {
     fields: new Set(["image_model", "references", "output_slot", "prompt", "retry", "notes"]),
@@ -2802,10 +2838,10 @@ function applyTemplateShotMethodUi(row) {
   }
   const singleReference = row.querySelector("[data-shot-reference]");
   const referenceSlots = Array.from(row.querySelectorAll("[data-shot-reference-slot]"));
-  if (method === "edit" && referenceSlots.length && singleReference?.value && !referenceSlots.some(input => input.value.trim())) {
+  if ((method === "edit" || method === "image") && referenceSlots.length && singleReference?.value && !referenceSlots.some(input => input.value.trim())) {
     referenceSlots[0].value = singleReference.value;
   }
-  if (method !== "edit" && singleReference && !singleReference.value.trim() && referenceSlots[0]?.value.trim()) {
+  if (method !== "edit" && method !== "image" && singleReference && !singleReference.value.trim() && referenceSlots[0]?.value.trim()) {
     singleReference.value = referenceSlots[0].value;
   }
   row.querySelectorAll("[data-shot-field]").forEach(field => {
@@ -2968,7 +3004,7 @@ function collectTemplateShots() {
       .filter(Boolean)
       .slice(0, 3);
     const singleReference = row.querySelector("[data-shot-reference]")?.value.trim() || "";
-    const referenceSlots = method === "edit"
+    const referenceSlots = method === "edit" || method === "image"
       ? (multiReferences.length ? multiReferences : (singleReference ? [singleReference] : []))
       : (singleReference ? [singleReference] : []);
     return {
@@ -3029,7 +3065,8 @@ function substituteTemplateText(text, variables, slots) {
   });
 }
 
-function templateShotPromptText(payload, shot) {
+function templateShotPromptText(payload, shot, options = {}) {
+  const includeReferenceText = options.includeReferenceText !== false;
   const variables = payload.variables || [];
   const slots = payload.slots || [];
   const referenceText = templateReferenceSlots(shot)
@@ -3039,7 +3076,7 @@ function templateShotPromptText(payload, shot) {
     payload.global_prompt,
     shot.prompt,
     shot.camera ? `카메라: ${shot.camera}` : "",
-    referenceText ? `참조 슬롯: ${referenceText}` : "",
+    includeReferenceText && referenceText ? `참조 슬롯: ${referenceText}` : "",
     payload.negative_prompt ? `제외/주의: ${payload.negative_prompt}` : "",
   ].filter(Boolean);
   return substituteTemplateText(chunks.join("\n"), variables, slots);
