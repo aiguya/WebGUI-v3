@@ -58,3 +58,23 @@
   - `docs/WORKLOG.md`: 기록 원칙과 2026-06-03 템플릿 작업 기록 추가.
 - 백업: `backups/before-worklog-20260603-105541`
 - 다음 단계: 이후 기능 작업 완료 시 이 파일에 작업 목표, 결정, 변경, 검증, 커밋을 계속 누적한다.
+
+### 아이콘 포함 EXE 런처
+
+- 목표: `run_webgork_app.bat`을 더블클릭용 아이콘 포함 실행파일로 실행할 수 있게 한다.
+- 결정:
+  - 앱 전체를 단일 파일로 패킹하지 않고, 기존 배포 폴더 옆에서 배치파일을 실행하는 작은 Windows 런처를 만든다.
+  - 실행파일 이름은 `WebGUI.v3.exe`로 둔다.
+  - 런처는 같은 폴더의 `run_webgork_app.bat`을 찾고, 없으면 오류 메시지 창을 띄운다.
+- 변경:
+  - `tools/WebGuiLauncher.cs`: 배치파일 실행용 WinForms 런처 소스 추가.
+  - `tools/build_webgui_launcher.ps1`: 아이콘 생성과 EXE 컴파일 스크립트 추가.
+  - `static/icon.ico`: EXE에 삽입할 ICO 아이콘 생성.
+  - `WebGUI.v3.exe`: `run_webgork_app.bat` 실행용 Windows 런처 생성.
+- 검증:
+  - `tools/build_webgui_launcher.ps1` 실행 성공.
+  - `WebGUI.v3.exe` 생성 확인.
+  - `static/icon.ico` 생성 확인.
+  - `System.Drawing.Icon.ExtractAssociatedIcon`으로 EXE 아이콘 추출 확인.
+- 백업: `backups/before-exe-launcher-20260603-105919`
+- 주의: 이 EXE는 단독 패키징 파일이 아니라 같은 폴더의 `run_webgork_app.bat`을 실행하는 런처다.
