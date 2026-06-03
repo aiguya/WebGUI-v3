@@ -110,3 +110,12 @@
   - `static/styles.css`: `.favorite-button`, `.template-favorite-filter`를 아이콘 전용 버튼 스타일로 변경.
   - `templates/index.html`: 정적 캐시 버전 `20260603-v3-12`로 갱신.
 - 백업: `backups/before-favorite-icon-buttons-20260603-114230`
+
+### 즐겨찾기 아이콘 최종 오버라이드
+
+- 목표: 일부 화면에서 즐겨찾기 버튼이 회색 둥근 버튼처럼 보이는 문제를 제거한다.
+- 결정: CSS 마지막에 즐겨찾기 전용 최종 오버라이드를 추가해 일반 버튼 스타일이 덮지 못하게 한다.
+- 변경:
+  - `static/styles.css`: `button.favorite-button`, `button.template-favorite-filter` 최종 오버라이드 추가.
+  - `templates/index.html`: 정적 캐시 버전 `20260603-v3-13`으로 갱신.
+- 백업: `backups/before-favorite-icon-final-override-20260603-115309`

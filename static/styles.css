@@ -7014,3 +7014,66 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
     grid-template-columns: 1fr;
   }
 }
+
+/* v3-13 final favorite icon override */
+button.favorite-button,
+button.favorite-button:hover,
+button.favorite-button:active,
+button.favorite-button:focus-visible,
+button.favorite-button.active,
+button.template-favorite-filter,
+button.template-favorite-filter:hover,
+button.template-favorite-filter:active,
+button.template-favorite-filter:focus-visible,
+button.template-favorite-filter.active {
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  min-height: 26px !important;
+  padding: 3px !important;
+  border: 0 !important;
+  border-color: transparent !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  outline-offset: 2px;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+button.favorite-button,
+button.template-favorite-filter {
+  color: rgba(247, 247, 244, .78) !important;
+}
+
+button.favorite-button:hover,
+button.favorite-button:focus-visible,
+button.template-favorite-filter:hover,
+button.template-favorite-filter:focus-visible {
+  color: #f7f7f4 !important;
+  transform: scale(1.08);
+}
+
+button.favorite-button.active,
+button.template-favorite-filter.active {
+  color: #ffd666 !important;
+}
+
+button.favorite-button::before,
+button.template-favorite-filter::before {
+  width: 20px !important;
+  height: 20px !important;
+  background: currentColor !important;
+  -webkit-mask: var(--favorite-empty-icon) center / contain no-repeat !important;
+  mask: var(--favorite-empty-icon) center / contain no-repeat !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .72)) !important;
+}
+
+button.favorite-button.active::before,
+button.template-favorite-filter.active::before {
+  -webkit-mask: var(--favorite-filled-icon) center / contain no-repeat !important;
+  mask: var(--favorite-filled-icon) center / contain no-repeat !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .72)) drop-shadow(0 0 8px rgba(255, 214, 102, .48)) !important;
+}
