@@ -433,3 +433,22 @@
   - `git diff --check` 통과.
   - `20260604-v3-29` 잔여 참조 없음 확인.
 - 백업: `backups/before-template-review-inline-preview-20260604-002000`
+
+### 템플릿 요청 연결 실패 복구
+- 목표: 템플릿 컷 요청 중 브라우저 `fetch()` 연결이 끊겼을 때 `Failed to fetch`만 표시하고 템플릿 전체가 실패 종료되는 문제를 줄인다.
+- 원인:
+  - `fetchTemplateShot()`이 브라우저 네트워크 예외를 그대로 바깥으로 던져, 요청 실패가 즉시 템플릿 실패 상태로 처리됐다.
+  - `Failed to fetch`는 서버가 오류 본문을 돌려준 것이 아니라 브라우저가 응답 자체를 받지 못한 상황이라 원인 파악이 어려웠다.
+- 결정:
+  - `Failed to fetch` 계열 오류를 “로컬 WebGUI 서버 응답을 받지 못함”이라는 설명 메시지로 변환한다.
+  - 템플릿 컷 요청 실패 시 중앙 팝업에서 `재시도` 또는 `중단`을 선택하게 하며, 자동 모드에서도 바로 실패 종료하지 않는다.
+  - 일반 큐 작업도 fetch 단절 시 같은 설명 메시지를 표시한다.
+- 변경:
+  - `static/app.js`: `friendlyFetchError()` 추가, `fetchTemplateShot()` 네트워크/JSON 응답 오류 처리 보강, `waitForTemplateRetry()` 추가, 템플릿 실행 루프에 재시도 대기 분기 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260604-v3-31` / `webgui-shell-v3-31`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `20260604-v3-30` 잔여 참조 없음 확인.
+- 백업: `backups/before-template-fetch-retry-review-20260604-004500`

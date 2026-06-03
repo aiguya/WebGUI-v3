@@ -207,8 +207,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-30";
-const appShellCacheName = "webgui-shell-v3-30";
+const appStaticVersion = "20260604-v3-31";
+const appShellCacheName = "webgui-shell-v3-31";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -257,6 +257,18 @@ function rememberApiError(data, fallback = "요청 실패") {
     detail: data.detail || data.next || "",
   };
   throw new Error(data.error || data.detail || fallback);
+}
+
+function friendlyFetchError(error, endpoint = "") {
+  const message = String(error?.message || error || "");
+  if (error?.name === "TypeError" && /fetch|network|load failed/i.test(message)) {
+    const wrapped = new Error("로컬 WebGUI 서버 응답을 받지 못했습니다. 서버 재시작, 긴 요청 중 연결 끊김, 또는 브라우저 네트워크 오류일 수 있습니다. 재시도하면 같은 요청을 다시 보냅니다.");
+    wrapped.isFetchDisconnect = true;
+    wrapped.endpoint = endpoint;
+    wrapped.originalMessage = message;
+    return wrapped;
+  }
+  return error instanceof Error ? error : new Error(message || "요청 연결에 실패했습니다.");
 }
 
 function activateTab(id) {
@@ -881,6 +893,7 @@ function renderQueue() {
     const progressLabel = `${Math.max(0, Math.min(100, Math.round(progress)))}%`;
     const review = job.templateRun?.review || {};
     const reviewNextLabel = review.isLast ? "완료" : "다음 컷";
+    const reviewHint = review.retryOnly ? "팝업에서 재시도/중단 선택" : `팝업에서 ${reviewNextLabel}/재시도/중단 선택`;
     const canViewFromQueue = job.status === "done" && (job.result?.item || job.result?.items?.length);
     const thumbViewAttribute = canViewFromQueue ? `data-view-job aria-label="작업 결과 보기"` : `aria-label="작업 상태"`;
     node.innerHTML = `
@@ -898,7 +911,7 @@ function renderQueue() {
         <div class="queue-progress"><span style="width:${progress}%"></span></div>
         <div class="queue-actions">
           ${job.status === "queued" ? `<button type="button" data-cancel-job>취소</button>` : ""}
-          ${job.status === "review" ? `<span class="queue-review-hint">팝업에서 ${reviewNextLabel}/재시도/중단 선택</span>` : ""}
+          ${job.status === "review" ? `<span class="queue-review-hint">${reviewHint}</span>` : ""}
           ${canViewFromQueue ? `<button type="button" data-view-job>보기</button>` : ""}
           ${(job.status === "done" || job.status === "failed" || job.status === "cancelled") ? `<button type="button" class="secondary" data-remove-job>정리</button>` : ""}
         </div>
@@ -1125,8 +1138,9 @@ async function runJob(job) {
     updateJob(job, { status: "done", result: data });
     showToast(`${job.type} 완료`);
   } catch (error) {
-    updateJob(job, { status: "failed", error: error.message });
-    showToast(error.message, true);
+    const friendly = friendlyFetchError(error, job.endpoint);
+    updateJob(job, { status: "failed", error: friendly.message });
+    showToast(friendly.message, true);
   } finally {
     progress.done();
     activeJobs -= 1;
@@ -1288,8 +1302,18 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
 }
 
 async function fetchTemplateShot(request) {
-  const response = await fetch(request.endpoint, request.options);
-  const data = await response.json();
+  let response;
+  try {
+    response = await fetch(request.endpoint, request.options);
+  } catch (error) {
+    throw friendlyFetchError(error, request.endpoint);
+  }
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(`템플릿 요청 응답을 읽지 못했습니다. HTTP ${response.status} ${response.statusText || ""}`.trim());
+  }
   if (!data.ok) rememberApiError(data);
   if (!data.ok) throw new Error(data.error || data.detail || "템플릿 컷 실행에 실패했습니다.");
   return data;
@@ -1365,6 +1389,30 @@ function waitForTemplateReview(job, detail, progress) {
   });
 }
 
+function waitForTemplateRetry(job, detail, progress) {
+  return new Promise(resolve => {
+    job.templateRun.review = { ...detail, resolve, retryOnly: true };
+    updateJob(job, {
+      status: "review",
+      progressPercent: detail.progressPercent,
+      progressText: `${detail.label} 요청 실패 · 재시도 대기`,
+      prompt: detail.prompt,
+      error: detail.errorMessage,
+      result: { ok: true, items: detail.items || [] },
+    });
+    progress?.message?.(
+      `${detail.label} 요청 실패 · ${detail.errorMessage}`,
+      detail.progressPercent,
+      "error",
+      [
+        { label: "재시도", action: () => resolveTemplateReview(job, "retry") },
+        { label: "중단", className: "secondary", action: () => resolveTemplateReview(job, "cancel") },
+      ],
+      detail.previewItems || detail.items || [],
+    );
+  });
+}
+
 function selectedTemplateRunMode() {
   const mode = document.querySelector("#templateRunMode")?.value === "manual" ? "manual" : "auto";
   templateRunState.mode = mode;
@@ -1433,7 +1481,28 @@ async function runTemplateJob(job) {
           progressText: `${label} 실행 중`,
           prompt: request.prompt,
         });
-        const data = await fetchTemplateShot(request);
+        let data;
+        try {
+          data = await fetchTemplateShot(request);
+        } catch (error) {
+          const friendly = friendlyFetchError(error, request.endpoint);
+          const retryPercent = Math.round((index / payload.shots.length) * 100);
+          const action = await waitForTemplateRetry(job, {
+            index,
+            label,
+            prompt: request.prompt,
+            errorMessage: friendly.message,
+            items: [...items],
+            previewItems: items.slice(-4),
+            progressPercent: retryPercent,
+          }, progress);
+          if (action === "retry") {
+            showToast(`${shot.title || "컷"} 재시도`);
+            continue;
+          }
+          updateJob(job, { status: "cancelled" });
+          throw new Error("템플릿 실행이 중단되었습니다.");
+        }
         if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
         const produced = templateResultItems(data);
         items.splice(committedCount, items.length - committedCount, ...produced);
@@ -1457,7 +1526,10 @@ async function runTemplateJob(job) {
             previewItems: produced,
             progressPercent: reviewPercent,
           }, progress);
-          if (action === "cancel") throw new Error("템플릿 실행이 취소되었습니다.");
+          if (action === "cancel") {
+            updateJob(job, { status: "cancelled" });
+            throw new Error("템플릿 실행이 취소되었습니다.");
+          }
           if (action === "retry") {
             items.splice(committedCount);
             previous.lastImagePath = previousBeforeShot.lastImagePath;
