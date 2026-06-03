@@ -1846,7 +1846,7 @@ function renderPromptList() {
   }
   list.innerHTML = items.map(item => `
     <article class="prompt-card${item.id === promptSelectedId ? " active" : ""}" data-prompt-id="${escapeHtml(item.id)}">
-      <button type="button" class="favorite-button prompt-favorite${item.favorite ? " active" : ""}" data-prompt-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}">★</button>
+      <button type="button" class="favorite-button prompt-favorite${item.favorite ? " active" : ""}" data-prompt-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}"></button>
       <div class="prompt-card-body">
         <strong>${escapeHtml(item.title || "프롬프트")}</strong>
         <small>${escapeHtml(promptTaskLabels[item.task] || item.task || "범용")} · ${formatPromptTime(item.updated_at)}</small>
@@ -2451,7 +2451,7 @@ function renderTemplateList() {
   }
   list.innerHTML = items.map(item => `
     <article class="template-card${item.id === templateSelectedId ? " active" : ""}" data-template-id="${escapeHtml(item.id)}">
-      <button type="button" class="favorite-button template-favorite${item.favorite ? " active" : ""}" data-template-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}">★</button>
+      <button type="button" class="favorite-button template-favorite${item.favorite ? " active" : ""}" data-template-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}"></button>
       <div class="template-card-body">
         <strong>${escapeHtml(item.title || "영상 템플릿")}</strong>
         <small>${escapeHtml(item.genre || "장르 없음")} · ${item.stats?.shot_count || 0}컷 · ${Math.round((item.stats?.total_duration || 0) * 10) / 10}초 · ${formatPromptTime(item.updated_at)}</small>
@@ -2518,7 +2518,7 @@ function renderTemplateBlocks() {
   }
   list.innerHTML = items.map(item => `
     <article class="template-block-card" data-template-block-id="${escapeHtml(item.id)}">
-      <button type="button" class="favorite-button template-block-favorite${item.favorite ? " active" : ""}" data-template-block-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}">★</button>
+      <button type="button" class="favorite-button template-block-favorite${item.favorite ? " active" : ""}" data-template-block-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}"></button>
       <div class="template-block-body">
         <strong>${escapeHtml(item.title || "컷 블록")}</strong>
         <small>${escapeHtml(item.method_label || item.method || "방식 없음")} · ${escapeHtml(item.reference_slot || "참조 없음")} · ${Math.round((Number(item.duration) || 0) * 10) / 10}초</small>
@@ -3181,7 +3181,7 @@ function renderLibraryGrid(grid, allItems, items) {
     const favoritePressed = item.favorite ? "true" : "false";
     node.innerHTML = `
       <input class="item-select" type="checkbox" aria-label="선택">
-      <button type="button" class="favorite-button${favoriteClass}" data-favorite aria-label="즐겨찾기" aria-pressed="${favoritePressed}">★</button>
+      <button type="button" class="favorite-button${favoriteClass}" data-favorite aria-label="즐겨찾기" aria-pressed="${favoritePressed}"></button>
       ${resolution ? `<span class="resolution-badge">${escapeHtml(resolution)}</span>` : ""}
       <div class="thumb">${media}</div>
       <div class="meta">
@@ -3227,7 +3227,7 @@ function createLibraryItemNode(item) {
   const favoritePressed = item.favorite ? "true" : "false";
   node.innerHTML = `
     <input class="item-select" type="checkbox" aria-label="선택">
-    <button type="button" class="favorite-button${favoriteClass}" data-favorite aria-label="즐겨찾기" aria-pressed="${favoritePressed}">★</button>
+    <button type="button" class="favorite-button${favoriteClass}" data-favorite aria-label="즐겨찾기" aria-pressed="${favoritePressed}"></button>
     ${resolution ? `<span class="resolution-badge">${escapeHtml(resolution)}</span>` : ""}
     <div class="thumb">${media}</div>
     <div class="meta">
@@ -3827,7 +3827,7 @@ function renderLibraryPicker() {
     const favoriteClass = item.favorite ? " active" : "";
     const favoritePressed = item.favorite ? "true" : "false";
     node.innerHTML = `
-      <button type="button" class="favorite-button picker-favorite${favoriteClass}" data-picker-favorite aria-label="즐겨찾기" aria-pressed="${favoritePressed}">★</button>
+      <button type="button" class="favorite-button picker-favorite${favoriteClass}" data-picker-favorite aria-label="즐겨찾기" aria-pressed="${favoritePressed}"></button>
       ${resolution ? `<span class="resolution-badge picker-resolution">${escapeHtml(resolution)}</span>` : ""}
       ${pickerMediaHtml(item)}
       <span class="picker-label">${escapeHtml(item.prompt || item.file_path)}</span>`;

@@ -119,3 +119,14 @@
   - `static/styles.css`: `button.favorite-button`, `button.template-favorite-filter` 최종 오버라이드 추가.
   - `templates/index.html`: 정적 캐시 버전 `20260603-v3-13`으로 갱신.
 - 백업: `backups/before-favorite-icon-final-override-20260603-115309`
+
+### 즐겨찾기 버튼 텍스트/캐시 제거
+
+- 목표: 즐겨찾기 버튼이 여전히 회색 둥근 버튼처럼 보이는 문제를 완전히 제거한다.
+- 원인: 버튼 내부의 실제 `★` 텍스트와 오래된 서비스워커 셸 캐시가 남아 있었다.
+- 변경:
+  - `static/app.js`, `templates/index.html`: 즐겨찾기 버튼 내부 텍스트 제거.
+  - `static/styles.css`: 기본 버튼 appearance 제거와 텍스트 숨김 최종 오버라이드 보강.
+  - `static/service-worker.js`: 캐시 이름과 셸 자산 버전을 `v3-14`로 갱신.
+  - `templates/index.html`: 정적 캐시 버전 `20260603-v3-14`로 갱신.
+- 백업: `backups/before-favorite-icon-text-cache-20260603-120158`
