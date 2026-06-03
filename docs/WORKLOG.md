@@ -178,3 +178,20 @@
   - `static/styles.css`: 미리보기 드래그 핸들, 드래그 중 카드 상태, 드롭 영역/자동 스크롤 힌트 스타일 추가.
   - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-19` / `webgui-shell-v3-19`로 갱신.
 - 백업: `backups/before-template-preview-dnd-20260603-124718`
+
+### Grok 이미지 remote_url 우선 재사용
+
+- 목표: Grok/xAI 이미지 생성·편집 결과가 보유한 `https://imgen.x.ai/...` 실제 이미지 URL을 라이브러리 재사용 시 우선 입력으로 보내도록 한다.
+- 결정:
+  - 공개 `remote_url`이 metadata `extra.remote_url`에 있으면 이미지 편집, 이미지->영상, reference-to-video 요청에서 data URI 대신 URL을 먼저 사용한다.
+  - 텍스트->이미지 생성은 xAI가 URL을 반환할 수 있도록 `response_format=b64_json` 강제 지정을 제거한다.
+  - 로컬 업로드나 stitched reference처럼 remote URL이 없는 입력은 기존 data URI 방식을 유지한다.
+- 변경:
+  - `app.py`: metadata에서 remote URL을 찾는 helper와 xAI 이미지 입력 payload helper 추가.
+  - `app.py`: `live_image`, batch image edit helpers, `live_video`, `live_video_from_reference_images`가 remote URL을 우선 사용하도록 변경.
+  - `app.py`: 결과 metadata extra에 `input_remote_urls`, `input_image_mode`, `used_remote_reference_images` 등 추적값 추가.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - 가짜 `requests` payload 테스트로 이미지 편집, 이미지 생성, 이미지->영상, reference-to-video payload 확인.
+  - `git diff --check` 통과.
+- 백업: `backups/before-remote-url-input-20260603-144117`

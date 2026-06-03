@@ -1750,6 +1750,51 @@ def data_uri(path):
     return f"data:{mime};base64,{encoded}"
 
 
+def http_media_url(value):
+    if isinstance(value, str) and value.startswith(("http://", "https://")):
+        return value
+    return None
+
+
+def metadata_remote_url(item):
+    if not isinstance(item, dict):
+        return None
+    extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
+    for value in (
+        extra.get("remote_url"),
+        extra.get("source_url"),
+        item.get("remote_url"),
+        item.get("source_url"),
+    ):
+        url = http_media_url(value)
+        if url:
+            return url
+    return None
+
+
+def remote_url_for_media_path(path):
+    try:
+        item = find_metadata_by_file_path(Path(path))
+    except Exception:
+        item = None
+    return metadata_remote_url(item)
+
+
+def image_input_url(path):
+    remote_url = remote_url_for_media_path(path)
+    if remote_url:
+        return remote_url, True
+    return data_uri(Path(path)), False
+
+
+def image_input_object(path, include_type=False):
+    url, used_remote = image_input_url(path)
+    payload = {"url": url}
+    if include_type:
+        payload["type"] = "image_url"
+    return payload, used_remote
+
+
 def xai_headers(provider=None):
     return {**xai_auth_header(provider=provider), "Content-Type": "application/json"}
 
@@ -2897,17 +2942,24 @@ def live_image(prompt, dest_dir, edit_source=None, edit_sources=None, aspect_rat
     endpoint = "/images/edits" if sources else "/images/generations"
     model = valid_image_model(image_model, cfg)
     body = {"model": model, "prompt": prompt}
-    if not sources:
-        body["response_format"] = "b64_json"
     if aspect_ratio != "auto":
         body["aspect_ratio"] = aspect_ratio
     if resolution != "auto":
         body["resolution"] = resolution
+    input_remote_urls = []
     if sources:
         if len(sources) == 1:
-            body["image"] = {"url": data_uri(sources[0]), "type": "image_url"}
+            body["image"], used_remote = image_input_object(sources[0], include_type=True)
+            if used_remote:
+                input_remote_urls.append(body["image"]["url"])
         else:
-            body["images"] = [{"url": data_uri(source), "type": "image_url"} for source in sources[:3]]
+            images = []
+            for source in sources[:3]:
+                image, used_remote = image_input_object(source, include_type=True)
+                images.append(image)
+                if used_remote:
+                    input_remote_urls.append(image["url"])
+            body["images"] = images
     api_base = cfg["hermes_base_url"] if provider == "hermes_proxy" and cfg.get("hermes_base_url") else cfg["api_base"]
     response = requests.post(api_base + endpoint, headers=xai_headers(provider=provider), json=body, timeout=240)
     if response.status_code in (401, 403):
@@ -2918,15 +2970,21 @@ def live_image(prompt, dest_dir, edit_source=None, edit_sources=None, aspect_rat
     record_usage(payload.get("usage"))
     url, b64_json, mime_type, revised = extract_image_url(payload)
     path = download_or_decode_image(url, b64_json, mime_type, dest_dir)
-    return path, {"revised_prompt": revised, "remote_url": url, "image_model": model}
+    return path, {
+        "revised_prompt": revised,
+        "remote_url": url,
+        "image_model": model,
+        "input_remote_urls": input_remote_urls,
+        "used_remote_image_inputs": bool(input_remote_urls),
+    }
 
 
 def edit_image_with_config(prompt, source_path, dest_dir, cfg, auth_header, aspect_ratio="auto", filename_prefix="", resolution="auto"):
     body = {
         "model": cfg["image_model"],
         "prompt": prompt,
-        "image": {"url": data_uri(source_path), "type": "image_url"},
     }
+    body["image"], used_remote = image_input_object(source_path, include_type=True)
     if aspect_ratio != "auto":
         body["aspect_ratio"] = aspect_ratio
     if resolution != "auto":
@@ -2945,7 +3003,13 @@ def edit_image_with_config(prompt, source_path, dest_dir, cfg, auth_header, aspe
     record_usage(payload.get("usage"))
     url, b64_json, mime_type, revised = extract_image_url(payload)
     path = download_or_decode_image(url, b64_json, mime_type, dest_dir, filename_prefix=filename_prefix)
-    return path, {"revised_prompt": revised, "remote_url": url, "image_resolution": resolution}
+    return path, {
+        "revised_prompt": revised,
+        "remote_url": url,
+        "image_resolution": resolution,
+        "input_remote_urls": [body["image"]["url"]] if used_remote else [],
+        "used_remote_image_inputs": used_remote,
+    }
 
 
 def edit_image_sources_with_config(prompt, source_paths, dest_dir, cfg, auth_header, aspect_ratio="auto", filename_prefix="", resolution="auto"):
@@ -2960,10 +3024,19 @@ def edit_image_sources_with_config(prompt, source_paths, dest_dir, cfg, auth_hea
         body["aspect_ratio"] = aspect_ratio
     if resolution != "auto":
         body["resolution"] = resolution
+    input_remote_urls = []
     if len(sources) == 1:
-        body["image"] = {"url": data_uri(sources[0]), "type": "image_url"}
+        body["image"], used_remote = image_input_object(sources[0], include_type=True)
+        if used_remote:
+            input_remote_urls.append(body["image"]["url"])
     else:
-        body["images"] = [{"url": data_uri(source), "type": "image_url"} for source in sources[:3]]
+        images = []
+        for source in sources[:3]:
+            image, used_remote = image_input_object(source, include_type=True)
+            images.append(image)
+            if used_remote:
+                input_remote_urls.append(image["url"])
+        body["images"] = images
     response = requests.post(
         cfg["api_base"] + "/images/edits",
         headers={**auth_header, "Content-Type": "application/json"},
@@ -2984,16 +3057,19 @@ def edit_image_sources_with_config(prompt, source_paths, dest_dir, cfg, auth_hea
         "image_model": cfg["image_model"],
         "image_resolution": resolution,
         "source_count": len(sources),
+        "input_remote_urls": input_remote_urls,
+        "used_remote_image_inputs": bool(input_remote_urls),
     }
 
 
 def live_video(prompt, image_path, duration, aspect_ratio="source", resolution="720p", video_model=None):
     cfg = config()
     model = valid_video_model(video_model, cfg)
+    image_payload, used_remote = image_input_object(image_path)
     payload = {
         "model": model,
         "prompt": prompt,
-        "image": {"url": data_uri(image_path)},
+        "image": image_payload,
         "duration": duration,
         "resolution": resolution,
     }
@@ -3012,6 +3088,8 @@ def live_video(prompt, image_path, duration, aspect_ratio="source", resolution="
         raise RuntimeError("영상 생성 요청 ID를 받지 못했습니다.")
     path, extra = poll_video_request(request_id)
     extra["video_model"] = model
+    extra["input_image_remote_url"] = image_payload["url"] if used_remote else None
+    extra["input_image_mode"] = "remote_url" if used_remote else "data_uri"
     return path, extra
 
 
@@ -3019,6 +3097,7 @@ def live_video_from_reference_images(prompt, reference_paths, duration, aspect_r
     cfg = config()
     model = valid_video_model(video_model, cfg)
     references = []
+    input_reference_remote_urls = []
     seen = set()
     for path in reference_paths:
         if not path:
@@ -3027,7 +3106,10 @@ def live_video_from_reference_images(prompt, reference_paths, duration, aspect_r
         if resolved in seen:
             continue
         seen.add(resolved)
-        references.append({"url": data_uri(resolved)})
+        reference, used_remote = image_input_object(resolved)
+        references.append(reference)
+        if used_remote:
+            input_reference_remote_urls.append(reference["url"])
     if not references:
         raise RuntimeError("참조 이미지가 없습니다.")
     payload = {
@@ -3053,6 +3135,8 @@ def live_video_from_reference_images(prompt, reference_paths, duration, aspect_r
     path, extra = poll_video_request(request_id)
     extra["video_model"] = model
     extra["reference_image_count"] = len(references[:7])
+    extra["input_reference_remote_urls"] = input_reference_remote_urls[:7]
+    extra["used_remote_reference_images"] = bool(input_reference_remote_urls[:7])
     if duration > 10:
         extra["requested_duration"] = duration
         extra["duration_clamped_to"] = 10
