@@ -88,6 +88,8 @@ const jobQueue = [];
 let activeJobs = 0;
 const maxActiveJobs = 30;
 const maxQueueCopies = 20;
+let mediaViewerContext = null;
+let lastQueuePreviewClosedAt = 0;
 const repeatableQueueEndpoints = new Set([
   "/api/t2i",
   "/api/i2i",
@@ -205,8 +207,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-28";
-const appShellCacheName = "webgui-shell-v3-28";
+const appStaticVersion = "20260604-v3-29";
+const appShellCacheName = "webgui-shell-v3-29";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -601,14 +603,29 @@ function setReverseOutput(prompt) {
   output.value = prompt || "";
 }
 
-function openMediaViewer(src, mediaType = "image") {
+function openMediaViewer(src, mediaType = "image", context = null) {
   const viewer = document.querySelector("#mediaViewer");
   const stage = viewer.querySelector(".media-viewer-stage");
+  mediaViewerContext = context || null;
+  viewer.dataset.context = mediaViewerContext?.source || "";
+  viewer.dataset.jobId = mediaViewerContext?.jobId || "";
   stage.innerHTML = mediaType === "video"
     ? `<video src="${src}" controls autoplay playsinline loop></video>`
     : `<img src="${src}" alt="">`;
   viewer.classList.add("open");
   if (!viewer.open) viewer.showModal();
+}
+
+function noteMediaViewerClosed() {
+  if (mediaViewerContext?.source === "queue-preview") {
+    lastQueuePreviewClosedAt = Date.now();
+  }
+  mediaViewerContext = null;
+  const viewer = document.querySelector("#mediaViewer");
+  if (viewer) {
+    viewer.dataset.context = "";
+    viewer.dataset.jobId = "";
+  }
 }
 
 function closeMediaViewer() {
@@ -760,7 +777,11 @@ function showJobResult(job) {
   if (!job.previewSelector) {
     const item = job.result?.item || job.result?.items?.[0];
     if (!item?.file_path) return false;
-    openMediaViewer(item.file_path, item.kind === "video" ? "video" : "image");
+    openMediaViewer(item.file_path, item.kind === "video" ? "video" : "image", {
+      source: "queue-preview",
+      jobId: job.id,
+      status: job.status,
+    });
     return true;
   }
   if (job.result?.items?.length) {
@@ -834,7 +855,7 @@ function renderQueue() {
         <div class="queue-progress"><span style="width:${progress}%"></span></div>
         <div class="queue-actions">
           ${job.status === "queued" ? `<button type="button" data-cancel-job>취소</button>` : ""}
-          ${job.status === "review" ? `<button type="button" data-template-review-next>${reviewNextLabel}</button><button type="button" class="secondary" data-template-review-retry>재시도</button><button type="button" class="secondary" data-cancel-job>중단</button>` : ""}
+          ${job.status === "review" ? `<button type="button" data-template-review-next>${reviewNextLabel}</button><button type="button" class="secondary" data-template-review-retry>재시도</button><button type="button" class="secondary" data-template-review-cancel>중단</button>` : ""}
           ${job.status === "done" && (job.result?.item || job.result?.items?.length) ? `<button type="button" data-view-job>보기</button>` : ""}
           ${(job.status === "done" || job.status === "failed" || job.status === "cancelled") ? `<button type="button" class="secondary" data-remove-job>정리</button>` : ""}
         </div>
@@ -5340,12 +5361,15 @@ document.querySelector("#copyErrorLog").addEventListener("click", async () => {
 });
 document.querySelector("#mediaViewer")?.addEventListener("click", event => {
   if (event.target.closest("video")) return;
+  event.preventDefault();
+  event.stopPropagation();
   closeMediaViewer();
 });
 
 document.querySelector("#mediaViewer")?.addEventListener("close", event => {
   event.currentTarget.classList.remove("open");
   event.currentTarget.querySelector(".media-viewer-stage").innerHTML = "";
+  noteMediaViewerClosed();
 });
 
 document.addEventListener("keydown", event => {
@@ -5357,29 +5381,44 @@ document.querySelector("#queueList")?.addEventListener("click", event => {
   if (!node) return;
   const job = jobQueue.find(item => item.id === node.dataset.id);
   if (!job) return;
+  if (event.target.closest("[data-view-job]") || (!event.target.closest("button") && job.status === "done")) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!showJobResult(job)) {
+      showToast("표시할 결과물이 없습니다.", true);
+    }
+    return;
+  }
   if (event.target.closest("[data-template-review-next]")) {
+    event.preventDefault();
+    event.stopPropagation();
     resolveTemplateReview(job, "next");
     return;
   }
   if (event.target.closest("[data-template-review-retry]")) {
+    event.preventDefault();
+    event.stopPropagation();
     resolveTemplateReview(job, "retry");
     return;
   }
-  if (event.target.closest("[data-cancel-job]")) {
+  if (event.target.closest("[data-template-review-cancel], [data-cancel-job]")) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() - lastQueuePreviewClosedAt < 700) {
+      showToast("미리보기 닫힘 직후의 중단 입력은 무시했습니다.");
+      return;
+    }
     updateJob(job, { status: "cancelled" });
     resolveTemplateReview(job, "cancel");
     return;
   }
   if (event.target.closest("[data-remove-job]")) {
+    event.preventDefault();
+    event.stopPropagation();
     const index = jobQueue.findIndex(item => item.id === job.id);
     if (index >= 0) jobQueue.splice(index, 1);
     renderQueue();
     return;
-  }
-  if (event.target.closest("[data-view-job]") || (!event.target.closest("button") && job.status === "done")) {
-    if (!showJobResult(job)) {
-      showToast("표시할 결과물이 없습니다.", true);
-    }
   }
 });
 document.querySelector("#clearDoneJobs")?.addEventListener("click", () => {

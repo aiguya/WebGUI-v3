@@ -397,3 +397,20 @@
   - `http://127.0.0.1:7863/?v=20260603-v3-28` HTML이 `20260603-v3-28` 정적 파일을 참조하는 것을 확인했다.
   - `/static/app.js?v=20260603-v3-28`에 슬롯 선택 저장(`selected_path`)과 중앙 진행 패널 조작 UI(`progress-actions`)가 포함된 것을 확인했다.
   - `/static/styles.css?v=20260603-v3-28`에 수동 확인 대기 상태 버튼 표시 override가 포함된 것을 확인했다.
+
+### 템플릿 수동 확인 중 결과 미리보기 안전 처리
+- 목표: 템플릿 수동 확인 대기 중 큐 썸네일로 결과물을 확인한 뒤 모달을 닫을 때 템플릿이 중단되는 문제를 막는다.
+- 원인:
+  - 큐 카드 내부에서 결과 보기 버튼과 수동 확인 결정 버튼이 같은 위임 클릭 핸들러를 공유했다.
+  - 수동 확인의 `중단` 버튼이 일반 큐 취소 버튼과 같은 `data-cancel-job` 속성을 사용해, 모달 닫힘 직후 클릭이 뒤쪽 버튼으로 새면 바로 템플릿 `cancel`로 이어질 수 있었다.
+- 결정:
+  - 수동 확인의 중단 버튼을 `data-template-review-cancel`로 분리한다.
+  - 큐 결과 미리보기 모달은 `queue-preview` 컨텍스트로 열고, 닫힌 직후 짧은 시간 동안 큐 취소/중단 입력을 무시한다.
+  - 큐 결과 보기 클릭은 `preventDefault()`와 `stopPropagation()`으로 다른 큐 액션과 완전히 분리한다.
+- 변경:
+  - `static/app.js`: 미디어 뷰어 컨텍스트 추적, 큐 결과 보기 우선 처리, review cancel 분리, 모달 닫힘 직후 중단 입력 guard 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260604-v3-29` / `webgui-shell-v3-29`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `20260603-v3-28` 잔여 참조 없음 확인.
+- 백업: `backups/before-template-review-modal-safe-20260604-000500`
