@@ -2541,8 +2541,8 @@ def edit_merge_videos(video_paths, fade_in=0, fade_out=0, transition="cut", cros
         raise RuntimeError("영상 편집에는 ffmpeg 또는 imageio-ffmpeg가 필요합니다.")
     if not video_paths:
         raise ValueError("편집할 영상이 없습니다.")
-    if len(video_paths) > 12:
-        raise ValueError("한 번에 최대 12개 영상까지 편집할 수 있습니다.")
+    if len(video_paths) > 80:
+        raise ValueError("한 번에 최대 80개 영상까지 편집할 수 있습니다.")
     fade_in = max(0, min(float(fade_in or 0), 10))
     fade_out = max(0, min(float(fade_out or 0), 10))
     crossfade = max(0, min(float(crossfade or 0), 5))
@@ -5102,7 +5102,7 @@ def v2v_frame_extend():
 @app.post("/api/video-edit")
 def video_edit():
     try:
-        sources, source_items = save_video_uploads_or_library_paths("videos", limit=12)
+        sources, source_items = save_video_uploads_or_library_paths("videos", limit=80)
         if len(sources) < 1:
             return safe_error("편집할 영상을 선택해 주세요.")
         title = (request.form.get("title") or "").strip() or "영상 편집"

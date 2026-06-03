@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260604-v3-32">
+  <link rel="stylesheet" href="/static/styles.css?v=20260604-v3-34">
 </head>
 <body>
   <header class="topbar">
@@ -198,13 +198,13 @@
             <h2>이미지 → 영상</h2>
             <span>Image to Video</span>
           </div>
-          <label>참조 이미지</label>
+          <label>시작 레퍼런스 이미지 / 추가 참조</label>
           <div class="source-picker">
             <div class="drop-zone" data-file-drop data-multi-image-video>
               <input type="file" name="image" accept="image/png,image/jpeg,image/webp" multiple required>
               <div class="selected-preview">
                 <span class="drop-title">이미지를 드래그하거나 붙여넣기</span>
-                <small>1장은 기존 방식, 2장 이상은 참조 이미지 기반 생성</small>
+                <small data-i2v-reference-help>Grok 기본 모델은 첫 장을 시작 이미지로, 2~3번째 장을 추가 참조 이미지로 함께 보냅니다.</small>
               </div>
             </div>
             <div class="source-thumbs" data-source-thumbs></div>
@@ -1099,6 +1099,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260604-v3-32"></script>
+  <script src="/static/app.js?v=20260604-v3-34"></script>
 </body>
 </html>

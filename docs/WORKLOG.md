@@ -473,3 +473,39 @@
   - `git diff --check` 통과.
   - `20260604-v3-31` 잔여 참조 없음 확인.
 - 백업: `backups/before-template-reference-resolution-20260604-010500`
+
+### 템플릿 이미지 생성 순수화와 최종 영상 병합
+- 목표: 이미지 생성 블록에 레퍼런스 이미지가 자동으로 섞이는 문제를 막고, 템플릿 실행 완료 후 생성된 영상 클립을 조건에 맞춰 최종 결과물로 병합한다.
+- 원인:
+  - `image` 블록이 참조 슬롯을 받을 수 있도록 바뀌면서, 숨겨진 슬롯 값이나 이전 상태가 있으면 `/api/t2i` 대신 `/api/i2i`로 우회할 수 있었다.
+  - 템플릿 실행 루프는 각 블록 결과만 누적하고, 전체 완료 후 영상 클립을 하나의 결과물로 묶는 단계가 없었다.
+- 변경:
+  - `static/app.js`: `image` 템플릿 블록은 참조 슬롯 UI를 숨기고, 수집 단계에서도 `reference_slot/reference_slots`를 빈 값으로 강제한다.
+  - `static/app.js`: 이미지 생성 요청은 항상 `/api/t2i`만 사용하도록 되돌렸다. 참조 기반 이미지는 `이미지 편집` 블록에서만 처리한다.
+  - `static/app.js`: 템플릿 완료 후 생성된 영상이 2개 이상이면 `/api/video-edit`로 최종 병합한다. 전환 설정은 `crossfade/fade/fade_in/fade_out` 값을 반영하고 오디오는 보존한다.
+  - `app.py`: 템플릿 최종 병합을 위해 영상 편집 입력 한도를 12개에서 80개로 늘렸다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260604-v3-33` / `webgui-shell-v3-33`으로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - 로컬 서버 캐시 버전 확인 예정.
+- 백업: `backups/before-template-image-pure-final-merge-20260604-012001`
+
+### 이미지→영상 기본 모델 추가 참조 UI 정리
+- 목표: Grok 기본 영상 모델에서 첫 이미지를 시작 레퍼런스로 쓰고, 추가 이미지를 참조 이미지로 함께 보내는 동작을 UI에서 명확히 보이게 한다.
+- 확인:
+  - `/api/i2v` 백엔드는 이미 기본 모델에서 최대 3장까지 받아 `reference_images` 방식으로 전송한다.
+  - `grok-imagine-video-1.5-preview`는 기존처럼 1장만 남기도록 제한한다.
+- 변경:
+  - `templates/index.html`: 이미지→영상 입력 라벨과 안내 문구를 `시작 레퍼런스 이미지 / 추가 참조` 기준으로 변경.
+  - `static/app.js`: 이미지→영상 썸네일에서 첫 장은 `시작`, 추가 이미지는 `참조 1`, `참조 2`로 표시한다.
+  - `static/app.js`: 모델 선택에 따라 안내 문구를 갱신하고, 1.5 preview 선택 시 추가 참조를 자동 제거한다.
+  - `static/styles.css`: 참조 역할 배지가 깨지지 않도록 `source-role` 스타일 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260604-v3-34` / `webgui-shell-v3-34`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-34` 및 `/static/app.js?v=20260604-v3-34` 서빙 확인.
+- 백업: `backups/before-i2v-extra-reference-ui-20260604-012846`

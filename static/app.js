@@ -207,8 +207,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-32";
-const appShellCacheName = "webgui-shell-v3-32";
+const appStaticVersion = "20260604-v3-34";
+const appShellCacheName = "webgui-shell-v3-34";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1270,18 +1270,6 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
   const aspectRatio = payload.settings.aspect_ratio || "9:16";
   const resolution = payload.settings.resolution || "720p";
   if (shot.method === "image") {
-    const referencePaths = templateImageSourcePaths(shot, previous, slotState, 3);
-    if (templateReferenceSlots(shot).length) {
-      assertTemplateReferencesReady(shot, "image", slotState);
-      const body = new FormData();
-      body.set("prompt", prompt);
-      body.set("aspect_ratio", aspectRatio);
-      body.set("image_resolution", "auto");
-      if (shot.image_model) body.set("image_model", shot.image_model);
-      body.set("edit_input_mode", "multi");
-      appendTemplateImageReferences(body, referencePaths);
-      return { endpoint: "/api/i2i", prompt, options: { method: "POST", body }, effectiveMethod: "edit" };
-    }
     return {
       endpoint: "/api/t2i",
       prompt,
@@ -1389,6 +1377,67 @@ function templateResultItems(data) {
   if (data?.items?.length) return data.items;
   if (data?.item) return [data.item];
   return [];
+}
+
+function templateVideoShotMethods() {
+  return new Set(["i2v", "official", "frame"]);
+}
+
+function templateVideoItems(items = []) {
+  const seen = new Set();
+  return (items || []).filter(item => {
+    const path = String(item?.file_path || "");
+    if (!path || item.kind !== "video" || seen.has(path)) return false;
+    seen.add(path);
+    return true;
+  });
+}
+
+function templateFinalEditSettings(payload) {
+  const videoMethods = templateVideoShotMethods();
+  const transitions = (payload.shots || [])
+    .filter(shot => videoMethods.has(shot.method))
+    .map(shot => shot.transition || "cut");
+  const useCrossfade = transitions.some(value => value === "crossfade" || value === "fade");
+  return {
+    transition: useCrossfade ? "crossfade" : "cut",
+    crossfade: useCrossfade ? 0.5 : 0,
+    fade_in: transitions.includes("fade_in") ? 0.5 : 0,
+    fade_out: transitions.includes("fade_out") ? 0.5 : 0,
+  };
+}
+
+async function mergeTemplateVideos(payload, sourceItems) {
+  const videos = templateVideoItems(sourceItems);
+  if (videos.length < 2) return null;
+  const settings = templateFinalEditSettings(payload);
+  const body = new FormData();
+  body.set("title", `${payload.title || "템플릿"} 최종 병합`);
+  body.set("aspect_ratio", payload.settings?.aspect_ratio || "source");
+  body.set("resolution", payload.settings?.resolution || "source");
+  body.set("transition", settings.transition);
+  body.set("crossfade", String(settings.crossfade));
+  body.set("fade_in", String(settings.fade_in));
+  body.set("fade_out", String(settings.fade_out));
+  body.set("mute", "false");
+  videos.forEach(item => {
+    body.append("video_source_order", `library:${item.file_path}`);
+    body.append("library_video_paths", item.file_path);
+  });
+  let response;
+  try {
+    response = await fetch("/api/video-edit", { method: "POST", body });
+  } catch (error) {
+    throw friendlyFetchError(error, "/api/video-edit");
+  }
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(`템플릿 최종 영상 병합 응답을 읽지 못했습니다. HTTP ${response.status} ${response.statusText || ""}`.trim());
+  }
+  if (!data.ok) rememberApiError(data, "템플릿 최종 영상 병합 실패");
+  return data;
 }
 
 function resolveTemplateReview(job, action) {
@@ -1578,6 +1627,15 @@ async function runTemplateJob(job) {
         accepted = true;
       }
     }
+    if (templateVideoItems(items).length > 1) {
+      updateJob(job, { status: "running", progressPercent: 99, progressText: "템플릿 최종 영상 병합 중" });
+    }
+    const merged = await mergeTemplateVideos(payload, items);
+    if (merged?.item) {
+      items.push(merged.item);
+      updateTemplatePreviousResult(previous, merged);
+      loadLibrary();
+    }
     progress.set(100);
     updateJob(job, { status: "done", result: { ok: true, items }, progressPercent: 100, progressText: "템플릿 실행 완료" });
     showToast("템플릿 실행이 완료되었습니다.");
@@ -1682,6 +1740,19 @@ function isSingleReferenceI2vForm(form) {
   return isMultiImageVideoForm(form) && isSingleReferenceVideoModel(form.querySelector("[name='video_model']")?.value);
 }
 
+function i2vReferenceHelpText(form) {
+  if (!isMultiImageVideoForm(form)) return "";
+  if (isSingleReferenceI2vForm(form)) {
+    return "Grok 1.5 preview는 시작 레퍼런스 이미지 1장만 사용합니다.";
+  }
+  return "Grok 기본 모델은 첫 장을 시작 이미지로, 2~3번째 장을 추가 참조 이미지로 함께 보냅니다.";
+}
+
+function updateI2vReferenceHelp(form) {
+  const help = form?.querySelector("[data-i2v-reference-help]");
+  if (help) help.textContent = i2vReferenceHelpText(form);
+}
+
 function isVideoEditForm(form) {
   return form?.dataset.endpoint === "/api/video-edit";
 }
@@ -1731,6 +1802,7 @@ function releaseImageSource(source) {
 }
 
 function enforceI2vReferenceLimit(form, notify = false) {
+  updateI2vReferenceHelp(form);
   if (!isSingleReferenceI2vForm(form)) return;
   const sources = getMultiImageSources(form);
   if (sources.length <= 1) return;
@@ -1749,21 +1821,27 @@ function renderMultiImageSources(form) {
   zone.classList.toggle("has-file", sources.length > 0);
   fileInput.required = sources.length === 0;
   if (!sources.length) {
-    preview.innerHTML = emptyDropPreview("image");
+    preview.innerHTML = isMultiImageVideoForm(form)
+      ? `<span class="drop-title">이미지를 드래그하거나 붙여넣기</span><small data-i2v-reference-help>${escapeHtml(i2vReferenceHelpText(form))}</small>`
+      : emptyDropPreview("image");
     if (thumbs) thumbs.innerHTML = "";
     syncMultiImageHiddenInputs(form);
     return;
   }
   const main = sources[0];
-  preview.innerHTML = `<img src="${main.src}" alt="selected image"><small>${escapeHtml(main.label)}</small>`;
+  const mainLabel = isMultiImageVideoForm(form)
+    ? `시작 레퍼런스 · ${main.label}`
+    : main.label;
+  preview.innerHTML = `<img src="${main.src}" alt="selected image"><small>${escapeHtml(mainLabel)}</small>`;
   if (thumbs) {
     thumbs.innerHTML = sources.map((source, index) => `
       <button type="button" class="source-thumb${index === 0 ? " active" : ""}" data-source-index="${index}">
         <img src="${source.src}" alt="">
-        <span>${index + 1}</span>
+        <span class="${isMultiImageVideoForm(form) ? "source-role" : ""}">${isMultiImageVideoForm(form) ? (index === 0 ? "시작" : `참조 ${index}`) : index + 1}</span>
         <i data-remove-source aria-label="삭제">×</i>
       </button>`).join("");
   }
+  updateI2vReferenceHelp(form);
   syncMultiImageHiddenInputs(form);
 }
 
@@ -2675,8 +2753,8 @@ const templateMethodLabels = {
 
 const templateMethodUi = {
   image: {
-    fields: new Set(["image_model", "references", "output_slot", "prompt", "retry", "notes"]),
-    hint: "텍스트 프롬프트로 이미지를 생성합니다. 이미지 슬롯을 지정하면 해당 이미지를 실제 참조로 첨부해 참조 기반 이미지 생성으로 처리합니다.",
+    fields: new Set(["image_model", "output_slot", "prompt", "retry", "notes"]),
+    hint: "텍스트 프롬프트만 사용해 이미지를 생성합니다. 이미지 참조가 필요하면 이미지 편집 블록을 사용하세요.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
   },
@@ -2838,7 +2916,13 @@ function applyTemplateShotMethodUi(row) {
   }
   const singleReference = row.querySelector("[data-shot-reference]");
   const referenceSlots = Array.from(row.querySelectorAll("[data-shot-reference-slot]"));
-  if ((method === "edit" || method === "image") && referenceSlots.length && singleReference?.value && !referenceSlots.some(input => input.value.trim())) {
+  if (method === "image") {
+    if (singleReference) singleReference.value = "";
+    referenceSlots.forEach(input => {
+      input.value = "";
+    });
+  }
+  if (method === "edit" && referenceSlots.length && singleReference?.value && !referenceSlots.some(input => input.value.trim())) {
     referenceSlots[0].value = singleReference.value;
   }
   if (method !== "edit" && method !== "image" && singleReference && !singleReference.value.trim() && referenceSlots[0]?.value.trim()) {
@@ -3004,9 +3088,12 @@ function collectTemplateShots() {
       .filter(Boolean)
       .slice(0, 3);
     const singleReference = row.querySelector("[data-shot-reference]")?.value.trim() || "";
-    const referenceSlots = method === "edit" || method === "image"
-      ? (multiReferences.length ? multiReferences : (singleReference ? [singleReference] : []))
-      : (singleReference ? [singleReference] : []);
+    let referenceSlots = [];
+    if (method === "edit") {
+      referenceSlots = multiReferences.length ? multiReferences : (singleReference ? [singleReference] : []);
+    } else if (method !== "image" && singleReference) {
+      referenceSlots = [singleReference];
+    }
     return {
       id: row.querySelector("[data-shot-id]")?.value || "",
       order: index + 1,
