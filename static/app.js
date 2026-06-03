@@ -70,6 +70,7 @@ let templateFavoriteOnly = false;
 let templateBlocks = [];
 let templateBlockSearch = "";
 let templateBlockFavoriteOnly = false;
+let templateShotFocusTimer = null;
 let pickerVisibleCount = 80;
 let pickerPageSize = 80;
 const multiImageSources = new WeakMap();
@@ -2346,7 +2347,7 @@ function renderTemplatePreview() {
   preview.innerHTML = payload.shots.map((shot, index) => {
     const prompt = templateShotPromptText(payload, shot);
     return `
-      <article class="template-preview-shot">
+      <article class="template-preview-shot" data-template-preview-shot="${index}" role="button" tabindex="0" aria-label="${escapeHtml(`${index + 1}번 컷 편집 위치로 이동`)}">
         <header>
           <strong>${String(index + 1).padStart(2, "0")} · ${escapeHtml(shot.title || "컷")}</strong>
           <span>${escapeHtml(templateMethodLabels[shot.method] || shot.method)} · ${escapeHtml(String(shot.duration || 0))}초 · ${escapeHtml(templateTransitionLabels[shot.transition] || shot.transition)}</span>
@@ -2355,6 +2356,24 @@ function renderTemplatePreview() {
       </article>
     `;
   }).join("");
+}
+
+function focusTemplateShot(index) {
+  const shots = Array.from(document.querySelectorAll("[data-template-shot]"));
+  const shot = shots[index];
+  if (!shot) {
+    showToast("편집할 컷을 찾을 수 없습니다.", true);
+    return;
+  }
+  shots.forEach(node => node.classList.remove("is-focused"));
+  shot.classList.add("is-focused");
+  shot.scrollIntoView({ behavior: "smooth", block: "center" });
+  shot.querySelector("[data-shot-title]")?.focus({ preventScroll: true });
+  if (templateShotFocusTimer) clearTimeout(templateShotFocusTimer);
+  templateShotFocusTimer = setTimeout(() => {
+    shot.classList.remove("is-focused");
+    templateShotFocusTimer = null;
+  }, 1800);
 }
 
 function setTemplateEditorItem(item = {}) {
@@ -2869,6 +2888,20 @@ document.querySelector("#copyTemplatePreview")?.addEventListener("click", async 
   }
   await navigator.clipboard.writeText(text);
   showToast("템플릿 미리보기를 복사했습니다.");
+});
+
+document.querySelector("#templatePreview")?.addEventListener("click", event => {
+  const item = event.target.closest("[data-template-preview-shot]");
+  if (!item) return;
+  focusTemplateShot(Number.parseInt(item.dataset.templatePreviewShot || "0", 10));
+});
+
+document.querySelector("#templatePreview")?.addEventListener("keydown", event => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const item = event.target.closest("[data-template-preview-shot]");
+  if (!item) return;
+  event.preventDefault();
+  focusTemplateShot(Number.parseInt(item.dataset.templatePreviewShot || "0", 10));
 });
 
 ["#templateVariables", "#templateSlots", "#templateShots"].forEach(selector => {

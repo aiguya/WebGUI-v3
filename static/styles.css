@@ -6753,6 +6753,12 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   background: rgba(255, 255, 255, .028);
 }
 
+.template-shot-card.is-focused {
+  border-color: rgba(255, 214, 102, .76);
+  background: rgba(255, 214, 102, .055);
+  box-shadow: 0 0 0 1px rgba(255, 214, 102, .18), 0 18px 44px rgba(0, 0, 0, .24);
+}
+
 .template-shot-head {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr) repeat(5, max-content);
@@ -6815,6 +6821,16 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   border-radius: 8px;
   background: rgba(255, 255, 255, .026);
   overflow: hidden;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, transform .15s ease;
+}
+
+.template-preview-shot:hover,
+.template-preview-shot:focus-visible {
+  border-color: rgba(143, 216, 220, .48);
+  background: rgba(143, 216, 220, .06);
+  outline: none;
+  transform: translateY(-1px);
 }
 
 .template-preview-shot header {

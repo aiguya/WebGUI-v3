@@ -87,3 +87,15 @@
   - `static/styles.css`: `.template-favorite-filter` 상태별 아이콘/색/배경 스타일 강화.
   - `templates/index.html`: 정적 캐시 버전 `20260603-v3-10`으로 갱신.
 - 백업: `backups/before-favorite-filter-visual-20260603-111144`
+
+### 템플릿 미리보기 컷 포커스 이동
+
+- 목표: 적용 미리보기에서 컷을 클릭하면 해당 컷 편집 카드로 바로 이동할 수 있게 한다.
+- 결정:
+  - 미리보기 컷 카드를 클릭/키보드 접근 가능한 항목으로 만들고, 편집 카드로 부드럽게 스크롤한다.
+  - 이동한 편집 카드는 짧게 강조 표시하고 컷 이름 입력창에 포커스를 둔다.
+- 변경:
+  - `static/app.js`: 미리보기 컷 인덱스, 클릭/키보드 이벤트, `focusTemplateShot` 추가.
+  - `static/styles.css`: 미리보기 hover/focus 스타일과 편집 컷 강조 스타일 추가.
+  - `templates/index.html`: 정적 캐시 버전 `20260603-v3-11`로 갱신.
+- 백업: `backups/before-template-preview-focus-20260603-111732`
