@@ -6606,7 +6606,13 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   border-radius: 7px;
   color: rgba(245, 245, 242, .62);
   background: rgba(255, 255, 255, .035);
-  font-size: 16px;
+  font-size: 0;
+  line-height: 1;
+}
+
+.template-favorite-filter::before {
+  content: "\2606";
+  font-size: 18px;
   line-height: 1;
 }
 
@@ -6617,10 +6623,15 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
 }
 
 .template-favorite-filter.active {
-  color: #ffd666;
-  border-color: rgba(255, 214, 102, .54);
-  background: rgba(255, 214, 102, .10);
-  box-shadow: inset 0 0 0 1px rgba(255, 214, 102, .10);
+  color: #191407;
+  border-color: rgba(255, 214, 102, .88);
+  background: linear-gradient(180deg, #ffdf74, #dcae35);
+  box-shadow: 0 0 0 1px rgba(255, 214, 102, .24), 0 0 18px rgba(255, 214, 102, .18);
+}
+
+.template-favorite-filter.active::before {
+  content: "\2605";
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .30);
 }
 
 .template-manager-stats {

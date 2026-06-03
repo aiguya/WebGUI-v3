@@ -78,3 +78,12 @@
   - `System.Drawing.Icon.ExtractAssociatedIcon`으로 EXE 아이콘 추출 확인.
 - 백업: `backups/before-exe-launcher-20260603-105919`
 - 주의: 이 EXE는 단독 패키징 파일이 아니라 같은 폴더의 `run_webgork_app.bat`을 실행하는 런처다.
+
+### 템플릿 즐겨찾기 필터 시각 상태 개선
+
+- 목표: 템플릿 검색창 옆 즐겨찾기 필터 버튼의 활성/비활성 상태를 더 명확하게 구분한다.
+- 결정: 비활성은 외곽 별 `☆`, 활성은 노란 배경의 채운 별 `★`로 표시한다.
+- 변경:
+  - `static/styles.css`: `.template-favorite-filter` 상태별 아이콘/색/배경 스타일 강화.
+  - `templates/index.html`: 정적 캐시 버전 `20260603-v3-10`으로 갱신.
+- 백업: `backups/before-favorite-filter-visual-20260603-111144`
