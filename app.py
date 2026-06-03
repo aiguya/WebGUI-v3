@@ -595,6 +595,13 @@ def normalize_template_reference_slots(item, limit=3):
     return slots
 
 
+def clean_template_model(value):
+    model = str(value or "").strip()
+    if re.fullmatch(r"[A-Za-z0-9._:-]{1,96}", model):
+        return model
+    return ""
+
+
 def clean_prompt_tag(tag):
     tag = re.sub(r"\s+", " ", str(tag or "")).strip()
     return tag[:32]
@@ -769,6 +776,8 @@ def normalize_template_shots(value):
             "duration": duration,
             "reference_slot": reference_slot,
             "reference_slots": reference_slots,
+            "image_model": clean_template_model(item.get("image_model")),
+            "video_model": clean_template_model(item.get("video_model")),
             "prompt": str(item.get("prompt") or "").strip()[:12000],
             "camera": str(item.get("camera") or "").strip()[:2000],
             "transition": transition,
@@ -868,6 +877,8 @@ def normalize_template_block(item):
         "duration": item.get("duration"),
         "reference_slot": item.get("reference_slot"),
         "reference_slots": item.get("reference_slots"),
+        "image_model": item.get("image_model"),
+        "video_model": item.get("video_model"),
         "prompt": item.get("prompt"),
         "camera": item.get("camera"),
         "transition": item.get("transition"),
@@ -888,6 +899,8 @@ def normalize_template_block(item):
         "duration": shot.get("duration") or 6,
         "reference_slot": shot.get("reference_slot") or "",
         "reference_slots": shot.get("reference_slots") or [],
+        "image_model": shot.get("image_model") or "",
+        "video_model": shot.get("video_model") or "",
         "prompt": shot.get("prompt") or "",
         "camera": shot.get("camera") or "",
         "transition": shot.get("transition") or "cut",

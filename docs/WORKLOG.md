@@ -290,3 +290,22 @@
   - `normalize_video_template`, `normalize_template_block`에서 `reference_slots` 3개 보존 확인.
   - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-24`에서 새 HTML/JS/CSS 반영 확인.
 - 백업: `backups/before-template-edit-reference-slots-20260603-163000`
+
+### 템플릿 컷 요청 모델 선택
+- 목표: 템플릿의 `이미지 생성`, `이미지 편집`, `이미지→영상`, `공식 연장`, `프레임 연장` 컷에서도 실제 기능 탭처럼 요청 모델을 선택하고 저장/실행할 수 있게 한다.
+- 결정:
+  - 이미지 생성/이미지 편집 컷은 기존 이미지 편집 폼과 같은 `Grok 이미지 퀄리티`, `Grok 이미지 기본`, `Codex/ChatGPT` 이미지 모델 선택지를 사용한다.
+  - 이미지→영상/프레임 연장 컷은 `Grok 영상`, `Grok 영상 1.5 preview` 선택지를 사용한다.
+  - 공식 연장은 preview 모델이 연장을 지원하지 않으므로 `Grok 영상`만 선택지로 둔다.
+  - 선택한 모델은 템플릿 JSON과 블록 JSON에 저장하고, 템플릿 실행 시 각 API 요청의 `image_model` 또는 `video_model`로 전달한다.
+- 변경:
+  - `app.py`: 템플릿 컷/블록 정규화에 `image_model`, `video_model` 저장 추가.
+  - `static/app.js`: 방식별 모델 필드 표시, 모델 선택 UI, 저장/블록 보관/실행 계획/실행 요청 전달 처리 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-25` / `webgui-shell-v3-25`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `normalize_video_template`, `normalize_template_block`에서 `image_model`, `video_model` 보존 확인.
+  - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-25`에서 새 HTML/JS 반영 확인.
+- 백업: `backups/before-template-shot-model-select-20260603-164500`

@@ -205,8 +205,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-24";
-const appShellCacheName = "webgui-shell-v3-24";
+const appStaticVersion = "20260603-v3-25";
+const appShellCacheName = "webgui-shell-v3-25";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1066,6 +1066,7 @@ function templateRunPlanText() {
   return payload.shots.map((shot, index) => [
     `# ${String(index + 1).padStart(2, "0")} ${shot.title || "컷"}`,
     `방식: ${templateMethodLabels[shot.method] || shot.method}`,
+    shot.image_model || shot.video_model ? `모델: ${shot.image_model || shot.video_model}` : "",
     `길이: ${shot.duration || payload.settings.default_shot_duration || 6}초`,
     `참조: ${templateReferenceSlots(shot).join(", ") || "이전 결과 또는 첫 슬롯"}`,
     templateShotPromptText(payload, shot),
@@ -1141,7 +1142,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
       options: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, aspect_ratio: aspectRatio }),
+        body: JSON.stringify({ prompt, aspect_ratio: aspectRatio, image_model: shot.image_model || "" }),
       },
     };
   }
@@ -1150,6 +1151,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     body.set("prompt", prompt);
     body.set("aspect_ratio", aspectRatio);
     body.set("image_resolution", "auto");
+    if (shot.image_model) body.set("image_model", shot.image_model);
     body.set("edit_input_mode", "multi");
     appendTemplateImageReferences(body, templateImageSourcePaths(shot, previous, slotState, 3));
     return { endpoint: "/api/i2i", prompt, options: { method: "POST", body } };
@@ -1160,6 +1162,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     body.set("duration", duration);
     body.set("aspect_ratio", aspectRatio);
     body.set("resolution", resolution);
+    if (shot.video_model) body.set("video_model", shot.video_model);
     appendTemplateImageReference(body, templateImageSourcePath(shot, previous, slotState));
     return { endpoint: "/api/i2v", prompt, options: { method: "POST", body } };
   }
@@ -1171,6 +1174,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     body.set("duration", duration);
     body.set("aspect_ratio", aspectRatio);
     body.set("resolution", resolution);
+    if (shot.video_model) body.set("video_model", shot.video_model);
     body.set("library_video_path", source);
     if (shot.method === "frame") body.set("mute", "false");
     return {
@@ -2412,33 +2416,50 @@ const templateMethodLabels = {
 
 const templateMethodUi = {
   image: {
-    fields: new Set(["prompt", "retry", "notes"]),
+    fields: new Set(["image_model", "prompt", "retry", "notes"]),
     hint: "텍스트 프롬프트로 이미지를 생성하고, 다음 컷의 이미지 입력으로 넘깁니다.",
   },
   edit: {
-    fields: new Set(["references", "prompt", "retry", "notes"]),
+    fields: new Set(["image_model", "references", "prompt", "retry", "notes"]),
     hint: "이미지 슬롯을 1~3개 참조해 편집합니다. 첫 번째 슬롯이 메인 이미지가 됩니다.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
   },
   i2v: {
-    fields: new Set(["duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
+    fields: new Set(["video_model", "duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
     hint: "이미지 슬롯 또는 직전 이미지 결과를 바탕으로 영상을 생성합니다.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
   },
   official: {
-    fields: new Set(["duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
+    fields: new Set(["video_model", "duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
     hint: "영상 슬롯 또는 직전 영상 결과를 공식 연장으로 이어갑니다.",
     referenceLabel: "영상 슬롯",
     referencePlaceholder: "source_video",
   },
   frame: {
-    fields: new Set(["duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
+    fields: new Set(["video_model", "duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
     hint: "영상 슬롯 또는 직전 영상 결과의 마지막 프레임을 기준으로 새 구간을 생성합니다.",
     referenceLabel: "영상 슬롯",
     referencePlaceholder: "source_video",
   },
+};
+
+const templateImageModelLabels = {
+  "grok-imagine-image-quality": "Grok 이미지 퀄리티",
+  "grok-imagine-image": "Grok 이미지 기본",
+  "gpt-5.4-mini": "Codex/ChatGPT gpt-5.4-mini",
+  "gpt-5.4": "Codex/ChatGPT gpt-5.4",
+  "gpt-5.5": "Codex/ChatGPT gpt-5.5",
+};
+
+const templateVideoModelLabels = {
+  "grok-imagine-video": "Grok 영상",
+  "grok-imagine-video-1.5-preview": "Grok 영상 1.5 preview",
+};
+
+const templateOfficialVideoModelLabels = {
+  "grok-imagine-video": "Grok 영상",
 };
 
 const templateTransitionLabels = {
@@ -2514,6 +2535,13 @@ function templateOptionList(labels, selected) {
     .join("");
 }
 
+function templateModelOptionList(labels, selected, fallback) {
+  const value = labels[selected] ? selected : fallback;
+  return Object.entries(labels)
+    .map(([model, label]) => `<option value="${escapeHtml(model)}"${model === value ? " selected" : ""}>${escapeHtml(label)}</option>`)
+    .join("");
+}
+
 function templateMethodConfig(method) {
   return templateMethodUi[method] || templateMethodUi.i2v;
 }
@@ -2538,6 +2566,14 @@ function applyTemplateShotMethodUi(row) {
   const method = row.querySelector("[data-shot-method]")?.value || "i2v";
   const config = templateMethodConfig(method);
   row.dataset.templateMethod = method;
+  const imageModel = row.querySelector("[data-shot-image-model]");
+  if (imageModel && !templateImageModelLabels[imageModel.value]) imageModel.value = "grok-imagine-image-quality";
+  const videoModel = row.querySelector("[data-shot-video-model]");
+  if (videoModel) {
+    const labels = method === "official" ? templateOfficialVideoModelLabels : templateVideoModelLabels;
+    const current = labels[videoModel.value] ? videoModel.value : "grok-imagine-video";
+    videoModel.innerHTML = templateModelOptionList(labels, current, "grok-imagine-video");
+  }
   const singleReference = row.querySelector("[data-shot-reference]");
   const referenceSlots = Array.from(row.querySelectorAll("[data-shot-reference-slot]"));
   if (method === "edit" && referenceSlots.length && singleReference?.value && !referenceSlots.some(input => input.value.trim())) {
@@ -2614,6 +2650,14 @@ function renderTemplateShots(items = []) {
         <div>
           <label>방식</label>
           <select data-shot-method>${templateOptionList(templateMethodLabels, item.method || "i2v")}</select>
+        </div>
+        <div data-shot-field="image_model">
+          <label>이미지 모델</label>
+          <select data-shot-image-model>${templateModelOptionList(templateImageModelLabels, item.image_model || "grok-imagine-image-quality", "grok-imagine-image-quality")}</select>
+        </div>
+        <div data-shot-field="video_model">
+          <label>영상 모델</label>
+          <select data-shot-video-model>${templateModelOptionList((item.method || "i2v") === "official" ? templateOfficialVideoModelLabels : templateVideoModelLabels, item.video_model || "grok-imagine-video", "grok-imagine-video")}</select>
         </div>
         <div data-shot-field="duration">
           <label>길이</label>
@@ -2693,6 +2737,8 @@ function collectTemplateShots() {
       order: index + 1,
       title: row.querySelector("[data-shot-title]")?.value || `컷 ${index + 1}`,
       method,
+      image_model: row.querySelector("[data-shot-image-model]")?.value || "",
+      video_model: row.querySelector("[data-shot-video-model]")?.value || "",
       duration: Number.parseFloat(row.querySelector("[data-shot-duration]")?.value || "6") || 6,
       reference_slot: referenceSlots[0] || "",
       reference_slots: referenceSlots,
@@ -3141,6 +3187,8 @@ function templateBlockToShot(block = {}) {
     id: "",
     title: block.title || "컷 블록",
     method: block.method || "i2v",
+    image_model: block.image_model || "",
+    video_model: block.video_model || "",
     duration: block.duration || 6,
     reference_slot: block.reference_slot || referenceSlots[0] || "",
     reference_slots: referenceSlots,
@@ -3161,6 +3209,8 @@ function filteredTemplateBlocks() {
       const haystack = [
         item.title,
         item.method_label,
+        item.image_model,
+        item.video_model,
         item.reference_slot,
         ...(item.reference_slots || []),
         item.prompt,
@@ -3197,7 +3247,7 @@ function renderTemplateBlocks() {
       <button type="button" class="favorite-button template-block-favorite${item.favorite ? " active" : ""}" data-template-block-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}"></button>
       <div class="template-block-body">
         <strong>${escapeHtml(item.title || "컷 블록")}</strong>
-        <small>${escapeHtml(item.method_label || item.method || "방식 없음")} · ${escapeHtml(templateReferenceSlots(item).join(", ") || "참조 없음")} · ${Math.round((Number(item.duration) || 0) * 10) / 10}초</small>
+        <small>${escapeHtml(item.method_label || item.method || "방식 없음")} · ${escapeHtml(item.image_model || item.video_model || "기본 모델")} · ${escapeHtml(templateReferenceSlots(item).join(", ") || "참조 없음")} · ${Math.round((Number(item.duration) || 0) * 10) / 10}초</small>
         <p>${escapeHtml(item.prompt || item.camera || item.notes || "")}</p>
       </div>
       <div class="template-block-actions">
@@ -3285,6 +3335,8 @@ function templateShotBlockPayload(shot, index) {
     id: "",
     title: shot.title || `컷 ${index + 1}`,
     method: shot.method || payload.settings.default_method || "i2v",
+    image_model: shot.image_model || "",
+    video_model: shot.video_model || "",
     duration: shot.duration || payload.settings.default_shot_duration || 6,
     reference_slot: shot.reference_slot || "",
     reference_slots: shot.reference_slots || [],
