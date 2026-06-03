@@ -66,6 +66,7 @@ let promptAutoValue = "";
 let templateItems = [];
 let templateSelectedId = "";
 let templateSearch = "";
+let templateFavoriteOnly = false;
 let pickerVisibleCount = 80;
 let pickerPageSize = 80;
 const multiImageSources = new WeakMap();
@@ -2391,6 +2392,7 @@ function resetTemplateEditor(seed = {}) {
 function filteredTemplates() {
   const query = templateSearch.trim().toLowerCase();
   return templateItems
+    .filter(item => !templateFavoriteOnly || item.favorite)
     .filter(item => {
       if (!query) return true;
       const haystack = [
@@ -2411,9 +2413,17 @@ function renderTemplateList() {
   if (!list) return;
   const items = filteredTemplates();
   const stats = document.querySelector("#templateStats");
-  if (stats) stats.textContent = `${items.length} / ${templateItems.length}개`;
+  const favoriteFilter = document.querySelector("#templateFavoriteOnly");
+  if (favoriteFilter) {
+    favoriteFilter.classList.toggle("active", templateFavoriteOnly);
+    favoriteFilter.setAttribute("aria-pressed", templateFavoriteOnly ? "true" : "false");
+    favoriteFilter.title = templateFavoriteOnly ? "전체 템플릿 보기" : "즐겨찾기만 보기";
+  }
+  if (stats) stats.textContent = templateFavoriteOnly
+    ? `즐겨찾기 ${items.length} / 전체 ${templateItems.length}개`
+    : `${items.length} / ${templateItems.length}개`;
   if (!items.length) {
-    list.innerHTML = `<p class="prompt-empty">저장된 영상 템플릿이 없습니다.</p>`;
+    list.innerHTML = `<p class="prompt-empty">${templateFavoriteOnly ? "즐겨찾기 템플릿이 없습니다." : "저장된 영상 템플릿이 없습니다."}</p>`;
     return;
   }
   list.innerHTML = items.map(item => `
@@ -2593,6 +2603,13 @@ document.querySelector("#templateList")?.addEventListener("click", event => {
 
 document.querySelector("#templateSearch")?.addEventListener("input", event => {
   templateSearch = event.target.value || "";
+  renderTemplateList();
+});
+
+document.querySelector("#templateFavoriteOnly")?.addEventListener("click", event => {
+  templateFavoriteOnly = !templateFavoriteOnly;
+  event.currentTarget.classList.toggle("active", templateFavoriteOnly);
+  event.currentTarget.setAttribute("aria-pressed", templateFavoriteOnly ? "true" : "false");
   renderTemplateList();
 });
 

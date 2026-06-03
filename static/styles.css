@@ -6589,6 +6589,37 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
 
 .template-manager-filters {
   padding: 10px 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 7px;
+  align-items: center;
+}
+
+.template-favorite-filter {
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(235, 239, 244, .16);
+  border-radius: 7px;
+  color: rgba(245, 245, 242, .62);
+  background: rgba(255, 255, 255, .035);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.template-favorite-filter:hover {
+  color: rgba(245, 245, 242, .92);
+  border-color: rgba(235, 239, 244, .34);
+  background: rgba(255, 255, 255, .07);
+}
+
+.template-favorite-filter.active {
+  color: #ffd666;
+  border-color: rgba(255, 214, 102, .54);
+  background: rgba(255, 214, 102, .10);
+  box-shadow: inset 0 0 0 1px rgba(255, 214, 102, .10);
 }
 
 .template-manager-stats {
