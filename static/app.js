@@ -205,8 +205,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-26";
-const appShellCacheName = "webgui-shell-v3-26";
+const appStaticVersion = "20260603-v3-27";
+const appShellCacheName = "webgui-shell-v3-27";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -427,7 +427,7 @@ function appendPlannerFields(body, plan) {
 }
 
 function createProgress(panel, label = "진행 중") {
-  if (!panel) return { set() {}, setCount() {}, done() {} };
+  if (!panel) return { set() {}, setCount() {}, message() {}, done() {} };
   const overlay = document.createElement("div");
   overlay.className = "progress-overlay";
   overlay.innerHTML = `
@@ -458,11 +458,22 @@ function createProgress(panel, label = "진행 중") {
     },
     setCount(done, total, failed = 0, running = 0) {
       clearInterval(timer);
+      overlay.classList.remove("is-review", "is-error");
       value = total ? Math.round((done / total) * 100) : 0;
       bar.style.width = `${value}%`;
       percent.textContent = `${value}%`;
       detail.hidden = false;
       detail.textContent = `${done}/${total} 처리 완료${running ? ` · ${running}개 처리 중` : ""}${failed ? ` · 실패 ${failed}` : ""}`;
+    },
+    message(text, percentValue = value, state = "") {
+      clearInterval(timer);
+      overlay.classList.toggle("is-review", state === "review");
+      overlay.classList.toggle("is-error", state === "error");
+      value = Math.max(0, Math.min(100, Math.round(percentValue)));
+      bar.style.width = `${value}%`;
+      percent.textContent = `${value}%`;
+      detail.hidden = false;
+      detail.textContent = text;
     },
     done() {
       clearInterval(timer);
@@ -1254,7 +1265,14 @@ function waitForTemplateReview(job, detail) {
   });
 }
 
+function selectedTemplateRunMode() {
+  const mode = document.querySelector("#templateRunMode")?.value === "manual" ? "manual" : "auto";
+  templateRunState.mode = mode;
+  return mode;
+}
+
 function enqueueTemplateRun() {
+  const selectedMode = selectedTemplateRunMode();
   const payload = templateRuntimePayload();
   if (!payload.title.trim()) {
     showToast("템플릿 이름을 입력해 주세요.", true);
@@ -1274,16 +1292,16 @@ function enqueueTemplateRun() {
     templateRun: {
       payload,
       slotState: JSON.parse(JSON.stringify(templateRunState.slots)),
-      mode: templateRunState.mode === "manual" ? "manual" : "auto",
+      mode: selectedMode,
     },
-    prompt: `${payload.shots.length}개 컷 순차 실행`,
+    prompt: `${payload.shots.length}개 컷 순차 실행 · ${selectedMode === "manual" ? "수동 확인" : "자동"}`,
     result: null,
     error: null,
   };
   jobQueue.unshift(job);
   renderQueue();
   processQueue();
-  showToast("템플릿 실행 작업을 큐에 추가했습니다.");
+  showToast(`템플릿 실행 작업을 큐에 추가했습니다. (${selectedMode === "manual" ? "수동 확인" : "자동"})`);
 }
 
 async function runTemplateJob(job) {
@@ -1295,6 +1313,9 @@ async function runTemplateJob(job) {
   const previous = { lastImagePath: "", lastVideoPath: "" };
   const items = [];
   const manualMode = job.templateRun.mode === "manual" || payload.run_mode === "manual";
+  updateJob(job, {
+    progressText: `템플릿 실행 시작 · ${manualMode ? "수동 확인" : "자동"}`,
+  });
   try {
     for (let index = 0; index < payload.shots.length; index += 1) {
       const shot = payload.shots[index];
@@ -1326,13 +1347,15 @@ async function runTemplateJob(job) {
         });
         loadLibrary();
         if (manualMode) {
+          const reviewPercent = Math.round(((index + 1) / payload.shots.length) * 100);
+          progress.message(`${label} 확인 대기 · 큐 카드에서 다음 컷/재시도/중단을 선택하세요.`, reviewPercent, "review");
           const action = await waitForTemplateReview(job, {
             index,
             isLast: index + 1 >= payload.shots.length,
             label,
             prompt: request.prompt,
             items: [...items],
-            progressPercent: Math.round(((index + 1) / payload.shots.length) * 100),
+            progressPercent: reviewPercent,
           });
           if (action === "cancel") throw new Error("템플릿 실행이 취소되었습니다.");
           if (action === "retry") {
@@ -1353,10 +1376,16 @@ async function runTemplateJob(job) {
     updateJob(job, { status: "done", result: { ok: true, items }, progressPercent: 100, progressText: "템플릿 실행 완료" });
     showToast("템플릿 실행이 완료되었습니다.");
   } catch (error) {
+    const currentPercent = Number.isFinite(job.progressPercent) ? job.progressPercent : 0;
+    progress.message(error.message, currentPercent, "error");
     updateJob(job, { status: job.status === "cancelled" ? "cancelled" : "failed", error: error.message, progressText: error.message });
     showToast(error.message, true);
   } finally {
-    progress.done();
+    if (job.status === "failed") {
+      setTimeout(() => progress.done(), 1800);
+    } else {
+      progress.done();
+    }
     activeJobs -= 1;
     loadHealth();
     refreshQuota(true);

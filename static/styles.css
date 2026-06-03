@@ -1019,6 +1019,22 @@ input[type="range"] {
   transition: width .25s ease;
 }
 
+.progress-overlay.is-review .progress-card {
+  border-color: rgba(242, 201, 76, .5);
+}
+
+.progress-overlay.is-review .progress-bar span {
+  background: #f2c94c;
+}
+
+.progress-overlay.is-error .progress-card {
+  border-color: rgba(255, 92, 92, .55);
+}
+
+.progress-overlay.is-error .progress-bar span {
+  background: var(--danger);
+}
+
 .progress-indeterminate span {
   width: 38%;
   animation: indeterminate 1.1s infinite ease-in-out;

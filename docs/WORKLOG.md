@@ -347,3 +347,22 @@
   - `remote_url_for_media_path`를 mock 처리한 상태에서 `allow_remote=False`가 원격 URL 대신 `data:image/...`를 반환하는지 확인.
   - v3 서버 재시작 후 `/health` 응답 `200 ok` 확인.
 - 백업: `backups/before-i2i-force-local-inputs-20260603-222500`
+
+### 템플릿 수동 확인/오류 진행 표시 보강
+- 목표: 템플릿 실행 중 수동 확인 대기 상태가 중앙 진행 패널에서 계속 처리 중처럼 보여 멈춘 것처럼 보이는 문제를 줄인다.
+- 원인:
+  - 수동 확인 모드에서는 1컷 완료 후 큐 카드의 `다음 컷`/`재시도`/`중단` 선택을 기다리지만, 중앙 진행 패널은 `1/5 처리 완료`만 표시했다.
+  - 템플릿 큐 등록 시 내부 상태값을 기준으로 모드를 저장해, 드롭다운 표시와 내부 상태가 엇갈릴 여지가 있었다.
+- 결정:
+  - 템플릿 큐 등록 버튼을 누르는 순간 `실행 모드` 드롭다운의 실제 값을 다시 읽어 저장한다.
+  - 수동 확인 대기 시 중앙 진행 패널에 `확인 대기` 안내를 표시한다.
+  - 오류 발생 시 중앙 진행 패널에 오류 메시지를 짧게 표시한 뒤 닫는다.
+- 변경:
+  - `static/app.js`: `selectedTemplateRunMode`, 진행 패널 `message()` 상태 메서드, 수동 확인/오류 메시지 연결 추가.
+  - `static/styles.css`: 진행 패널 확인 대기/오류 색상 상태 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-27` / `webgui-shell-v3-27`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `git diff --check` 통과.
+  - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-27`에서 새 HTML/JS/CSS 반영 확인.
+- 백업: `backups/before-template-run-mode-status-20260603-225500`
