@@ -414,3 +414,22 @@
   - `node --check static/app.js` 통과.
   - `20260603-v3-28` 잔여 참조 없음 확인.
 - 백업: `backups/before-template-review-modal-safe-20260604-000500`
+
+### 템플릿 수동 확인 팝업 내 결과 미리보기
+- 목표: 템플릿 수동 확인 중 왼쪽 큐를 누르지 않아도 중앙 확인 팝업에서 현재 컷 결과물을 바로 확인할 수 있게 한다.
+- 원인:
+  - 수동 확인 단계에서 결과 확인을 왼쪽 큐 썸네일에 의존하면 큐 카드의 상태/결정 이벤트와 섞일 여지가 있었다.
+  - 사용자는 수동 확인 팝업에서 이미 `다음 컷`/`재시도`/`중단`을 결정하므로 결과 확인도 같은 팝업 안에서 처리하는 편이 더 직관적이다.
+- 결정:
+  - 중앙 진행 팝업에 `현재 컷 결과` 미리보기 영역을 추가한다.
+  - 현재 컷에서 생성된 결과만 팝업에 표시하고, 썸네일을 누르면 큰 미디어 뷰어로 확인할 수 있게 한다.
+  - 수동 확인 상태의 왼쪽 큐 카드는 결정 버튼을 표시하지 않고 `팝업에서 선택` 안내만 보여준다.
+- 변경:
+  - `static/app.js`: `createProgress()`에 미디어 미리보기 렌더링 추가, 템플릿 review에 `previewItems` 전달, review 상태 큐 카드 read-only화.
+  - `static/styles.css`: 팝업 미디어 그리드와 큐 안내 문구 스타일 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260604-v3-30` / `webgui-shell-v3-30`으로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `git diff --check` 통과.
+  - `20260604-v3-29` 잔여 참조 없음 확인.
+- 백업: `backups/before-template-review-inline-preview-20260604-002000`

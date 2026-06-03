@@ -207,8 +207,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-29";
-const appShellCacheName = "webgui-shell-v3-29";
+const appStaticVersion = "20260604-v3-30";
+const appShellCacheName = "webgui-shell-v3-30";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -437,12 +437,14 @@ function createProgress(panel, label = "진행 중") {
       <div class="progress-title"><span>${label}</span><span data-percent>0%</span></div>
       <div class="progress-detail" data-progress-detail hidden></div>
       <div class="progress-bar"><span></span></div>
+      <div class="progress-media" data-progress-media hidden></div>
       <div class="progress-actions" data-progress-actions hidden></div>
     </div>`;
   panel.appendChild(overlay);
   const bar = overlay.querySelector(".progress-bar span");
   const percent = overlay.querySelector("[data-percent]");
   const detail = overlay.querySelector("[data-progress-detail]");
+  const media = overlay.querySelector("[data-progress-media]");
   const actions = overlay.querySelector("[data-progress-actions]");
   let value = 0;
   const timer = setInterval(() => {
@@ -454,10 +456,46 @@ function createProgress(panel, label = "진행 중") {
       percent.textContent = "진행 중";
     }
   }, 700);
+  const clearMedia = () => {
+    media.hidden = true;
+    media.innerHTML = "";
+  };
+  const renderMedia = (items = []) => {
+    const visibleItems = (items || []).filter(item => item?.file_path).slice(-4);
+    if (!visibleItems.length) {
+      clearMedia();
+      return;
+    }
+    media.innerHTML = `
+      <div class="progress-media-label">현재 컷 결과</div>
+      <div class="progress-media-grid">
+        ${visibleItems.map((item, index) => {
+          const path = escapeHtml(item.file_path);
+          const kind = item.kind === "video" ? "video" : "image";
+          const body = kind === "video"
+            ? `<video src="${path}" muted autoplay playsinline loop></video>`
+            : `<img src="${path}" alt="">`;
+          return `<button type="button" class="progress-media-item" data-progress-media-index="${index}" aria-label="결과 크게 보기">${body}</button>`;
+        }).join("")}
+      </div>`;
+    media.hidden = false;
+    media.querySelectorAll("[data-progress-media-index]").forEach(button => {
+      button.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const item = visibleItems[Number(button.dataset.progressMediaIndex || "0")];
+        if (!item?.file_path) return;
+        openMediaViewer(item.file_path, item.kind === "video" ? "video" : "image", {
+          source: "progress-preview",
+        });
+      });
+    });
+  };
   return {
     set(next) {
       actions.hidden = true;
       actions.innerHTML = "";
+      clearMedia();
       value = Math.max(value, Math.min(100, next));
       bar.style.width = `${value}%`;
       percent.textContent = `${value}%`;
@@ -466,6 +504,7 @@ function createProgress(panel, label = "진행 중") {
       clearInterval(timer);
       actions.hidden = true;
       actions.innerHTML = "";
+      clearMedia();
       overlay.classList.remove("is-review", "is-error");
       value = total ? Math.round((done / total) * 100) : 0;
       bar.style.width = `${value}%`;
@@ -473,7 +512,7 @@ function createProgress(panel, label = "진행 중") {
       detail.hidden = false;
       detail.textContent = `${done}/${total} 처리 완료${running ? ` · ${running}개 처리 중` : ""}${failed ? ` · 실패 ${failed}` : ""}`;
     },
-    message(text, percentValue = value, state = "", actionItems = []) {
+    message(text, percentValue = value, state = "", actionItems = [], mediaItems = []) {
       clearInterval(timer);
       overlay.classList.toggle("is-review", state === "review");
       overlay.classList.toggle("is-error", state === "error");
@@ -482,6 +521,7 @@ function createProgress(panel, label = "진행 중") {
       percent.textContent = `${value}%`;
       detail.hidden = false;
       detail.textContent = text;
+      renderMedia(mediaItems);
       actions.innerHTML = "";
       if (actionItems.length) {
         actionItems.forEach(item => {
@@ -504,6 +544,7 @@ function createProgress(panel, label = "진행 중") {
       clearInterval(timer);
       actions.hidden = true;
       actions.innerHTML = "";
+      clearMedia();
       bar.style.width = "100%";
       percent.textContent = "100%";
       setTimeout(() => overlay.remove(), 260);
@@ -840,8 +881,10 @@ function renderQueue() {
     const progressLabel = `${Math.max(0, Math.min(100, Math.round(progress)))}%`;
     const review = job.templateRun?.review || {};
     const reviewNextLabel = review.isLast ? "완료" : "다음 컷";
+    const canViewFromQueue = job.status === "done" && (job.result?.item || job.result?.items?.length);
+    const thumbViewAttribute = canViewFromQueue ? `data-view-job aria-label="작업 결과 보기"` : `aria-label="작업 상태"`;
     node.innerHTML = `
-      <button type="button" class="queue-thumb" data-view-job aria-label="작업 결과 보기">${media}</button>
+      <button type="button" class="queue-thumb" ${thumbViewAttribute}>${media}</button>
       <div class="queue-body">
         <div class="queue-title">
           <span class="queue-dot" aria-hidden="true"></span>
@@ -855,8 +898,8 @@ function renderQueue() {
         <div class="queue-progress"><span style="width:${progress}%"></span></div>
         <div class="queue-actions">
           ${job.status === "queued" ? `<button type="button" data-cancel-job>취소</button>` : ""}
-          ${job.status === "review" ? `<button type="button" data-template-review-next>${reviewNextLabel}</button><button type="button" class="secondary" data-template-review-retry>재시도</button><button type="button" class="secondary" data-template-review-cancel>중단</button>` : ""}
-          ${job.status === "done" && (job.result?.item || job.result?.items?.length) ? `<button type="button" data-view-job>보기</button>` : ""}
+          ${job.status === "review" ? `<span class="queue-review-hint">팝업에서 ${reviewNextLabel}/재시도/중단 선택</span>` : ""}
+          ${canViewFromQueue ? `<button type="button" data-view-job>보기</button>` : ""}
           ${(job.status === "done" || job.status === "failed" || job.status === "cancelled") ? `<button type="button" class="secondary" data-remove-job>정리</button>` : ""}
         </div>
       </div>`;
@@ -1317,6 +1360,7 @@ function waitForTemplateReview(job, detail, progress) {
         { label: "재시도", className: "secondary", action: () => resolveTemplateReview(job, "retry") },
         { label: "중단", className: "secondary", action: () => resolveTemplateReview(job, "cancel") },
       ],
+      detail.previewItems || detail.items || [],
     );
   });
 }
@@ -1410,6 +1454,7 @@ async function runTemplateJob(job) {
             label,
             prompt: request.prompt,
             items: [...items],
+            previewItems: produced,
             progressPercent: reviewPercent,
           }, progress);
           if (action === "cancel") throw new Error("템플릿 실행이 취소되었습니다.");
