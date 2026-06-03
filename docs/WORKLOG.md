@@ -509,3 +509,20 @@
   - `git diff --check` 통과.
   - `http://127.0.0.1:7863/?v=20260604-v3-34` 및 `/static/app.js?v=20260604-v3-34` 서빙 확인.
 - 백업: `backups/before-i2v-extra-reference-ui-20260604-012846`
+
+### 템플릿 이미지→영상 기본 모델 추가 참조 슬롯
+- 목표: 템플릿의 `이미지→영상` 블록에서 Grok 기본 영상 모델을 선택하면 시작 이미지 슬롯 외에 추가 참조 이미지 슬롯 2개를 더 지정할 수 있게 한다.
+- 원인:
+  - 일반 이미지→영상 탭은 여러 이미지를 전송할 수 있었지만, 템플릿 블록 UI와 실행 요청은 단일 `reference_slot`만 수집하고 `/api/i2v`에도 한 장만 전달했다.
+- 변경:
+  - `static/app.js`: 템플릿 `이미지→영상` 블록이 Grok 기본 모델일 때 `시작 슬롯 + 추가 참조 2개` UI를 표시한다.
+  - `static/app.js`: Grok 기본 모델의 템플릿 i2v 실행 요청은 최대 3개의 이미지 슬롯을 `/api/i2v`에 전달한다.
+  - `static/app.js`: `grok-imagine-video-1.5-preview` 선택 시에는 기존처럼 첫 번째 슬롯 1개만 사용하고 추가 슬롯은 비운다.
+  - `static/app.js`: 영상 모델 셀렉트 변경 시 템플릿 블록 UI가 즉시 단일/다중 참조 모드로 전환되게 했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260604-v3-35` / `webgui-shell-v3-35`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-35` 및 `/static/app.js?v=20260604-v3-35` 서빙 확인.
+- 백업: `backups/before-template-i2v-extra-slots-20260604-015222`

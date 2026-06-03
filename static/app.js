@@ -207,8 +207,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-34";
-const appShellCacheName = "webgui-shell-v3-34";
+const appStaticVersion = "20260604-v3-35";
+const appShellCacheName = "webgui-shell-v3-35";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1292,14 +1292,16 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     return { endpoint: "/api/i2i", prompt, options: { method: "POST", body } };
   }
   if (shot.method === "i2v") {
-    if (templateReferenceSlots(shot).length) assertTemplateReferencesReady(shot, "image", slotState);
+    const referenceLimit = isSingleReferenceVideoModel(shot.video_model) ? 1 : 3;
+    const referenceShot = templateReferenceLimitedShot(shot, referenceLimit);
+    if (templateReferenceSlots(referenceShot).length) assertTemplateReferencesReady(referenceShot, "image", slotState);
     const body = new FormData();
     body.set("prompt", prompt);
     body.set("duration", duration);
     body.set("aspect_ratio", aspectRatio);
     body.set("resolution", resolution);
     if (shot.video_model) body.set("video_model", shot.video_model);
-    appendTemplateImageReference(body, templateImageSourcePath(shot, previous, slotState));
+    appendTemplateImageReferences(body, templateImageSourcePaths(referenceShot, previous, slotState, referenceLimit));
     return { endpoint: "/api/i2v", prompt, options: { method: "POST", body } };
   }
   if (shot.method === "official" || shot.method === "frame") {
@@ -2901,6 +2903,15 @@ function templateReferenceSlots(item = {}) {
     .slice(0, 3);
 }
 
+function templateReferenceLimitedShot(shot, limit = 3) {
+  const keys = templateReferenceSlots(shot).slice(0, limit);
+  return {
+    ...shot,
+    reference_slot: keys[0] || "",
+    reference_slots: keys,
+  };
+}
+
 function applyTemplateShotMethodUi(row) {
   if (!row) return;
   const method = row.querySelector("[data-shot-method]")?.value || "i2v";
@@ -2916,27 +2927,53 @@ function applyTemplateShotMethodUi(row) {
   }
   const singleReference = row.querySelector("[data-shot-reference]");
   const referenceSlots = Array.from(row.querySelectorAll("[data-shot-reference-slot]"));
+  const useMultiI2vReferences = method === "i2v" && !isSingleReferenceVideoModel(videoModel?.value);
   if (method === "image") {
     if (singleReference) singleReference.value = "";
     referenceSlots.forEach(input => {
       input.value = "";
     });
   }
-  if (method === "edit" && referenceSlots.length && singleReference?.value && !referenceSlots.some(input => input.value.trim())) {
+  if ((method === "edit" || useMultiI2vReferences) && referenceSlots.length && singleReference?.value && !referenceSlots.some(input => input.value.trim())) {
     referenceSlots[0].value = singleReference.value;
   }
-  if (method !== "edit" && method !== "image" && singleReference && !singleReference.value.trim() && referenceSlots[0]?.value.trim()) {
+  if (method === "i2v" && !useMultiI2vReferences) {
+    if (singleReference && referenceSlots[0]?.value.trim()) {
+      singleReference.value = referenceSlots[0].value;
+    }
+    referenceSlots.slice(1).forEach(input => {
+      input.value = "";
+    });
+  }
+  if (method !== "edit" && !useMultiI2vReferences && method !== "image" && singleReference && !singleReference.value.trim() && referenceSlots[0]?.value.trim()) {
     singleReference.value = referenceSlots[0].value;
   }
+  const activeFields = new Set(config.fields);
+  if (useMultiI2vReferences) {
+    activeFields.delete("reference");
+    activeFields.add("references");
+  }
   row.querySelectorAll("[data-shot-field]").forEach(field => {
-    field.hidden = !config.fields.has(field.dataset.shotField);
+    field.hidden = !activeFields.has(field.dataset.shotField);
   });
   const hint = row.querySelector("[data-shot-method-hint]");
-  if (hint) hint.textContent = config.hint;
+  if (hint) {
+    hint.textContent = useMultiI2vReferences
+      ? "첫 번째 이미지 슬롯을 시작 레퍼런스로, 2~3번째 이미지 슬롯을 추가 참조로 함께 보냅니다."
+      : config.hint;
+  }
   const referenceLabel = row.querySelector("[data-shot-reference-label]");
   if (referenceLabel) referenceLabel.textContent = config.referenceLabel || "참조 슬롯";
   const referenceInput = row.querySelector("[data-shot-reference]");
   if (referenceInput) referenceInput.placeholder = config.referencePlaceholder || "main_actor";
+  const referenceListLabel = row.querySelector("[data-shot-reference-list-label]");
+  if (referenceListLabel) referenceListLabel.textContent = useMultiI2vReferences ? "시작 슬롯 + 추가 참조 2개" : "이미지 슬롯 1~3";
+  const referenceHelp = row.querySelector("[data-shot-reference-help]");
+  if (referenceHelp) {
+    referenceHelp.textContent = useMultiI2vReferences
+      ? "1번 슬롯은 영상의 시작 이미지, 2~3번 슬롯은 인물/의상/배경/스타일 참조로 전달됩니다."
+      : "1번 슬롯은 메인 이미지, 2~3번은 추가 레퍼런스로 전달됩니다.";
+  }
 }
 
 function syncTemplateShotMethodUi(root = document) {
@@ -3018,13 +3055,13 @@ function renderTemplateShots(items = []) {
           <input type="text" data-shot-reference placeholder="main_actor" value="${escapeHtml(item.reference_slot || referenceSlots[0] || "")}">
         </div>
         <div class="template-shot-references" data-shot-field="references">
-          <label>이미지 슬롯 1~3</label>
+          <label data-shot-reference-list-label>이미지 슬롯 1~3</label>
           <div class="template-reference-grid">
             ${[0, 1, 2].map(slotIndex => `
               <input type="text" data-shot-reference-slot data-slot-index="${slotIndex}" placeholder="${slotIndex === 0 ? "main_actor" : `reference_${slotIndex + 1}`}" value="${escapeHtml(referenceSlots[slotIndex] || "")}">
             `).join("")}
           </div>
-          <small>1번 슬롯은 메인 이미지, 2~3번은 추가 레퍼런스로 전달됩니다.</small>
+          <small data-shot-reference-help>1번 슬롯은 메인 이미지, 2~3번은 추가 레퍼런스로 전달됩니다.</small>
         </div>
         <div data-shot-field="transition">
           <label>전환</label>
@@ -3083,6 +3120,7 @@ function collectTemplateSlots() {
 function collectTemplateShots() {
   return Array.from(document.querySelectorAll("[data-template-shot]")).map((row, index) => {
     const method = row.querySelector("[data-shot-method]")?.value || "i2v";
+    const videoModel = row.querySelector("[data-shot-video-model]")?.value || "";
     const multiReferences = Array.from(row.querySelectorAll("[data-shot-reference-slot]"))
       .map(input => input.value.trim())
       .filter(Boolean)
@@ -3090,6 +3128,8 @@ function collectTemplateShots() {
     const singleReference = row.querySelector("[data-shot-reference]")?.value.trim() || "";
     let referenceSlots = [];
     if (method === "edit") {
+      referenceSlots = multiReferences.length ? multiReferences : (singleReference ? [singleReference] : []);
+    } else if (method === "i2v" && !isSingleReferenceVideoModel(videoModel)) {
       referenceSlots = multiReferences.length ? multiReferences : (singleReference ? [singleReference] : []);
     } else if (method !== "image" && singleReference) {
       referenceSlots = [singleReference];
@@ -3100,7 +3140,7 @@ function collectTemplateShots() {
       title: row.querySelector("[data-shot-title]")?.value || `컷 ${index + 1}`,
       method,
       image_model: row.querySelector("[data-shot-image-model]")?.value || "",
-      video_model: row.querySelector("[data-shot-video-model]")?.value || "",
+      video_model: videoModel,
       output_slot: row.querySelector("[data-shot-output-slot]")?.value || "",
       duration: Number.parseFloat(row.querySelector("[data-shot-duration]")?.value || "6") || 6,
       reference_slot: referenceSlots[0] || "",
@@ -3937,7 +3977,7 @@ document.querySelector("#templateBlockList")?.addEventListener("click", event =>
 
 videoTemplateForm()?.addEventListener("input", renderTemplatePreview);
 videoTemplateForm()?.addEventListener("change", event => {
-  if (event.target.matches("[data-shot-method]")) {
+  if (event.target.matches("[data-shot-method], [data-shot-video-model]")) {
     applyTemplateShotMethodUi(event.target.closest("[data-template-shot]"));
   }
   renderTemplatePreview();
