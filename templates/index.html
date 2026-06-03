@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260603-v3-08">
+  <link rel="stylesheet" href="/static/styles.css?v=20260603-v3-09">
 </head>
 <body>
   <header class="topbar">
@@ -842,6 +842,21 @@
           </div>
           <div class="template-preview-stats" id="templatePreviewStats"></div>
           <div class="template-preview" id="templatePreview"></div>
+          <div class="template-block-library">
+            <div class="template-section-head">
+              <div>
+                <h3>블록 보관함</h3>
+                <p>자주 쓰는 컷 설정을 저장하고 현재 템플릿에 다시 추가합니다.</p>
+              </div>
+              <button type="button" class="secondary compact-btn" id="refreshTemplateBlocks">새로고침</button>
+            </div>
+            <div class="template-block-filters">
+              <input type="search" id="templateBlockSearch" placeholder="블록 검색">
+              <button type="button" id="templateBlockFavoriteOnly" class="template-favorite-filter" aria-label="즐겨찾기 블록만 보기" aria-pressed="false" title="즐겨찾기만 보기">★</button>
+            </div>
+            <div class="template-manager-stats" id="templateBlockStats"></div>
+            <div class="template-block-list" id="templateBlockList"></div>
+          </div>
         </aside>
       </div>
     </section>
@@ -1061,6 +1076,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260603-v3-08"></script>
+  <script src="/static/app.js?v=20260603-v3-09"></script>
 </body>
 </html>

@@ -118,6 +118,7 @@ def ensure_media_dirs_for(root):
     meta = root / "metadata.json"
     prompts = root / "prompts.json"
     video_templates = root / "video-templates.json"
+    video_template_blocks = root / "video-template-blocks.json"
     usage = root / "usage.json"
     if not meta.exists():
         meta.write_text("[]", encoding="utf-8")
@@ -125,6 +126,8 @@ def ensure_media_dirs_for(root):
         prompts.write_text("[]", encoding="utf-8")
     if not video_templates.exists():
         video_templates.write_text("[]", encoding="utf-8")
+    if not video_template_blocks.exists():
+        video_template_blocks.write_text("[]", encoding="utf-8")
     if not usage.exists():
         usage.write_text(json.dumps({"requests": 0, "tokens": 0, "cost_usd": 0, "last_usage": None}), encoding="utf-8")
 
@@ -173,6 +176,10 @@ def prompts_path():
 
 def video_templates_path():
     return media_path("video-templates.json")
+
+
+def video_template_blocks_path():
+    return media_path("video-template-blocks.json")
 
 
 def oauth_token_path():
@@ -822,6 +829,73 @@ def write_video_templates(items):
 
 def video_template_response(item):
     return normalize_video_template(item)
+
+
+def normalize_template_block(item):
+    item = dict(item or {})
+    now = datetime.now(timezone.utc).isoformat()
+    source_shot_id = str(item.get("source_shot_id") or item.get("shot_id") or "").strip()
+    shot_items = normalize_template_shots([{
+        "id": source_shot_id,
+        "title": item.get("title") or item.get("name"),
+        "method": item.get("method"),
+        "duration": item.get("duration"),
+        "reference_slot": item.get("reference_slot"),
+        "prompt": item.get("prompt"),
+        "camera": item.get("camera"),
+        "transition": item.get("transition"),
+        "retry_prompt": item.get("retry_prompt"),
+        "notes": item.get("notes"),
+    }])
+    shot = shot_items[0] if shot_items else normalize_template_shots([{}])[0]
+    block_id = str(item.get("id") or uuid.uuid4().hex)
+    created_at = item.get("created_at") or now
+    updated_at = item.get("updated_at") or created_at
+    source_template_id = str(item.get("source_template_id") or "").strip()[:120]
+    source_template_title = str(item.get("source_template_title") or "").strip()[:160]
+    return {
+        "id": block_id,
+        "title": shot.get("title") or "컷 블록",
+        "method": shot.get("method") or "i2v",
+        "method_label": VIDEO_TEMPLATE_METHODS.get(shot.get("method"), "이미지→영상"),
+        "duration": shot.get("duration") or 6,
+        "reference_slot": shot.get("reference_slot") or "",
+        "prompt": shot.get("prompt") or "",
+        "camera": shot.get("camera") or "",
+        "transition": shot.get("transition") or "cut",
+        "retry_prompt": shot.get("retry_prompt") or "",
+        "notes": shot.get("notes") or "",
+        "tags": normalize_prompt_tags(item.get("tags")),
+        "favorite": bool(item.get("favorite")),
+        "source_template_id": source_template_id,
+        "source_template_title": source_template_title,
+        "source_shot_id": source_shot_id,
+        "created_at": created_at,
+        "updated_at": updated_at,
+    }
+
+
+def read_template_blocks():
+    try:
+        data = json.loads(video_template_blocks_path().read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, FileNotFoundError):
+        data = []
+    if not isinstance(data, list):
+        data = []
+    return [normalize_template_block(item) for item in data if isinstance(item, dict)]
+
+
+def write_template_blocks(items):
+    target = video_template_blocks_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [normalize_template_block(item) for item in items if isinstance(item, dict)]
+    temp = target.with_name(f"{target.name}.tmp")
+    temp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(target)
+
+
+def template_block_response(item):
+    return normalize_template_block(item)
 
 
 def read_usage():
@@ -4015,6 +4089,59 @@ def delete_video_templates():
     items = read_video_templates()
     keep = [item for item in items if item.get("id") not in ids]
     write_video_templates(keep)
+    return jsonify({"ok": True, "deleted": len(items) - len(keep)})
+
+
+@app.get("/api/video-template-blocks")
+def video_template_block_library():
+    items = [template_block_response(item) for item in read_template_blocks()]
+    items.sort(key=lambda item: (bool(item.get("favorite")), item.get("updated_at") or ""), reverse=True)
+    tags = sorted({tag for item in items for tag in item.get("tags", [])}, key=str.lower)
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "tags": tags,
+        "methods": VIDEO_TEMPLATE_METHODS,
+    })
+
+
+@app.post("/api/video-template-blocks")
+def save_video_template_block():
+    payload = request.get_json(silent=True) or {}
+    item_id = str(payload.get("id") or "").strip()
+    items = read_template_blocks()
+    now = datetime.now(timezone.utc).isoformat()
+    incoming = normalize_template_block({
+        **payload,
+        "id": item_id or uuid.uuid4().hex,
+        "created_at": now,
+        "updated_at": now,
+    })
+
+    for index, item in enumerate(items):
+        if item.get("id") != item_id:
+            continue
+        previous = normalize_template_block(item)
+        incoming["created_at"] = previous.get("created_at") or now
+        incoming["updated_at"] = now
+        items[index] = incoming
+        write_template_blocks(items)
+        return jsonify({"ok": True, "item": template_block_response(incoming), "created": False})
+
+    items.insert(0, incoming)
+    write_template_blocks(items)
+    return jsonify({"ok": True, "item": template_block_response(incoming), "created": True})
+
+
+@app.post("/api/video-template-blocks/delete")
+def delete_video_template_blocks():
+    payload = request.get_json(silent=True) or {}
+    ids = set(str(item) for item in (payload.get("ids") or []) if item)
+    if not ids:
+        return safe_error("삭제할 블록을 선택해 주세요.")
+    items = read_template_blocks()
+    keep = [item for item in items if item.get("id") not in ids]
+    write_template_blocks(keep)
     return jsonify({"ok": True, "deleted": len(items) - len(keep)})
 
 

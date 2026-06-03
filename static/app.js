@@ -67,6 +67,9 @@ let templateItems = [];
 let templateSelectedId = "";
 let templateSearch = "";
 let templateFavoriteOnly = false;
+let templateBlocks = [];
+let templateBlockSearch = "";
+let templateBlockFavoriteOnly = false;
 let pickerVisibleCount = 80;
 let pickerPageSize = 80;
 const multiImageSources = new WeakMap();
@@ -2207,6 +2210,7 @@ function renderTemplateShots(items = []) {
         <input type="text" data-shot-title placeholder="컷 이름" value="${escapeHtml(item.title || `컷 ${index + 1}`)}">
         <button type="button" class="icon-button" data-move-shot-up aria-label="위로">↑</button>
         <button type="button" class="icon-button" data-move-shot-down aria-label="아래로">↓</button>
+        <button type="button" class="secondary shot-save-block" data-save-shot-block>블록 저장</button>
         <button type="button" class="icon-button" data-duplicate-shot aria-label="복제">⧉</button>
         <button type="button" class="icon-button" data-remove-template-row aria-label="삭제">×</button>
       </div>
@@ -2439,7 +2443,78 @@ function renderTemplateList() {
   `).join("");
 }
 
+function templateBlockToShot(block = {}) {
+  return {
+    id: "",
+    title: block.title || "컷 블록",
+    method: block.method || "i2v",
+    duration: block.duration || 6,
+    reference_slot: block.reference_slot || "",
+    transition: block.transition || "cut",
+    prompt: block.prompt || "",
+    camera: block.camera || "",
+    retry_prompt: block.retry_prompt || "",
+    notes: block.notes || "",
+  };
+}
+
+function filteredTemplateBlocks() {
+  const query = templateBlockSearch.trim().toLowerCase();
+  return templateBlocks
+    .filter(item => !templateBlockFavoriteOnly || item.favorite)
+    .filter(item => {
+      if (!query) return true;
+      const haystack = [
+        item.title,
+        item.method_label,
+        item.reference_slot,
+        item.prompt,
+        item.camera,
+        item.notes,
+        item.source_template_title,
+        ...(item.tags || []),
+      ].filter(Boolean).join(" ").toLowerCase();
+      return query.split(/\s+/).every(token => haystack.includes(token));
+    })
+    .sort((a, b) => Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+}
+
+function renderTemplateBlocks() {
+  const list = document.querySelector("#templateBlockList");
+  if (!list) return;
+  const items = filteredTemplateBlocks();
+  const stats = document.querySelector("#templateBlockStats");
+  const favoriteFilter = document.querySelector("#templateBlockFavoriteOnly");
+  if (favoriteFilter) {
+    favoriteFilter.classList.toggle("active", templateBlockFavoriteOnly);
+    favoriteFilter.setAttribute("aria-pressed", templateBlockFavoriteOnly ? "true" : "false");
+    favoriteFilter.title = templateBlockFavoriteOnly ? "전체 블록 보기" : "즐겨찾기만 보기";
+  }
+  if (stats) stats.textContent = templateBlockFavoriteOnly
+    ? `즐겨찾기 ${items.length} / 전체 ${templateBlocks.length}개`
+    : `${items.length} / ${templateBlocks.length}개`;
+  if (!items.length) {
+    list.innerHTML = `<p class="prompt-empty">${templateBlockFavoriteOnly ? "즐겨찾기 블록이 없습니다." : "저장된 블록이 없습니다. 컷 카드에서 블록 저장을 눌러 추가하세요."}</p>`;
+    return;
+  }
+  list.innerHTML = items.map(item => `
+    <article class="template-block-card" data-template-block-id="${escapeHtml(item.id)}">
+      <button type="button" class="favorite-button template-block-favorite${item.favorite ? " active" : ""}" data-template-block-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}">★</button>
+      <div class="template-block-body">
+        <strong>${escapeHtml(item.title || "컷 블록")}</strong>
+        <small>${escapeHtml(item.method_label || item.method || "방식 없음")} · ${escapeHtml(item.reference_slot || "참조 없음")} · ${Math.round((Number(item.duration) || 0) * 10) / 10}초</small>
+        <p>${escapeHtml(item.prompt || item.camera || item.notes || "")}</p>
+      </div>
+      <div class="template-block-actions">
+        <button type="button" class="secondary" data-template-block-add>추가</button>
+        <button type="button" class="danger-btn" data-template-block-delete>삭제</button>
+      </div>
+    </article>
+  `).join("");
+}
+
 async function loadTemplateManager(force = false) {
+  loadTemplateBlocks(force).catch(error => showToast(error.message, true));
   if (templateItems.length && !force) {
     renderTemplateList();
     if (!templateSelectedId) resetTemplateEditor();
@@ -2452,6 +2527,18 @@ async function loadTemplateManager(force = false) {
   renderTemplateList();
   if (!templateSelectedId && templateItems.length) setTemplateEditorItem(templateItems[0]);
   if (!templateItems.length) resetTemplateEditor();
+}
+
+async function loadTemplateBlocks(force = false) {
+  if (templateBlocks.length && !force) {
+    renderTemplateBlocks();
+    return;
+  }
+  const response = await fetch("/api/video-template-blocks");
+  const data = await response.json();
+  if (!data.ok) rememberApiError(data, "템플릿 블록 조회 실패");
+  templateBlocks = data.items || [];
+  renderTemplateBlocks();
 }
 
 async function saveTemplateEditor() {
@@ -2493,6 +2580,80 @@ async function toggleTemplateFavorite(id, button) {
   setFavoriteButtonState(button, Boolean(updated.favorite), false);
   if (templateSelectedId === id) setTemplateEditorItem(updated);
   else renderTemplateList();
+}
+
+function templateShotBlockPayload(shot, index) {
+  const payload = templatePayloadFromEditor();
+  const tags = [...(payload.tags || [])];
+  if (payload.genre) tags.push(payload.genre);
+  return {
+    id: "",
+    title: shot.title || `컷 ${index + 1}`,
+    method: shot.method || payload.settings.default_method || "i2v",
+    duration: shot.duration || payload.settings.default_shot_duration || 6,
+    reference_slot: shot.reference_slot || "",
+    transition: shot.transition || "cut",
+    prompt: shot.prompt || "",
+    camera: shot.camera || "",
+    retry_prompt: shot.retry_prompt || "",
+    notes: shot.notes || "",
+    tags,
+    favorite: false,
+    source_template_id: payload.id || "",
+    source_template_title: payload.title || "",
+    source_shot_id: shot.id || "",
+  };
+}
+
+async function saveTemplateShotBlock(index, button) {
+  const shots = collectTemplateShots();
+  const shot = shots[index];
+  if (!shot) {
+    showToast("저장할 컷을 찾을 수 없습니다.", true);
+    return;
+  }
+  const previousDisabled = button?.disabled;
+  if (button) button.disabled = true;
+  try {
+    const data = await postJson("/api/video-template-blocks", templateShotBlockPayload(shot, index));
+    const existing = templateBlocks.findIndex(item => item.id === data.item.id);
+    if (existing >= 0) templateBlocks[existing] = data.item;
+    else templateBlocks.unshift(data.item);
+    renderTemplateBlocks();
+    showToast("컷 블록을 보관했습니다.");
+  } finally {
+    if (button) button.disabled = previousDisabled;
+  }
+}
+
+async function toggleTemplateBlockFavorite(id, button) {
+  const item = templateBlocks.find(entry => entry.id === id);
+  if (!item) return;
+  const next = !item.favorite;
+  setFavoriteButtonState(button, next, true);
+  const data = await postJson("/api/video-template-blocks", { ...item, favorite: next });
+  const index = templateBlocks.findIndex(entry => entry.id === id);
+  if (index >= 0) templateBlocks[index] = data.item;
+  setFavoriteButtonState(button, Boolean(data.item.favorite), false);
+  renderTemplateBlocks();
+}
+
+async function deleteTemplateBlock(id) {
+  const data = await postJson("/api/video-template-blocks/delete", { ids: [id] });
+  templateBlocks = templateBlocks.filter(item => item.id !== id);
+  renderTemplateBlocks();
+  showToast(`${data.deleted || 0}개 블록을 삭제했습니다.`);
+}
+
+function addTemplateBlockToEditor(id) {
+  const block = templateBlocks.find(item => item.id === id);
+  if (!block) {
+    showToast("추가할 블록을 찾을 수 없습니다.", true);
+    return;
+  }
+  renderTemplateShots([...collectTemplateShots(), templateBlockToShot(block)]);
+  renderTemplatePreview();
+  showToast("블록을 현재 템플릿에 추가했습니다.");
 }
 
 async function deleteTemplateEditor() {
@@ -2613,6 +2774,40 @@ document.querySelector("#templateFavoriteOnly")?.addEventListener("click", event
   renderTemplateList();
 });
 
+document.querySelector("#templateBlockSearch")?.addEventListener("input", event => {
+  templateBlockSearch = event.target.value || "";
+  renderTemplateBlocks();
+});
+
+document.querySelector("#templateBlockFavoriteOnly")?.addEventListener("click", event => {
+  templateBlockFavoriteOnly = !templateBlockFavoriteOnly;
+  event.currentTarget.classList.toggle("active", templateBlockFavoriteOnly);
+  event.currentTarget.setAttribute("aria-pressed", templateBlockFavoriteOnly ? "true" : "false");
+  renderTemplateBlocks();
+});
+
+document.querySelector("#refreshTemplateBlocks")?.addEventListener("click", () => {
+  loadTemplateBlocks(true).catch(error => showToast(error.message, true));
+});
+
+document.querySelector("#templateBlockList")?.addEventListener("click", event => {
+  const card = event.target.closest("[data-template-block-id]");
+  if (!card) return;
+  const id = card.dataset.templateBlockId;
+  if (event.target.closest("[data-template-block-favorite]")) {
+    event.stopPropagation();
+    toggleTemplateBlockFavorite(id, event.target.closest("[data-template-block-favorite]")).catch(error => showToast(error.message, true));
+    return;
+  }
+  if (event.target.closest("[data-template-block-add]")) {
+    addTemplateBlockToEditor(id);
+    return;
+  }
+  if (event.target.closest("[data-template-block-delete]")) {
+    deleteTemplateBlock(id).catch(error => showToast(error.message, true));
+  }
+});
+
 videoTemplateForm()?.addEventListener("input", renderTemplatePreview);
 videoTemplateForm()?.addEventListener("change", renderTemplatePreview);
 videoTemplateForm()?.addEventListener("submit", event => {
@@ -2686,6 +2881,11 @@ document.querySelector("#copyTemplatePreview")?.addEventListener("click", async 
       return;
     }
     if (!shot) return;
+    if (event.target.closest("[data-save-shot-block]")) {
+      const index = Array.from(document.querySelectorAll("[data-template-shot]")).indexOf(shot);
+      saveTemplateShotBlock(index, event.target.closest("[data-save-shot-block]")).catch(error => showToast(error.message, true));
+      return;
+    }
     if (event.target.closest("[data-duplicate-shot]")) {
       const shots = collectTemplateShots();
       const index = Array.from(document.querySelectorAll("[data-template-shot]")).indexOf(shot);
