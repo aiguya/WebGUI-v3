@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260603-v3-06">
+  <link rel="stylesheet" href="/static/styles.css?v=20260603-v3-07">
 </head>
 <body>
   <header class="topbar">
@@ -718,7 +718,12 @@
               <h2>영상 템플릿</h2>
               <p>컷, 변수, 배우 슬롯을 묶어 자동 제작 레시피로 저장합니다.</p>
             </div>
-            <button type="button" id="newVideoTemplate" class="secondary">새로 만들기</button>
+            <div class="template-head-actions">
+              <button type="button" id="newVideoTemplate" class="secondary">새로 만들기</button>
+              <button type="button" id="importVideoTemplate" class="secondary">불러오기</button>
+              <button type="button" id="exportVideoTemplate" class="secondary">내보내기</button>
+              <input type="file" id="templateImportFile" accept="application/json,.json" hidden>
+            </div>
           </div>
           <div class="template-manager-filters">
             <input type="search" id="templateSearch" placeholder="템플릿 검색">
@@ -784,6 +789,10 @@
               </select>
             </div>
           </div>
+          <label class="check-row">
+            <input type="checkbox" name="favorite">
+            <span>즐겨찾기</span>
+          </label>
           <label>전역 프롬프트</label>
           <textarea name="global_prompt" placeholder="모든 컷에 공통으로 들어갈 스타일, 인물 유지, 카메라 톤 등을 작성합니다."></textarea>
           <label>제외/주의 프롬프트</label>
@@ -1051,6 +1060,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260603-v3-06"></script>
+  <script src="/static/app.js?v=20260603-v3-07"></script>
 </body>
 </html>

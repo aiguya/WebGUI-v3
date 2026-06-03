@@ -6547,6 +6547,19 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   gap: 10px;
 }
 
+.template-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.template-head-actions button {
+  min-height: 30px !important;
+  padding: 6px 9px !important;
+  font-size: 12px;
+}
+
 .template-manager-head {
   padding: 14px 14px 10px;
   border-bottom: 1px solid rgba(235, 239, 244, .08);
@@ -6595,13 +6608,24 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
 }
 
 .template-card {
+  position: relative;
   display: grid;
   gap: 5px;
-  padding: 11px 10px;
+  padding: 11px 10px 10px 34px;
   border: 1px solid rgba(235, 239, 244, .10);
   border-radius: 8px;
   background: rgba(255, 255, 255, .030);
   cursor: pointer;
+}
+
+.template-card .template-favorite {
+  position: absolute;
+  top: 9px;
+  left: 8px;
+}
+
+.template-card-body {
+  min-width: 0;
 }
 
 .template-card:hover,

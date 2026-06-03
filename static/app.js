@@ -2110,6 +2110,7 @@ function templateDefaultItem(seed = {}) {
     description: seed.description || "",
     genre: seed.genre || "",
     tags: seed.tags || [],
+    favorite: Boolean(seed.favorite),
     global_prompt: seed.global_prompt || "배우의 얼굴, 헤어스타일, 체형, 의상 톤을 일관되게 유지한다. 영화적인 조명과 자연스러운 움직임을 사용한다.",
     negative_prompt: seed.negative_prompt || "얼굴 변형, 다른 인물로 변경, 과도한 손가락 왜곡, 어색한 눈과 치아, 갑작스러운 의상 변경을 피한다.",
     variables: seed.variables || [
@@ -2286,6 +2287,7 @@ function templatePayloadFromEditor() {
     description: form?.elements.description?.value || "",
     genre: form?.elements.genre?.value || "",
     tags: form?.elements.tags?.value || "",
+    favorite: Boolean(form?.elements.favorite?.checked),
     global_prompt: form?.elements.global_prompt?.value || "",
     negative_prompt: form?.elements.negative_prompt?.value || "",
     settings,
@@ -2359,6 +2361,7 @@ function setTemplateEditorItem(item = {}) {
   form.elements.description.value = data.description || "";
   form.elements.genre.value = data.genre || "";
   form.elements.tags.value = (data.tags || []).join(", ");
+  form.elements.favorite.checked = Boolean(data.favorite);
   form.elements.target_duration.value = data.settings.target_duration || 60;
   form.elements.default_shot_duration.value = data.settings.default_shot_duration || 6;
   form.elements.aspect_ratio.value = data.settings.aspect_ratio || "9:16";
@@ -2415,10 +2418,13 @@ function renderTemplateList() {
   }
   list.innerHTML = items.map(item => `
     <article class="template-card${item.id === templateSelectedId ? " active" : ""}" data-template-id="${escapeHtml(item.id)}">
-      <strong>${escapeHtml(item.title || "영상 템플릿")}</strong>
-      <small>${escapeHtml(item.genre || "장르 없음")} · ${item.stats?.shot_count || 0}컷 · ${Math.round((item.stats?.total_duration || 0) * 10) / 10}초 · ${formatPromptTime(item.updated_at)}</small>
-      <p>${escapeHtml(item.description || item.global_prompt || "")}</p>
-      <div class="prompt-tags">${(item.tags || []).slice(0, 5).map(tag => `<span>${escapeHtml(tag)}</span>`).join("")}</div>
+      <button type="button" class="favorite-button template-favorite${item.favorite ? " active" : ""}" data-template-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}">★</button>
+      <div class="template-card-body">
+        <strong>${escapeHtml(item.title || "영상 템플릿")}</strong>
+        <small>${escapeHtml(item.genre || "장르 없음")} · ${item.stats?.shot_count || 0}컷 · ${Math.round((item.stats?.total_duration || 0) * 10) / 10}초 · ${formatPromptTime(item.updated_at)}</small>
+        <p>${escapeHtml(item.description || item.global_prompt || "")}</p>
+        <div class="prompt-tags">${(item.tags || []).slice(0, 5).map(tag => `<span>${escapeHtml(tag)}</span>`).join("")}</div>
+      </div>
     </article>
   `).join("");
 }
@@ -2457,6 +2463,28 @@ async function saveTemplateEditor() {
   return data.item;
 }
 
+async function saveTemplatePayload(payload, quiet = false) {
+  const data = await postJson("/api/video-templates", payload);
+  const index = templateItems.findIndex(item => item.id === data.item.id);
+  if (index >= 0) templateItems[index] = data.item;
+  else templateItems.unshift(data.item);
+  if (templateSelectedId === data.item.id) setTemplateEditorItem(data.item);
+  else renderTemplateList();
+  if (!quiet) showToast(data.created ? "영상 템플릿을 저장했습니다." : "영상 템플릿을 업데이트했습니다.");
+  return data.item;
+}
+
+async function toggleTemplateFavorite(id, button) {
+  const item = templateItems.find(entry => entry.id === id);
+  if (!item) return;
+  const next = !item.favorite;
+  setFavoriteButtonState(button, next, true);
+  const updated = await saveTemplatePayload({ ...item, favorite: next }, true);
+  setFavoriteButtonState(button, Boolean(updated.favorite), false);
+  if (templateSelectedId === id) setTemplateEditorItem(updated);
+  else renderTemplateList();
+}
+
 async function deleteTemplateEditor() {
   const id = videoTemplateForm()?.elements.id?.value || "";
   if (!id) {
@@ -2470,6 +2498,73 @@ async function deleteTemplateEditor() {
   else resetTemplateEditor();
   renderTemplateList();
   showToast(`${data.deleted || 0}개 템플릿을 삭제했습니다.`);
+}
+
+function sanitizeTemplateFileName(title) {
+  const safe = String(title || "webgui-template")
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 80);
+  return safe || "webgui-template";
+}
+
+function exportCurrentTemplate() {
+  const payload = templatePayloadFromEditor();
+  if (!payload.title.trim()) {
+    showToast("내보낼 템플릿 이름을 입력해 주세요.", true);
+    return;
+  }
+  const exportData = {
+    format: "webgui.v3.video_template",
+    exported_at: new Date().toISOString(),
+    template: payload,
+  };
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${sanitizeTemplateFileName(payload.title)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("템플릿 JSON을 내보냈습니다.");
+}
+
+function templatesFromImportData(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.templates)) return data.templates;
+  if (data?.template && typeof data.template === "object") return [data.template];
+  if (data?.item && typeof data.item === "object") return [data.item];
+  if (data && typeof data === "object") return [data];
+  return [];
+}
+
+async function importTemplateFile(file) {
+  if (!file) return;
+  const text = await file.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    throw new Error("JSON 템플릿 파일을 읽을 수 없습니다.");
+  }
+  const imported = templatesFromImportData(data).filter(item => item && typeof item === "object");
+  if (!imported.length) throw new Error("가져올 템플릿이 없습니다.");
+  const saved = [];
+  for (const item of imported) {
+    const copy = {
+      ...item,
+      id: "",
+      title: item.title ? `${item.title}` : "가져온 영상 템플릿",
+    };
+    saved.push(await saveTemplatePayload(copy, true));
+  }
+  if (saved.length) setTemplateEditorItem(saved[0]);
+  renderTemplateList();
+  showToast(`${saved.length}개 템플릿을 불러왔습니다.`);
 }
 
 function templatePreviewPlainText() {
@@ -2486,6 +2581,12 @@ function templatePreviewPlainText() {
 document.querySelector("#templateList")?.addEventListener("click", event => {
   const card = event.target.closest("[data-template-id]");
   if (!card) return;
+  const favorite = event.target.closest("[data-template-favorite]");
+  if (favorite) {
+    event.stopPropagation();
+    toggleTemplateFavorite(card.dataset.templateId, favorite).catch(error => showToast(error.message, true));
+    return;
+  }
   const item = templateItems.find(entry => entry.id === card.dataset.templateId);
   if (item) setTemplateEditorItem(item);
 });
@@ -2503,6 +2604,16 @@ videoTemplateForm()?.addEventListener("submit", event => {
 });
 
 document.querySelector("#newVideoTemplate")?.addEventListener("click", () => resetTemplateEditor());
+document.querySelector("#importVideoTemplate")?.addEventListener("click", () => {
+  document.querySelector("#templateImportFile")?.click();
+});
+document.querySelector("#templateImportFile")?.addEventListener("change", event => {
+  const file = event.target.files?.[0];
+  importTemplateFile(file).catch(error => showToast(error.message, true)).finally(() => {
+    event.target.value = "";
+  });
+});
+document.querySelector("#exportVideoTemplate")?.addEventListener("click", exportCurrentTemplate);
 document.querySelector("#addTemplateVariable")?.addEventListener("click", () => {
   renderTemplateVariables([...collectTemplateVariables(), { key: "", label: "", default: "" }]);
   renderTemplatePreview();
