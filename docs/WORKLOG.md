@@ -217,3 +217,19 @@
   - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-20`에서 새 HTML/JS 반영 확인.
   - headless Chrome 스크린샷 생성 확인. 단, Chrome crashpad 경고가 출력되어 스크린샷은 임시 검증 후 삭제.
 - 백업: `backups/before-template-runner-20260603-150131`
+
+### 템플릿 슬롯 미디어 타입 검증
+- 목표: 템플릿 실행 중 공식 연장/프레임 연장 컷에서 이미지 슬롯이 영상 입력으로 전달되어 "선택한 파일은 영상이 아닙니다." 오류가 나는 문제를 막는다.
+- 원인:
+  - 템플릿 슬롯 조회가 지정한 슬롯 이름을 우선 반환하면서 이미지/영상 타입을 먼저 확인하지 않았다.
+  - 그 결과 영상 레퍼런스가 필요한 컷에서 이미지 슬롯 경로가 `library_video_path`로 전달될 수 있었다.
+- 변경:
+  - `static/app.js`: `templateSlotMatchesKind`를 추가하고, `templateSlotEntry`가 슬롯 타입을 확인한 뒤 반환하도록 수정.
+  - `static/app.js`: 영상 레퍼런스가 없을 때 서버 호출 전에 "앞 컷에서 영상을 생성하거나 영상 슬롯을 연결"하라는 명확한 오류를 표시하도록 변경.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-21` / `webgui-shell-v3-21`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-21`에서 새 HTML/JS 반영 확인.
+- 백업: `backups/before-template-slot-type-check-20260603-153620`

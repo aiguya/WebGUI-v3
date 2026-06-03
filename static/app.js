@@ -204,8 +204,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-20";
-const appShellCacheName = "webgui-shell-v3-20";
+const appStaticVersion = "20260603-v3-21";
+const appShellCacheName = "webgui-shell-v3-21";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1066,12 +1066,16 @@ function templateRunPlanText() {
   ].filter(Boolean).join("\n")).join("\n\n");
 }
 
+function templateSlotMatchesKind(slot, expectedKind = "image") {
+  if (!slot?.path) return false;
+  if (expectedKind === "video") return slot.kind === "video";
+  return slot.kind !== "video";
+}
+
 function templateSlotEntry(key, expectedKind = "image", slotState = templateRunState.slots) {
-  if (key && slotState[key]) return slotState[key];
+  if (key && templateSlotMatchesKind(slotState[key], expectedKind)) return slotState[key];
   return Object.values(slotState).find(slot => {
-    if (!slot?.path) return false;
-    if (expectedKind === "video") return slot.kind === "video";
-    return slot.kind !== "video";
+    return templateSlotMatchesKind(slot, expectedKind);
   }) || null;
 }
 
@@ -1129,7 +1133,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
   }
   if (shot.method === "official" || shot.method === "frame") {
     const source = templateVideoSourcePath(shot, previous, slotState);
-    if (!source) throw new Error("이 컷에 사용할 영상 레퍼런스가 없습니다.");
+    if (!source) throw new Error("이 컷에는 영상 레퍼런스가 필요합니다. 앞 컷에서 영상을 생성하거나 영상 슬롯을 연결해 주세요.");
     const body = new FormData();
     body.set("prompt", prompt);
     body.set("duration", duration);
