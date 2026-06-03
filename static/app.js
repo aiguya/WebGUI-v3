@@ -205,8 +205,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-22";
-const appShellCacheName = "webgui-shell-v3-22";
+const appStaticVersion = "20260603-v3-23";
+const appShellCacheName = "webgui-shell-v3-23";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -2384,6 +2384,37 @@ const templateMethodLabels = {
   edit: "이미지 편집",
 };
 
+const templateMethodUi = {
+  image: {
+    fields: new Set(["prompt", "retry", "notes"]),
+    hint: "텍스트 프롬프트로 이미지를 생성하고, 다음 컷의 이미지 입력으로 넘깁니다.",
+  },
+  edit: {
+    fields: new Set(["reference", "prompt", "retry", "notes"]),
+    hint: "이미지 슬롯 또는 직전 이미지 결과를 편집합니다. 길이와 전환은 사용하지 않습니다.",
+    referenceLabel: "이미지 슬롯",
+    referencePlaceholder: "main_actor",
+  },
+  i2v: {
+    fields: new Set(["duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
+    hint: "이미지 슬롯 또는 직전 이미지 결과를 바탕으로 영상을 생성합니다.",
+    referenceLabel: "이미지 슬롯",
+    referencePlaceholder: "main_actor",
+  },
+  official: {
+    fields: new Set(["duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
+    hint: "영상 슬롯 또는 직전 영상 결과를 공식 연장으로 이어갑니다.",
+    referenceLabel: "영상 슬롯",
+    referencePlaceholder: "source_video",
+  },
+  frame: {
+    fields: new Set(["duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
+    hint: "영상 슬롯 또는 직전 영상 결과의 마지막 프레임을 기준으로 새 구간을 생성합니다.",
+    referenceLabel: "영상 슬롯",
+    referencePlaceholder: "source_video",
+  },
+};
+
 const templateTransitionLabels = {
   cut: "컷",
   fade: "페이드",
@@ -2457,6 +2488,30 @@ function templateOptionList(labels, selected) {
     .join("");
 }
 
+function templateMethodConfig(method) {
+  return templateMethodUi[method] || templateMethodUi.i2v;
+}
+
+function applyTemplateShotMethodUi(row) {
+  if (!row) return;
+  const method = row.querySelector("[data-shot-method]")?.value || "i2v";
+  const config = templateMethodConfig(method);
+  row.dataset.templateMethod = method;
+  row.querySelectorAll("[data-shot-field]").forEach(field => {
+    field.hidden = !config.fields.has(field.dataset.shotField);
+  });
+  const hint = row.querySelector("[data-shot-method-hint]");
+  if (hint) hint.textContent = config.hint;
+  const referenceLabel = row.querySelector("[data-shot-reference-label]");
+  if (referenceLabel) referenceLabel.textContent = config.referenceLabel || "참조 슬롯";
+  const referenceInput = row.querySelector("[data-shot-reference]");
+  if (referenceInput) referenceInput.placeholder = config.referencePlaceholder || "main_actor";
+}
+
+function syncTemplateShotMethodUi(root = document) {
+  root.querySelectorAll("[data-template-shot]").forEach(applyTemplateShotMethodUi);
+}
+
 function renderTemplateVariables(items = []) {
   const list = document.querySelector("#templateVariables");
   if (!list) return;
@@ -2509,29 +2564,39 @@ function renderTemplateShots(items = []) {
           <label>방식</label>
           <select data-shot-method>${templateOptionList(templateMethodLabels, item.method || "i2v")}</select>
         </div>
-        <div>
+        <div data-shot-field="duration">
           <label>길이</label>
           <input type="number" data-shot-duration min="1" max="15" step="0.1" value="${escapeHtml(item.duration || 6)}">
         </div>
-        <div>
-          <label>참조 슬롯</label>
+        <div data-shot-field="reference">
+          <label data-shot-reference-label>참조 슬롯</label>
           <input type="text" data-shot-reference placeholder="main_actor" value="${escapeHtml(item.reference_slot || "")}">
         </div>
-        <div>
+        <div data-shot-field="transition">
           <label>전환</label>
           <select data-shot-transition>${templateOptionList(templateTransitionLabels, item.transition || "cut")}</select>
         </div>
       </div>
-      <label>컷 프롬프트</label>
-      <textarea data-shot-prompt placeholder="{{main_actor}}가 {{location}}에서 움직인다.">${escapeHtml(item.prompt || "")}</textarea>
-      <label>카메라</label>
-      <input type="text" data-shot-camera placeholder="예: 느린 돌리 인, 핸드헬드, 측면 트래킹" value="${escapeHtml(item.camera || "")}">
-      <label>실패 시 재시도 프롬프트</label>
-      <textarea data-shot-retry placeholder="실패한 컷을 재시도할 때 쓸 대체 지시">${escapeHtml(item.retry_prompt || "")}</textarea>
-      <label>메모</label>
-      <textarea data-shot-notes placeholder="작업자가 기억할 참고 사항">${escapeHtml(item.notes || "")}</textarea>
+      <p class="template-shot-method-hint" data-shot-method-hint></p>
+      <div class="template-shot-field" data-shot-field="prompt">
+        <label>컷 프롬프트</label>
+        <textarea data-shot-prompt placeholder="{{main_actor}}가 {{location}}에서 움직인다.">${escapeHtml(item.prompt || "")}</textarea>
+      </div>
+      <div class="template-shot-field" data-shot-field="camera">
+        <label>카메라</label>
+        <input type="text" data-shot-camera placeholder="예: 느린 돌리 인, 핸드헬드, 측면 트래킹" value="${escapeHtml(item.camera || "")}">
+      </div>
+      <div class="template-shot-field" data-shot-field="retry">
+        <label>실패 시 재시도 프롬프트</label>
+        <textarea data-shot-retry placeholder="실패한 컷을 재시도할 때 쓸 대체 지시">${escapeHtml(item.retry_prompt || "")}</textarea>
+      </div>
+      <div class="template-shot-field" data-shot-field="notes">
+        <label>메모</label>
+        <textarea data-shot-notes placeholder="작업자가 기억할 참고 사항">${escapeHtml(item.notes || "")}</textarea>
+      </div>
     </article>
   `).join("");
+  syncTemplateShotMethodUi(list);
 }
 
 function collectTemplateVariables() {
@@ -3360,7 +3425,12 @@ document.querySelector("#templateBlockList")?.addEventListener("click", event =>
 });
 
 videoTemplateForm()?.addEventListener("input", renderTemplatePreview);
-videoTemplateForm()?.addEventListener("change", renderTemplatePreview);
+videoTemplateForm()?.addEventListener("change", event => {
+  if (event.target.matches("[data-shot-method]")) {
+    applyTemplateShotMethodUi(event.target.closest("[data-template-shot]"));
+  }
+  renderTemplatePreview();
+});
 videoTemplateForm()?.addEventListener("submit", event => {
   event.preventDefault();
   saveTemplateEditor().catch(error => showToast(error.message, true));

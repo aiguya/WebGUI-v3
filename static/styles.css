@@ -6873,6 +6873,22 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   min-height: 74px !important;
 }
 
+.template-shot-field {
+  display: grid;
+  gap: 5px;
+}
+
+.template-shot-method-hint {
+  margin: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(143, 216, 220, .12);
+  border-radius: 7px;
+  background: rgba(143, 216, 220, .035);
+  color: rgba(245, 245, 242, .58);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .template-shot-card [data-shot-retry],
 .template-shot-card [data-shot-notes] {
   min-height: 58px !important;

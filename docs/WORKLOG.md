@@ -252,3 +252,21 @@
   - `git diff --check` 통과.
   - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-22`에서 새 HTML/JS 반영 확인.
 - 백업: `backups/before-template-manual-review-20260603-160000`
+
+### 템플릿 컷 박스 방식별 UI 전환
+- 목표: 컷 블록 박스에서 생성 방식을 선택하면 해당 방식에 필요한 입력만 보이도록 한다.
+- 결정:
+  - `이미지 생성`: 프롬프트, 재시도 프롬프트, 메모만 표시한다.
+  - `이미지 편집`: 이미지 슬롯, 프롬프트, 재시도 프롬프트, 메모를 표시하고 길이/전환/카메라는 숨긴다.
+  - `이미지→영상`, `공식 연장`, `프레임 연장`: 길이, 참조 슬롯, 전환, 프롬프트, 카메라, 재시도 프롬프트, 메모를 표시한다.
+  - 숨겨진 값은 삭제하지 않고 유지해서 방식을 다시 바꿔도 기존 입력을 잃지 않게 한다.
+- 변경:
+  - `static/app.js`: 방식별 필드 표시 규칙, 컷 박스 안내문, 참조 슬롯 라벨/placeholder 자동 변경, 방식 변경 이벤트 처리 추가.
+  - `static/styles.css`: 컷 방식 안내문과 필드 래퍼 스타일 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-23` / `webgui-shell-v3-23`으로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-23`에서 새 HTML/JS 반영 확인.
+- 백업: `backups/before-template-method-aware-shot-box-20260603-161500`
