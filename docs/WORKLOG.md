@@ -99,3 +99,14 @@
   - `static/styles.css`: 미리보기 hover/focus 스타일과 편집 컷 강조 스타일 추가.
   - `templates/index.html`: 정적 캐시 버전 `20260603-v3-11`로 갱신.
 - 백업: `backups/before-template-preview-focus-20260603-111732`
+
+### 즐겨찾기 버튼 아이콘화
+
+- 목표: 즐겨찾기 버튼의 외곽 박스를 제거하고 별 아이콘 자체가 버튼처럼 동작하게 한다.
+- 결정:
+  - 텍스트 별 대신 CSS SVG 마스크 아이콘을 사용한다.
+  - 비활성은 빈 별 아이콘, 활성은 노란 채운 별 아이콘으로 표시한다.
+- 변경:
+  - `static/styles.css`: `.favorite-button`, `.template-favorite-filter`를 아이콘 전용 버튼 스타일로 변경.
+  - `templates/index.html`: 정적 캐시 버전 `20260603-v3-12`로 갱신.
+- 백업: `backups/before-favorite-icon-buttons-20260603-114230`
