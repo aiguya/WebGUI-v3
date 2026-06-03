@@ -270,3 +270,23 @@
   - `git diff --check` 통과.
   - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-23`에서 새 HTML/JS 반영 확인.
 - 백업: `backups/before-template-method-aware-shot-box-20260603-161500`
+
+### 이미지 편집 컷 다중 레퍼런스 슬롯
+- 목표: 템플릿 `이미지 편집` 컷에서 레퍼런스 슬롯을 1개만 받던 문제를 수정하고, 실제 이미지 편집 기능처럼 1~3개의 이미지 슬롯을 참조할 수 있게 한다.
+- 결정:
+  - 기존 `reference_slot`은 첫 번째 메인 슬롯으로 유지하고, 새 `reference_slots` 배열에 최대 3개 슬롯을 저장한다.
+  - 기존 템플릿/블록은 `reference_slot` 하나만 있어도 자동으로 첫 번째 슬롯으로 변환한다.
+  - 템플릿 실행 시 `이미지 편집` 컷은 선택된 이미지 슬롯을 최대 3개까지 `/api/i2i`의 `library_image_paths`로 전달하고 `edit_input_mode=multi`를 사용한다.
+  - 다중 슬롯은 지정된 슬롯만 정확히 사용하며, 아무 슬롯도 연결되지 않았을 때만 직전 이미지 결과를 fallback으로 사용한다.
+- 변경:
+  - `app.py`: 템플릿 컷/블록 정규화에 `reference_slots` 저장과 하위호환 변환 추가.
+  - `static/app.js`: 이미지 편집 컷 박스에 `이미지 슬롯 1~3` UI 추가, 저장/블록 보관/실행 계획/실행 요청의 다중 슬롯 처리 추가.
+  - `static/styles.css`: 다중 슬롯 입력 그리드 스타일 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-24` / `webgui-shell-v3-24`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `normalize_video_template`, `normalize_template_block`에서 `reference_slots` 3개 보존 확인.
+  - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-24`에서 새 HTML/JS/CSS 반영 확인.
+- 백업: `backups/before-template-edit-reference-slots-20260603-163000`

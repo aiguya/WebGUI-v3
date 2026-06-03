@@ -572,6 +572,29 @@ def clean_template_key(value, fallback="var"):
     return (key or fallback)[:48]
 
 
+def normalize_template_reference_slots(item, limit=3):
+    raw = item.get("reference_slots") if isinstance(item, dict) else None
+    values = []
+    primary = item.get("reference_slot") if isinstance(item, dict) else None
+    if primary:
+        values.append(primary)
+    if isinstance(raw, list):
+        values.extend(raw)
+    elif isinstance(raw, str):
+        values.append(raw)
+    seen = set()
+    slots = []
+    for value in values:
+        key = clean_template_key(value, "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        slots.append(key)
+        if len(slots) >= limit:
+            break
+    return slots
+
+
 def clean_prompt_tag(tag):
     tag = re.sub(r"\s+", " ", str(tag or "")).strip()
     return tag[:32]
@@ -735,6 +758,8 @@ def normalize_template_shots(value):
         except (TypeError, ValueError):
             duration = 6
         duration = max(1, min(15, duration))
+        reference_slots = normalize_template_reference_slots(item)
+        reference_slot = reference_slots[0] if reference_slots else clean_template_key(item.get("reference_slot"), "")
         shots.append({
             "id": str(item.get("id") or uuid.uuid4().hex),
             "order": index,
@@ -742,7 +767,8 @@ def normalize_template_shots(value):
             "method": method,
             "method_label": VIDEO_TEMPLATE_METHODS[method],
             "duration": duration,
-            "reference_slot": clean_template_key(item.get("reference_slot"), ""),
+            "reference_slot": reference_slot,
+            "reference_slots": reference_slots,
             "prompt": str(item.get("prompt") or "").strip()[:12000],
             "camera": str(item.get("camera") or "").strip()[:2000],
             "transition": transition,
@@ -841,6 +867,7 @@ def normalize_template_block(item):
         "method": item.get("method"),
         "duration": item.get("duration"),
         "reference_slot": item.get("reference_slot"),
+        "reference_slots": item.get("reference_slots"),
         "prompt": item.get("prompt"),
         "camera": item.get("camera"),
         "transition": item.get("transition"),
@@ -860,6 +887,7 @@ def normalize_template_block(item):
         "method_label": VIDEO_TEMPLATE_METHODS.get(shot.get("method"), "이미지→영상"),
         "duration": shot.get("duration") or 6,
         "reference_slot": shot.get("reference_slot") or "",
+        "reference_slots": shot.get("reference_slots") or [],
         "prompt": shot.get("prompt") or "",
         "camera": shot.get("camera") or "",
         "transition": shot.get("transition") or "cut",

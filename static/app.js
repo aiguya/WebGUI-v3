@@ -205,8 +205,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-23";
-const appShellCacheName = "webgui-shell-v3-23";
+const appStaticVersion = "20260603-v3-24";
+const appShellCacheName = "webgui-shell-v3-24";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1067,7 +1067,7 @@ function templateRunPlanText() {
     `# ${String(index + 1).padStart(2, "0")} ${shot.title || "컷"}`,
     `방식: ${templateMethodLabels[shot.method] || shot.method}`,
     `길이: ${shot.duration || payload.settings.default_shot_duration || 6}초`,
-    `참조: ${shot.reference_slot || "이전 결과 또는 첫 슬롯"}`,
+    `참조: ${templateReferenceSlots(shot).join(", ") || "이전 결과 또는 첫 슬롯"}`,
     templateShotPromptText(payload, shot),
   ].filter(Boolean).join("\n")).join("\n\n");
 }
@@ -1085,10 +1085,30 @@ function templateSlotEntry(key, expectedKind = "image", slotState = templateRunS
   }) || null;
 }
 
+function templateExactSlotEntry(key, expectedKind = "image", slotState = templateRunState.slots) {
+  if (!key) return null;
+  return templateSlotMatchesKind(slotState[key], expectedKind) ? slotState[key] : null;
+}
+
 function templateImageSourcePath(shot, previous, slotState) {
   const slot = templateSlotEntry(shot.reference_slot, "image", slotState);
   if (slot?.path) return slot.path;
   return previous.lastImagePath || "";
+}
+
+function templateImageSourcePaths(shot, previous, slotState, limit = 3) {
+  const keys = templateReferenceSlots(shot);
+  const paths = [];
+  const seen = new Set();
+  keys.forEach(key => {
+    const slot = templateExactSlotEntry(key, "image", slotState);
+    if (slot?.path && !seen.has(slot.path)) {
+      seen.add(slot.path);
+      paths.push(slot.path);
+    }
+  });
+  if (!paths.length && previous.lastImagePath) paths.push(previous.lastImagePath);
+  return paths.slice(0, limit);
 }
 
 function templateVideoSourcePath(shot, previous, slotState) {
@@ -1101,6 +1121,12 @@ function appendTemplateImageReference(body, path) {
   if (!path) throw new Error("이 컷에 사용할 이미지 레퍼런스가 없습니다.");
   body.append("image_source_order", `library:${path}`);
   body.append("library_image_paths", path);
+}
+
+function appendTemplateImageReferences(body, paths) {
+  const selected = (paths || []).filter(Boolean).slice(0, 3);
+  if (!selected.length) throw new Error("이 컷에 사용할 이미지 레퍼런스가 없습니다.");
+  selected.forEach(path => appendTemplateImageReference(body, path));
 }
 
 function buildTemplateShotRequest(payload, shot, previous, slotState = templateRunState.slots) {
@@ -1125,7 +1151,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     body.set("aspect_ratio", aspectRatio);
     body.set("image_resolution", "auto");
     body.set("edit_input_mode", "multi");
-    appendTemplateImageReference(body, templateImageSourcePath(shot, previous, slotState));
+    appendTemplateImageReferences(body, templateImageSourcePaths(shot, previous, slotState, 3));
     return { endpoint: "/api/i2i", prompt, options: { method: "POST", body } };
   }
   if (shot.method === "i2v") {
@@ -2390,8 +2416,8 @@ const templateMethodUi = {
     hint: "텍스트 프롬프트로 이미지를 생성하고, 다음 컷의 이미지 입력으로 넘깁니다.",
   },
   edit: {
-    fields: new Set(["reference", "prompt", "retry", "notes"]),
-    hint: "이미지 슬롯 또는 직전 이미지 결과를 편집합니다. 길이와 전환은 사용하지 않습니다.",
+    fields: new Set(["references", "prompt", "retry", "notes"]),
+    hint: "이미지 슬롯을 1~3개 참조해 편집합니다. 첫 번째 슬롯이 메인 이미지가 됩니다.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
   },
@@ -2492,11 +2518,34 @@ function templateMethodConfig(method) {
   return templateMethodUi[method] || templateMethodUi.i2v;
 }
 
+function templateReferenceSlots(item = {}) {
+  const values = [];
+  if (item.reference_slot) values.push(item.reference_slot);
+  if (Array.isArray(item.reference_slots)) values.push(...item.reference_slots);
+  const seen = new Set();
+  return values
+    .map(value => String(value || "").trim())
+    .filter(value => {
+      if (!value || seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    })
+    .slice(0, 3);
+}
+
 function applyTemplateShotMethodUi(row) {
   if (!row) return;
   const method = row.querySelector("[data-shot-method]")?.value || "i2v";
   const config = templateMethodConfig(method);
   row.dataset.templateMethod = method;
+  const singleReference = row.querySelector("[data-shot-reference]");
+  const referenceSlots = Array.from(row.querySelectorAll("[data-shot-reference-slot]"));
+  if (method === "edit" && referenceSlots.length && singleReference?.value && !referenceSlots.some(input => input.value.trim())) {
+    referenceSlots[0].value = singleReference.value;
+  }
+  if (method !== "edit" && singleReference && !singleReference.value.trim() && referenceSlots[0]?.value.trim()) {
+    singleReference.value = referenceSlots[0].value;
+  }
   row.querySelectorAll("[data-shot-field]").forEach(field => {
     field.hidden = !config.fields.has(field.dataset.shotField);
   });
@@ -2546,7 +2595,9 @@ function renderTemplateSlots(items = []) {
 function renderTemplateShots(items = []) {
   const list = document.querySelector("#templateShots");
   if (!list) return;
-  list.innerHTML = items.map((item, index) => `
+  list.innerHTML = items.map((item, index) => {
+    const referenceSlots = templateReferenceSlots(item);
+    return `
     <article class="template-shot-card" data-template-shot>
       <input type="hidden" data-shot-id value="${escapeHtml(item.id || "")}">
       <div class="template-shot-head">
@@ -2570,7 +2621,16 @@ function renderTemplateShots(items = []) {
         </div>
         <div data-shot-field="reference">
           <label data-shot-reference-label>참조 슬롯</label>
-          <input type="text" data-shot-reference placeholder="main_actor" value="${escapeHtml(item.reference_slot || "")}">
+          <input type="text" data-shot-reference placeholder="main_actor" value="${escapeHtml(item.reference_slot || referenceSlots[0] || "")}">
+        </div>
+        <div class="template-shot-references" data-shot-field="references">
+          <label>이미지 슬롯 1~3</label>
+          <div class="template-reference-grid">
+            ${[0, 1, 2].map(slotIndex => `
+              <input type="text" data-shot-reference-slot data-slot-index="${slotIndex}" placeholder="${slotIndex === 0 ? "main_actor" : `reference_${slotIndex + 1}`}" value="${escapeHtml(referenceSlots[slotIndex] || "")}">
+            `).join("")}
+          </div>
+          <small>1번 슬롯은 메인 이미지, 2~3번은 추가 레퍼런스로 전달됩니다.</small>
         </div>
         <div data-shot-field="transition">
           <label>전환</label>
@@ -2595,7 +2655,8 @@ function renderTemplateShots(items = []) {
         <textarea data-shot-notes placeholder="작업자가 기억할 참고 사항">${escapeHtml(item.notes || "")}</textarea>
       </div>
     </article>
-  `).join("");
+  `;
+  }).join("");
   syncTemplateShotMethodUi(list);
 }
 
@@ -2617,19 +2678,31 @@ function collectTemplateSlots() {
 }
 
 function collectTemplateShots() {
-  return Array.from(document.querySelectorAll("[data-template-shot]")).map((row, index) => ({
-    id: row.querySelector("[data-shot-id]")?.value || "",
-    order: index + 1,
-    title: row.querySelector("[data-shot-title]")?.value || `컷 ${index + 1}`,
-    method: row.querySelector("[data-shot-method]")?.value || "i2v",
-    duration: Number.parseFloat(row.querySelector("[data-shot-duration]")?.value || "6") || 6,
-    reference_slot: row.querySelector("[data-shot-reference]")?.value || "",
-    transition: row.querySelector("[data-shot-transition]")?.value || "cut",
-    prompt: row.querySelector("[data-shot-prompt]")?.value || "",
-    camera: row.querySelector("[data-shot-camera]")?.value || "",
-    retry_prompt: row.querySelector("[data-shot-retry]")?.value || "",
-    notes: row.querySelector("[data-shot-notes]")?.value || "",
-  })).filter(item => item.title.trim() || item.prompt.trim());
+  return Array.from(document.querySelectorAll("[data-template-shot]")).map((row, index) => {
+    const method = row.querySelector("[data-shot-method]")?.value || "i2v";
+    const multiReferences = Array.from(row.querySelectorAll("[data-shot-reference-slot]"))
+      .map(input => input.value.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    const singleReference = row.querySelector("[data-shot-reference]")?.value.trim() || "";
+    const referenceSlots = method === "edit"
+      ? (multiReferences.length ? multiReferences : (singleReference ? [singleReference] : []))
+      : (singleReference ? [singleReference] : []);
+    return {
+      id: row.querySelector("[data-shot-id]")?.value || "",
+      order: index + 1,
+      title: row.querySelector("[data-shot-title]")?.value || `컷 ${index + 1}`,
+      method,
+      duration: Number.parseFloat(row.querySelector("[data-shot-duration]")?.value || "6") || 6,
+      reference_slot: referenceSlots[0] || "",
+      reference_slots: referenceSlots,
+      transition: row.querySelector("[data-shot-transition]")?.value || "cut",
+      prompt: row.querySelector("[data-shot-prompt]")?.value || "",
+      camera: row.querySelector("[data-shot-camera]")?.value || "",
+      retry_prompt: row.querySelector("[data-shot-retry]")?.value || "",
+      notes: row.querySelector("[data-shot-notes]")?.value || "",
+    };
+  }).filter(item => item.title.trim() || item.prompt.trim());
 }
 
 function templatePayloadFromEditor() {
@@ -2670,11 +2743,14 @@ function substituteTemplateText(text, variables, slots) {
 function templateShotPromptText(payload, shot) {
   const variables = payload.variables || [];
   const slots = payload.slots || [];
+  const referenceText = templateReferenceSlots(shot)
+    .map(slot => `{{${slot}}}`)
+    .join(", ");
   const chunks = [
     payload.global_prompt,
     shot.prompt,
     shot.camera ? `카메라: ${shot.camera}` : "",
-    shot.reference_slot ? `참조 슬롯: {{${shot.reference_slot}}}` : "",
+    referenceText ? `참조 슬롯: ${referenceText}` : "",
     payload.negative_prompt ? `제외/주의: ${payload.negative_prompt}` : "",
   ].filter(Boolean);
   return substituteTemplateText(chunks.join("\n"), variables, slots);
@@ -3060,12 +3136,14 @@ function renderTemplateList() {
 }
 
 function templateBlockToShot(block = {}) {
+  const referenceSlots = templateReferenceSlots(block);
   return {
     id: "",
     title: block.title || "컷 블록",
     method: block.method || "i2v",
     duration: block.duration || 6,
-    reference_slot: block.reference_slot || "",
+    reference_slot: block.reference_slot || referenceSlots[0] || "",
+    reference_slots: referenceSlots,
     transition: block.transition || "cut",
     prompt: block.prompt || "",
     camera: block.camera || "",
@@ -3084,6 +3162,7 @@ function filteredTemplateBlocks() {
         item.title,
         item.method_label,
         item.reference_slot,
+        ...(item.reference_slots || []),
         item.prompt,
         item.camera,
         item.notes,
@@ -3118,7 +3197,7 @@ function renderTemplateBlocks() {
       <button type="button" class="favorite-button template-block-favorite${item.favorite ? " active" : ""}" data-template-block-favorite aria-label="즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}"></button>
       <div class="template-block-body">
         <strong>${escapeHtml(item.title || "컷 블록")}</strong>
-        <small>${escapeHtml(item.method_label || item.method || "방식 없음")} · ${escapeHtml(item.reference_slot || "참조 없음")} · ${Math.round((Number(item.duration) || 0) * 10) / 10}초</small>
+        <small>${escapeHtml(item.method_label || item.method || "방식 없음")} · ${escapeHtml(templateReferenceSlots(item).join(", ") || "참조 없음")} · ${Math.round((Number(item.duration) || 0) * 10) / 10}초</small>
         <p>${escapeHtml(item.prompt || item.camera || item.notes || "")}</p>
       </div>
       <div class="template-block-actions">
@@ -3208,6 +3287,7 @@ function templateShotBlockPayload(shot, index) {
     method: shot.method || payload.settings.default_method || "i2v",
     duration: shot.duration || payload.settings.default_shot_duration || 6,
     reference_slot: shot.reference_slot || "",
+    reference_slots: shot.reference_slots || [],
     transition: shot.transition || "cut",
     prompt: shot.prompt || "",
     camera: shot.camera || "",
