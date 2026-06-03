@@ -71,6 +71,9 @@ let templateBlocks = [];
 let templateBlockSearch = "";
 let templateBlockFavoriteOnly = false;
 let templateShotFocusTimer = null;
+let templateShotAutoScrollFrame = null;
+let templateShotAutoScrollVelocity = 0;
+let templateShotAutoScrollTarget = null;
 let pickerVisibleCount = 80;
 let pickerPageSize = 80;
 const multiImageSources = new WeakMap();
@@ -196,8 +199,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-17";
-const appShellCacheName = "webgui-shell-v3-17";
+const appStaticVersion = "20260603-v3-18";
+const appShellCacheName = "webgui-shell-v3-18";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -2399,9 +2402,98 @@ function templateShotDragTarget(list, clientY) {
   });
 }
 
+function templateShotRects(list) {
+  const rects = new Map();
+  list?.querySelectorAll("[data-template-shot]").forEach(card => {
+    rects.set(card, card.getBoundingClientRect());
+  });
+  return rects;
+}
+
+function animateTemplateShotMove(list, beforeRects) {
+  if (!list || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  list.querySelectorAll("[data-template-shot]:not(.is-dragging)").forEach(card => {
+    const before = beforeRects.get(card);
+    if (!before) return;
+    const after = card.getBoundingClientRect();
+    const deltaX = before.left - after.left;
+    const deltaY = before.top - after.top;
+    if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+    card.getAnimations?.().forEach(animation => animation.cancel());
+    card.animate([
+      { transform: `translate(${deltaX}px, ${deltaY}px)` },
+      { transform: "translate(0, 0)" },
+    ], {
+      duration: 180,
+      easing: "cubic-bezier(.2, .8, .2, 1)",
+    });
+  });
+}
+
+function moveTemplateShotWithAnimation(list, move) {
+  const before = templateShotRects(list);
+  move();
+  animateTemplateShotMove(list, before);
+}
+
+function templateShotScrollParent(node) {
+  let current = node?.parentElement;
+  while (current && current !== document.body) {
+    const style = getComputedStyle(current);
+    if (/(auto|scroll)/.test(style.overflowY) && current.scrollHeight > current.clientHeight) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+
+function stopTemplateShotAutoScroll(list) {
+  templateShotAutoScrollVelocity = 0;
+  templateShotAutoScrollTarget = null;
+  list?.classList.remove("is-autoscroll-up", "is-autoscroll-down");
+  if (templateShotAutoScrollFrame) {
+    cancelAnimationFrame(templateShotAutoScrollFrame);
+    templateShotAutoScrollFrame = null;
+  }
+}
+
+function startTemplateShotAutoScroll() {
+  if (templateShotAutoScrollFrame) return;
+  const tick = () => {
+    if (!templateShotAutoScrollTarget || !templateShotAutoScrollVelocity) {
+      templateShotAutoScrollFrame = null;
+      return;
+    }
+    templateShotAutoScrollTarget.scrollTop += templateShotAutoScrollVelocity;
+    templateShotAutoScrollFrame = requestAnimationFrame(tick);
+  };
+  templateShotAutoScrollFrame = requestAnimationFrame(tick);
+}
+
+function updateTemplateShotAutoScroll(list, clientY) {
+  const scroller = templateShotScrollParent(list);
+  const box = scroller === document.scrollingElement || scroller === document.documentElement
+    ? { top: 0, bottom: window.innerHeight }
+    : scroller.getBoundingClientRect();
+  const edge = Math.min(96, Math.max(48, (box.bottom - box.top) * 0.18));
+  const topDistance = clientY - box.top;
+  const bottomDistance = box.bottom - clientY;
+  let velocity = 0;
+  if (topDistance < edge) velocity = -Math.ceil((1 - Math.max(0, topDistance) / edge) * 22);
+  else if (bottomDistance < edge) velocity = Math.ceil((1 - Math.max(0, bottomDistance) / edge) * 22);
+  templateShotAutoScrollTarget = scroller;
+  templateShotAutoScrollVelocity = velocity;
+  list?.classList.toggle("is-autoscroll-up", velocity < 0);
+  list?.classList.toggle("is-autoscroll-down", velocity > 0);
+  if (velocity) startTemplateShotAutoScroll();
+  else stopTemplateShotAutoScroll(list);
+}
+
 function finishTemplateShotDrag(list) {
   if (!list) return;
   const dragging = list.querySelector("[data-template-shot].is-dragging");
+  stopTemplateShotAutoScroll(list);
   list.classList.remove("is-drop-active");
   dragging?.classList.remove("is-dragging");
   renderTemplateShots(collectTemplateShots());
@@ -2991,9 +3083,13 @@ document.querySelector("#templateShots")?.addEventListener("dragover", event => 
   event.preventDefault();
   list.classList.add("is-drop-active");
   event.dataTransfer.dropEffect = "move";
+  updateTemplateShotAutoScroll(list, event.clientY);
   const target = templateShotDragTarget(list, event.clientY);
-  if (!target) list.appendChild(dragging);
-  else if (target !== dragging.nextElementSibling) list.insertBefore(dragging, target);
+  if (!target && dragging.nextElementSibling) {
+    moveTemplateShotWithAnimation(list, () => list.appendChild(dragging));
+  } else if (target && target !== dragging.nextElementSibling) {
+    moveTemplateShotWithAnimation(list, () => list.insertBefore(dragging, target));
+  }
 });
 
 document.querySelector("#templateShots")?.addEventListener("drop", event => {

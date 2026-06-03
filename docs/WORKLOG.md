@@ -154,3 +154,15 @@
   - `static/styles.css`: 드래그 핸들, 드롭 활성 영역, 드래그 중 컷 카드 상태 스타일 추가.
   - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-17` / `webgui-shell-v3-17`로 갱신.
 - 백업: `backups/before-template-shot-dnd-20260603-122957`
+
+### 템플릿 컷 드래그 애니메이션과 자동 스크롤
+
+- 목표: 컷 블록 드래그 정렬이 더 자연스럽게 움직이고, 긴 템플릿에서 위/아래 끝으로 끌 때 자동 스크롤되게 한다.
+- 결정:
+  - DOM 재정렬 직전에 카드 위치를 저장하고 재정렬 후 이동 차이를 짧게 애니메이션하는 FLIP 방식을 사용한다.
+  - 드래그 포인터가 템플릿 편집 스크롤 영역의 위/아래 가장자리에 가까워지면 자동 스크롤한다.
+- 변경:
+  - `static/app.js`: 컷 카드 위치 애니메이션 헬퍼, 드래그 자동 스크롤 루프, 드롭/드래그 종료 시 상태 정리 추가.
+  - `static/styles.css`: 드래그 중 카드 축소/투명도, 드롭 영역, 자동 스크롤 방향 힌트 스타일 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-18` / `webgui-shell-v3-18`로 갱신.
+- 백업: `backups/before-template-dnd-motion-scroll-20260603-123825`
