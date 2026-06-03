@@ -142,3 +142,15 @@
   - `static/styles.css`: 일반 버튼 규칙보다 높은 우선순위로 즐겨찾기 별 아이콘 전용 배경/색상 오버라이드를 추가.
   - `run_webgork_app.bat`: Chrome 앱 실행 URL에 버전 쿼리를 붙여 오래된 앱 창 재사용 가능성을 낮춤.
 - 백업: `backups/before-favorite-cache-hardening-20260603-121225`
+
+### 템플릿 컷 블록 드래그 정렬
+
+- 목표: 영상 템플릿 편집 화면에서 컷 블록 순서를 마우스 드래그로 바꿀 수 있게 한다.
+- 결정:
+  - 입력창 텍스트 선택을 방해하지 않도록 컷 카드 전체가 아니라 헤더의 전용 순서 이동 핸들만 드래그 대상으로 둔다.
+  - 기존 위/아래 버튼은 유지해 키보드/클릭 기반 순서 변경도 계속 가능하게 한다.
+- 변경:
+  - `static/app.js`: 컷 헤더 드래그 핸들, 드래그 중 DOM 재정렬, 드롭 후 컷 번호와 적용 미리보기 갱신 로직 추가.
+  - `static/styles.css`: 드래그 핸들, 드롭 활성 영역, 드래그 중 컷 카드 상태 스타일 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-17` / `webgui-shell-v3-17`로 갱신.
+- 백업: `backups/before-template-shot-dnd-20260603-122957`

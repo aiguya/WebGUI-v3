@@ -6801,9 +6801,23 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   box-shadow: 0 0 0 1px rgba(255, 214, 102, .18), 0 18px 44px rgba(0, 0, 0, .24);
 }
 
+.template-shot-list.is-drop-active {
+  padding: 6px;
+  border: 1px dashed rgba(143, 216, 220, .34);
+  border-radius: 10px;
+  background: rgba(143, 216, 220, .035);
+}
+
+.template-shot-card.is-dragging {
+  opacity: .58;
+  border-color: rgba(255, 214, 102, .72);
+  background: rgba(255, 214, 102, .070);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, .30);
+}
+
 .template-shot-head {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) repeat(5, max-content);
+  grid-template-columns: max-content minmax(0, 1fr) repeat(6, max-content);
   gap: 7px;
   align-items: center;
 }
@@ -6812,6 +6826,14 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   color: rgba(143, 216, 220, .88);
   font-size: 12px;
   font-weight: 950;
+}
+
+.template-shot-drag {
+  cursor: grab;
+}
+
+.template-shot-drag:active {
+  cursor: grabbing;
 }
 
 .template-shot-card textarea {
@@ -7015,7 +7037,7 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   }
 }
 
-/* v3-16 final favorite icon override */
+/* v3-17 final favorite icon override */
 button.favorite-button,
 button.favorite-button:hover,
 button.favorite-button:active,
