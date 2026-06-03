@@ -233,3 +233,22 @@
   - `git diff --check` 통과.
   - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-21`에서 새 HTML/JS 반영 확인.
 - 백업: `backups/before-template-slot-type-check-20260603-153620`
+
+### 템플릿 수동 확인·재시도 모드
+- 목표: 템플릿 실행을 완전 자동으로만 넘기지 않고, 컷마다 결과를 확인한 뒤 다음 컷으로 진행하거나 같은 컷을 재시도할 수 있게 한다.
+- 결정:
+  - 기존 서버 생성 API는 바꾸지 않고 프론트 큐의 `template-run` 작업 상태에 `review` 단계를 추가한다.
+  - 실행 준비 패널에서 `자동`/`수동 확인` 모드를 선택한다.
+  - 수동 확인 모드에서는 컷 결과를 받은 뒤 큐 카드가 `확인 대기` 상태가 되고, `다음 컷`/`재시도`/`중단` 버튼을 표시한다.
+  - 재시도 시 해당 컷 이전의 이미지/영상 전달 상태로 되돌려 다시 요청하고, 큐 카드에는 최신 시도 결과만 이어받는다.
+- 변경:
+  - `templates/index.html`: 템플릿 실행 준비 영역에 실행 모드 선택 UI 추가.
+  - `static/app.js`: 템플릿 실행 모드 상태, `review` 큐 상태, 컷별 확인 대기 Promise, 다음 컷/재시도/중단 액션 처리 추가.
+  - `static/styles.css`: 확인 대기 큐 카드 강조와 수동 모드 선택 UI 스타일 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260603-v3-22` / `webgui-shell-v3-22`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - v3 서버 재시작 후 `http://127.0.0.1:7863/?v=20260603-v3-22`에서 새 HTML/JS 반영 확인.
+- 백업: `backups/before-template-manual-review-20260603-160000`

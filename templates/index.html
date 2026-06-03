@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260603-v3-21">
+  <link rel="stylesheet" href="/static/styles.css?v=20260603-v3-22">
 </head>
 <body>
   <header class="topbar">
@@ -852,6 +852,13 @@
             </div>
             <div class="template-run-grid" id="templateRunVariables"></div>
             <div class="template-run-slots" id="templateRunSlots"></div>
+            <label class="template-run-mode">
+              <span>실행 모드</span>
+              <select id="templateRunMode" aria-label="템플릿 실행 모드">
+                <option value="auto">자동</option>
+                <option value="manual">수동 확인</option>
+              </select>
+            </label>
             <div class="template-run-actions">
               <button type="button" id="queueTemplateRun">템플릿 큐에 등록</button>
               <button type="button" class="secondary" id="copyTemplateRunPlan">실행 계획 복사</button>
@@ -1092,6 +1099,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260603-v3-21"></script>
+  <script src="/static/app.js?v=20260603-v3-22"></script>
 </body>
 </html>

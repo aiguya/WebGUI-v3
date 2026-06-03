@@ -2815,6 +2815,21 @@ textarea {
   background: #56d364;
 }
 
+.queue-job.is-review {
+  border-color: rgba(242, 201, 76, .44);
+  background: linear-gradient(180deg, rgba(242, 201, 76, .08), rgba(23, 27, 34, .98));
+}
+
+.queue-job.is-review .queue-dot,
+.queue-job.is-review .queue-progress span {
+  background: #f2c94c;
+}
+
+.queue-job.is-review .queue-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .queue-job.is-queued .queue-dot {
   background: #8b949e;
 }
@@ -7024,6 +7039,18 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   display: grid;
   gap: 8px;
   margin-top: 10px;
+}
+
+.template-run-mode {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.template-run-mode span {
+  color: rgba(245, 245, 242, .62);
+  font-size: 11px;
+  font-weight: 850;
 }
 
 .template-run-slot {

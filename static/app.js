@@ -78,6 +78,7 @@ let templatePickerSlotKey = "";
 const templateRunState = {
   variables: {},
   slots: {},
+  mode: "auto",
 };
 let pickerVisibleCount = 80;
 let pickerPageSize = 80;
@@ -204,8 +205,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260603-v3-21";
-const appShellCacheName = "webgui-shell-v3-21";
+const appStaticVersion = "20260603-v3-22";
+const appShellCacheName = "webgui-shell-v3-22";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -743,6 +744,7 @@ function statusLabel(status) {
   return ({
     queued: "대기 중",
     running: "진행 중",
+    review: "확인 대기",
     done: "완료",
     failed: "실패",
     cancelled: "취소됨",
@@ -751,11 +753,12 @@ function statusLabel(status) {
 
 function queueSummaryText() {
   const running = jobQueue.filter(job => job.status === "running").length;
+  const review = jobQueue.filter(job => job.status === "review").length;
   const waiting = jobQueue.filter(job => job.status === "queued").length;
   const done = jobQueue.filter(job => job.status === "done").length;
   const failed = jobQueue.filter(job => job.status === "failed").length;
   if (!jobQueue.length) return "대기 중인 작업이 없습니다.";
-  return `${running} running · ${waiting} waiting · ${done} done${failed ? ` · ${failed} failed` : ""}`;
+  return `${running} running${review ? ` · ${review} review` : ""} · ${waiting} waiting · ${done} done${failed ? ` · ${failed} failed` : ""}`;
 }
 
 function renderQueue() {
@@ -778,6 +781,8 @@ function renderQueue() {
     const progress = Number.isFinite(job.progressPercent) ? job.progressPercent : (job.status === "done" ? 100 : job.status === "running" ? 72 : job.status === "failed" ? 100 : 0);
     const promptText = job.progressText || job.prompt || "프롬프트 없음";
     const progressLabel = `${Math.max(0, Math.min(100, Math.round(progress)))}%`;
+    const review = job.templateRun?.review || {};
+    const reviewNextLabel = review.isLast ? "완료" : "다음 컷";
     node.innerHTML = `
       <button type="button" class="queue-thumb" data-view-job aria-label="작업 결과 보기">${media}</button>
       <div class="queue-body">
@@ -793,6 +798,7 @@ function renderQueue() {
         <div class="queue-progress"><span style="width:${progress}%"></span></div>
         <div class="queue-actions">
           ${job.status === "queued" ? `<button type="button" data-cancel-job>취소</button>` : ""}
+          ${job.status === "review" ? `<button type="button" data-template-review-next>${reviewNextLabel}</button><button type="button" class="secondary" data-template-review-retry>재시도</button><button type="button" class="secondary" data-cancel-job>중단</button>` : ""}
           ${job.status === "done" && (job.result?.item || job.result?.items?.length) ? `<button type="button" data-view-job>보기</button>` : ""}
           ${(job.status === "done" || job.status === "failed" || job.status === "cancelled") ? `<button type="button" class="secondary" data-remove-job>정리</button>` : ""}
         </div>
@@ -1168,6 +1174,33 @@ function updateTemplatePreviousResult(previous, data) {
   }
 }
 
+function templateResultItems(data) {
+  if (data?.items?.length) return data.items;
+  if (data?.item) return [data.item];
+  return [];
+}
+
+function resolveTemplateReview(job, action) {
+  const review = job.templateRun?.review;
+  if (!review?.resolve) return false;
+  job.templateRun.review = null;
+  review.resolve(action);
+  return true;
+}
+
+function waitForTemplateReview(job, detail) {
+  return new Promise(resolve => {
+    job.templateRun.review = { ...detail, resolve };
+    updateJob(job, {
+      status: "review",
+      progressPercent: detail.progressPercent,
+      progressText: `${detail.label} 확인 대기`,
+      prompt: detail.prompt,
+      result: { ok: true, items: detail.items },
+    });
+  });
+}
+
 function enqueueTemplateRun() {
   const payload = templateRuntimePayload();
   if (!payload.title.trim()) {
@@ -1188,6 +1221,7 @@ function enqueueTemplateRun() {
     templateRun: {
       payload,
       slotState: JSON.parse(JSON.stringify(templateRunState.slots)),
+      mode: templateRunState.mode === "manual" ? "manual" : "auto",
     },
     prompt: `${payload.shots.length}개 컷 순차 실행`,
     result: null,
@@ -1207,29 +1241,59 @@ async function runTemplateJob(job) {
   const slotState = job.templateRun.slotState || {};
   const previous = { lastImagePath: "", lastVideoPath: "" };
   const items = [];
+  const manualMode = job.templateRun.mode === "manual" || payload.run_mode === "manual";
   try {
     for (let index = 0; index < payload.shots.length; index += 1) {
-      if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
       const shot = payload.shots[index];
-      const request = buildTemplateShotRequest(payload, shot, previous, slotState);
       const label = `${index + 1}/${payload.shots.length} · ${shot.title || "컷"}`;
-      progress.setCount(index, payload.shots.length, 0, 1);
-      updateJob(job, {
-        progressPercent: Math.round((index / payload.shots.length) * 100),
-        progressText: `${label} 실행 중`,
-        prompt: request.prompt,
-      });
-      const data = await fetchTemplateShot(request);
-      if (data.item) items.push(data.item);
-      if (data.items?.length) items.push(...data.items);
-      updateTemplatePreviousResult(previous, data);
-      progress.setCount(index + 1, payload.shots.length, 0, index + 1 < payload.shots.length ? 1 : 0);
-      updateJob(job, {
-        result: { ok: true, items },
-        progressPercent: Math.round(((index + 1) / payload.shots.length) * 100),
-        progressText: `${index + 1}/${payload.shots.length} 컷 완료`,
-      });
-      loadLibrary();
+      const committedCount = items.length;
+      const previousBeforeShot = { ...previous };
+      let accepted = false;
+      while (!accepted) {
+        if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
+        const request = buildTemplateShotRequest(payload, shot, previousBeforeShot, slotState);
+        progress.setCount(index, payload.shots.length, 0, 1);
+        updateJob(job, {
+          status: "running",
+          progressPercent: Math.round((index / payload.shots.length) * 100),
+          progressText: `${label} 실행 중`,
+          prompt: request.prompt,
+        });
+        const data = await fetchTemplateShot(request);
+        if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
+        const produced = templateResultItems(data);
+        items.splice(committedCount, items.length - committedCount, ...produced);
+        const nextPrevious = { ...previousBeforeShot };
+        updateTemplatePreviousResult(nextPrevious, data);
+        progress.setCount(index + 1, payload.shots.length, 0, 0);
+        updateJob(job, {
+          result: { ok: true, items: [...items] },
+          progressPercent: Math.round(((index + 1) / payload.shots.length) * 100),
+          progressText: `${index + 1}/${payload.shots.length} 컷 완료`,
+        });
+        loadLibrary();
+        if (manualMode) {
+          const action = await waitForTemplateReview(job, {
+            index,
+            isLast: index + 1 >= payload.shots.length,
+            label,
+            prompt: request.prompt,
+            items: [...items],
+            progressPercent: Math.round(((index + 1) / payload.shots.length) * 100),
+          });
+          if (action === "cancel") throw new Error("템플릿 실행이 취소되었습니다.");
+          if (action === "retry") {
+            items.splice(committedCount);
+            previous.lastImagePath = previousBeforeShot.lastImagePath;
+            previous.lastVideoPath = previousBeforeShot.lastVideoPath;
+            showToast(`${shot.title || "컷"} 재시도`);
+            continue;
+          }
+        }
+        previous.lastImagePath = nextPrevious.lastImagePath;
+        previous.lastVideoPath = nextPrevious.lastVideoPath;
+        accepted = true;
+      }
     }
     progress.set(100);
     updateJob(job, { status: "done", result: { ok: true, items }, progressPercent: 100, progressText: "템플릿 실행 완료" });
@@ -2569,6 +2633,7 @@ function syncTemplateRunDefaults(payload = templatePayloadFromEditor()) {
 function resetTemplateRunState(payload = templatePayloadFromEditor()) {
   templateRunState.variables = {};
   templateRunState.slots = {};
+  templateRunState.mode = "auto";
   (payload.variables || []).forEach(variable => {
     if (variable.key) templateRunState.variables[variable.key] = variable.default || "";
   });
@@ -2590,7 +2655,7 @@ function templateRuntimePayload() {
       selected_kind: selected?.kind || slot.kind || "image",
     };
   });
-  return { ...payload, variables, slots };
+  return { ...payload, variables, slots, run_mode: templateRunState.mode === "manual" ? "manual" : "auto" };
 }
 
 function renderTemplateRunPanel() {
@@ -2599,6 +2664,8 @@ function renderTemplateRunPanel() {
   const variables = document.querySelector("#templateRunVariables");
   const slots = document.querySelector("#templateRunSlots");
   const note = document.querySelector("#templateRunNote");
+  const mode = document.querySelector("#templateRunMode");
+  if (mode) mode.value = templateRunState.mode === "manual" ? "manual" : "auto";
   if (variables) {
     variables.innerHTML = (payload.variables || []).length
       ? payload.variables.map(variable => `
@@ -2637,7 +2704,7 @@ function renderTemplateRunPanel() {
     const first = payload.shots?.[0];
     const needsReference = first && ["edit", "i2v", "official", "frame"].includes(first.method);
     note.textContent = payload.shots?.length
-      ? `${payload.shots.length}개 컷을 순차 실행합니다.${needsReference ? " 첫 컷에 필요한 이미지/영상 슬롯이 없으면 실행 시 오류가 납니다." : ""}`
+      ? `${payload.shots.length}개 컷을 ${templateRunState.mode === "manual" ? "수동 확인" : "자동"}으로 순차 실행합니다.${needsReference ? " 첫 컷에 필요한 이미지/영상 슬롯이 없으면 실행 시 오류가 납니다." : ""}`
       : "컷을 추가하면 실행할 수 있습니다.";
   }
 }
@@ -3386,6 +3453,11 @@ document.querySelector("#resetTemplateRun")?.addEventListener("click", () => {
   resetTemplateRunState();
   renderTemplatePreview();
   showToast("템플릿 실행값을 초기화했습니다.");
+});
+
+document.querySelector("#templateRunMode")?.addEventListener("change", event => {
+  templateRunState.mode = event.target.value === "manual" ? "manual" : "auto";
+  renderTemplateRunPanel();
 });
 
 document.querySelector("#queueTemplateRun")?.addEventListener("click", enqueueTemplateRun);
@@ -4966,13 +5038,24 @@ document.querySelector("#queueList")?.addEventListener("click", event => {
   if (!node) return;
   const job = jobQueue.find(item => item.id === node.dataset.id);
   if (!job) return;
-  if (event.target.matches("[data-cancel-job]")) {
-    updateJob(job, { status: "cancelled" });
+  if (event.target.closest("[data-template-review-next]")) {
+    resolveTemplateReview(job, "next");
+    return;
   }
-  if (event.target.matches("[data-remove-job]")) {
+  if (event.target.closest("[data-template-review-retry]")) {
+    resolveTemplateReview(job, "retry");
+    return;
+  }
+  if (event.target.closest("[data-cancel-job]")) {
+    updateJob(job, { status: "cancelled" });
+    resolveTemplateReview(job, "cancel");
+    return;
+  }
+  if (event.target.closest("[data-remove-job]")) {
     const index = jobQueue.findIndex(item => item.id === job.id);
     if (index >= 0) jobQueue.splice(index, 1);
     renderQueue();
+    return;
   }
   if (event.target.closest("[data-view-job]") || (!event.target.closest("button") && job.status === "done")) {
     if (!showJobResult(job)) {

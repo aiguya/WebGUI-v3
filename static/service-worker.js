@@ -1,8 +1,8 @@
-const CACHE_NAME = "webgui-shell-v3-21";
+const CACHE_NAME = "webgui-shell-v3-22";
 const SHELL_ASSETS = [
   "/",
-  "/static/styles.css?v=20260603-v3-21",
-  "/static/app.js?v=20260603-v3-21",
+  "/static/styles.css?v=20260603-v3-22",
+  "/static/app.js?v=20260603-v3-22",
   "/static/icon.svg",
   "/static/manifest.webmanifest"
 ];
