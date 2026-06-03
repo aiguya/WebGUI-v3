@@ -196,11 +196,26 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
-  });
-}
+const appStaticVersion = "20260603-v3-16";
+const appShellCacheName = "webgui-shell-v3-16";
+
+window.addEventListener("load", () => {
+  if ("caches" in window) {
+    caches.keys()
+      .then(keys => Promise.all(
+        keys
+          .filter(key => key.startsWith("webgui-shell-") && key !== appShellCacheName)
+          .map(key => caches.delete(key))
+      ))
+      .catch(() => {});
+  }
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register(`/sw.js?v=${appStaticVersion}`, { updateViaCache: "none" })
+      .then(registration => registration.update?.())
+      .catch(() => {});
+  }
+});
 
 window.addEventListener("load", scheduleWorkspaceHeight);
 window.addEventListener("resize", scheduleWorkspaceHeight);

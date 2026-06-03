@@ -7015,7 +7015,7 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   }
 }
 
-/* v3-13 final favorite icon override */
+/* v3-16 final favorite icon override */
 button.favorite-button,
 button.favorite-button:hover,
 button.favorite-button:active,
@@ -7085,4 +7085,46 @@ button.template-favorite-filter.active::before {
   -webkit-mask: var(--favorite-filled-icon) center / contain no-repeat !important;
   mask: var(--favorite-filled-icon) center / contain no-repeat !important;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .72)) drop-shadow(0 0 8px rgba(255, 214, 102, .48)) !important;
+}
+
+html body button.favorite-button.favorite-button.favorite-button.favorite-button,
+html body button.favorite-button.favorite-button.favorite-button.favorite-button:hover,
+html body button.favorite-button.favorite-button.favorite-button.favorite-button:active,
+html body button.favorite-button.favorite-button.favorite-button.favorite-button:focus-visible,
+html body button.favorite-button.favorite-button.favorite-button.favorite-button.active,
+html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter,
+html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter:hover,
+html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter:active,
+html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter:focus-visible,
+html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter.active {
+  border: 0 !important;
+  border-color: transparent !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  text-indent: -9999px !important;
+}
+
+html body button.favorite-button.favorite-button.favorite-button.favorite-button,
+html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter {
+  color: rgba(247, 247, 244, .78) !important;
+}
+
+html body button.favorite-button.favorite-button.favorite-button.favorite-button:hover,
+html body button.favorite-button.favorite-button.favorite-button.favorite-button:focus-visible,
+html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter:hover,
+html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter:focus-visible {
+  color: #f7f7f4 !important;
+}
+
+html body button.favorite-button.favorite-button.favorite-button.favorite-button.active,
+html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter.active {
+  color: #ffd666 !important;
+}
+
+html body button.favorite-button.favorite-button.favorite-button.favorite-button::before,
+html body button.template-favorite-filter.template-favorite-filter.template-favorite-filter.template-favorite-filter::before {
+  background: currentColor !important;
 }

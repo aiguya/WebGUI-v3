@@ -130,3 +130,15 @@
   - `static/service-worker.js`: 캐시 이름과 셸 자산 버전을 `v3-14`로 갱신.
   - `templates/index.html`: 정적 캐시 버전 `20260603-v3-14`로 갱신.
 - 백업: `backups/before-favorite-icon-text-cache-20260603-120158`
+
+### 즐겨찾기 아이콘 캐시 갱신 보강
+
+- 목표: 완전 재실행 후에도 즐겨찾기 별 아이콘이 회색 버튼처럼 보이는 오래된 화면 캐시 문제를 줄인다.
+- 원인 판단: Chrome 앱 모드/서비스워커가 이전 HTML, CSS, JS 묶음이나 `/sw.js` 응답을 계속 사용할 수 있었다.
+- 변경:
+  - `app.py`: `/`, `/settings`, `/sw.js` 응답에 `Cache-Control: no-store`를 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`: 정적 버전과 셸 캐시를 `20260603-v3-16` / `webgui-shell-v3-16`으로 갱신.
+  - `static/app.js`: 앱 로드 시 오래된 `webgui-shell-*` 캐시를 삭제하고 서비스워커를 `updateViaCache: "none"`으로 등록.
+  - `static/styles.css`: 일반 버튼 규칙보다 높은 우선순위로 즐겨찾기 별 아이콘 전용 배경/색상 오버라이드를 추가.
+  - `run_webgork_app.bat`: Chrome 앱 실행 URL에 버전 쿼리를 붙여 오래된 앱 창 재사용 가능성을 낮춤.
+- 백업: `backups/before-favorite-cache-hardening-20260603-121225`

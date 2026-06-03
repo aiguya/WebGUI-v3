@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, session
+from flask import Flask, jsonify, make_response, redirect, render_template, request, send_from_directory, session
 from werkzeug.utils import secure_filename
 
 
@@ -3348,12 +3348,16 @@ def validate_inference_key():
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    response = make_response(render_template("index.html"))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.get("/settings")
 def settings_page():
-    return render_template("index.html")
+    response = make_response(render_template("index.html"))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.get("/health")
@@ -5330,6 +5334,7 @@ def media(name):
 def service_worker():
     response = send_from_directory(app.static_folder, "service-worker.js", mimetype="application/javascript")
     response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
 
