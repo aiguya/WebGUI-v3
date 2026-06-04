@@ -218,8 +218,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-46";
-const appShellCacheName = "webgui-shell-v3-46";
+const appStaticVersion = "20260604-v3-47";
+const appShellCacheName = "webgui-shell-v3-47";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1039,6 +1039,7 @@ function formTemplateBlockPayload(form) {
     title,
     method: config.method,
     image_model: isImageMethod ? form.querySelector("[name='image_model']")?.value || "" : "",
+    image_resolution: isImageMethod ? form.querySelector("[name='image_resolution']")?.value || "auto" : "auto",
     video_model: isVideoMethod ? form.querySelector("[name='video_model']")?.value || "" : "",
     duration: isVideoMethod ? numericFormValue(form, "duration", 6, 1, 15) : 6,
     reference_slot: "",
@@ -1437,11 +1438,13 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
   const duration = String(shot.duration || payload.settings.default_shot_duration || 6);
   const aspectRatio = payload.settings.aspect_ratio || "9:16";
   const resolution = payload.settings.resolution || "720p";
+  const imageResolution = ["auto", "1k", "2k"].includes(shot.image_resolution) ? shot.image_resolution : "auto";
   if (shot.method === "image") {
     const body = appendTemplateRequestMetadata({
       prompt,
       aspect_ratio: aspectRatio,
       image_model: shot.image_model || "",
+      image_resolution: imageResolution,
     }, payload, shot, index);
     return {
       endpoint: "/api/t2i",
@@ -1458,7 +1461,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     const body = new FormData();
     body.set("prompt", prompt);
     body.set("aspect_ratio", aspectRatio);
-    body.set("image_resolution", "auto");
+    body.set("image_resolution", imageResolution);
     if (shot.image_model) body.set("image_model", shot.image_model);
     body.set("edit_input_mode", "multi");
     appendTemplateImageReferences(body, templateImageSourcePaths(shot, previous, slotState, 3));
@@ -3601,13 +3604,13 @@ const templateMethodLabels = {
 
 const templateMethodUi = {
   image: {
-    fields: new Set(["image_model", "output_slot", "prompt", "retry", "notes"]),
+    fields: new Set(["image_model", "image_resolution", "output_slot", "prompt", "retry", "notes"]),
     hint: "텍스트 프롬프트만 사용해 이미지를 생성합니다. 이미지 참조가 필요하면 이미지 편집 블록을 사용하세요.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
   },
   edit: {
-    fields: new Set(["image_model", "references", "output_slot", "prompt", "retry", "notes"]),
+    fields: new Set(["image_model", "image_resolution", "references", "output_slot", "prompt", "retry", "notes"]),
     hint: "이미지 슬롯을 1~3개 참조해 편집합니다. 첫 번째 슬롯이 메인 이미지가 됩니다.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
@@ -3638,6 +3641,12 @@ const templateImageModelLabels = {
   "gpt-5.4-mini": "Codex/ChatGPT gpt-5.4-mini",
   "gpt-5.4": "Codex/ChatGPT gpt-5.4",
   "gpt-5.5": "Codex/ChatGPT gpt-5.5",
+};
+
+const templateImageResolutionLabels = {
+  auto: "auto",
+  "1k": "1k",
+  "2k": "2k",
 };
 
 const templateVideoModelLabels = {
@@ -3734,6 +3743,22 @@ function templateMethodConfig(method) {
   return templateMethodUi[method] || templateMethodUi.i2v;
 }
 
+function updateTemplateShotImageResolutionControls(row) {
+  if (!row) return;
+  const imageModel = row.querySelector("[data-shot-image-model]")?.value || "";
+  const resolution = row.querySelector("[data-shot-image-resolution]");
+  const field = row.querySelector("[data-shot-field='image_resolution']");
+  const enabled = isGrokImageModel(imageModel);
+  if (resolution) {
+    resolution.disabled = !enabled;
+    if (!enabled) resolution.value = "auto";
+  }
+  if (field) {
+    field.classList.toggle("muted-control", !enabled);
+    field.title = enabled ? "" : "Grok 이미지 모델에서만 1k / 2k 해상도 요청을 적용합니다.";
+  }
+}
+
 function templateReferenceSlots(item = {}) {
   const values = [];
   if (item.reference_slot) values.push(item.reference_slot);
@@ -3765,6 +3790,7 @@ function applyTemplateShotMethodUi(row) {
   row.dataset.templateMethod = method;
   const imageModel = row.querySelector("[data-shot-image-model]");
   if (imageModel && !templateImageModelLabels[imageModel.value]) imageModel.value = "grok-imagine-image-quality";
+  updateTemplateShotImageResolutionControls(row);
   const videoModel = row.querySelector("[data-shot-video-model]");
   if (videoModel) {
     const labels = method === "official" ? templateOfficialVideoModelLabels : templateVideoModelLabels;
@@ -3884,6 +3910,10 @@ function renderTemplateShots(items = []) {
           <label>이미지 모델</label>
           <select data-shot-image-model>${templateModelOptionList(templateImageModelLabels, item.image_model || "grok-imagine-image-quality", "grok-imagine-image-quality")}</select>
         </div>
+        <div data-shot-field="image_resolution">
+          <label>이미지 해상도</label>
+          <select data-shot-image-resolution>${templateOptionList(templateImageResolutionLabels, item.image_resolution || "auto")}</select>
+        </div>
         <div data-shot-field="video_model">
           <label>영상 모델</label>
           <select data-shot-video-model>${templateModelOptionList((item.method || "i2v") === "official" ? templateOfficialVideoModelLabels : templateVideoModelLabels, item.video_model || "grok-imagine-video", "grok-imagine-video")}</select>
@@ -3986,6 +4016,7 @@ function collectTemplateShots() {
       title: row.querySelector("[data-shot-title]")?.value || `컷 ${index + 1}`,
       method,
       image_model: row.querySelector("[data-shot-image-model]")?.value || "",
+      image_resolution: row.querySelector("[data-shot-image-resolution]")?.value || "auto",
       video_model: videoModel,
       output_slot: row.querySelector("[data-shot-output-slot]")?.value || "",
       duration: Number.parseFloat(row.querySelector("[data-shot-duration]")?.value || "6") || 6,
@@ -4503,6 +4534,7 @@ function templateBlockToShot(block = {}) {
     title: block.title || "컷 블록",
     method: block.method || "i2v",
     image_model: block.image_model || "",
+    image_resolution: block.image_resolution || "auto",
     video_model: block.video_model || "",
     duration: block.duration || 6,
     reference_slot: block.reference_slot || referenceSlots[0] || "",
@@ -4653,6 +4685,7 @@ function templateShotBlockPayload(shot, index) {
     title: shot.title || `컷 ${index + 1}`,
     method: shot.method || payload.settings.default_method || "i2v",
     image_model: shot.image_model || "",
+    image_resolution: shot.image_resolution || "auto",
     video_model: shot.video_model || "",
     duration: shot.duration || payload.settings.default_shot_duration || 6,
     reference_slot: shot.reference_slot || "",
@@ -4876,7 +4909,7 @@ document.querySelector("#templateBlockList")?.addEventListener("click", event =>
 
 videoTemplateForm()?.addEventListener("input", renderTemplatePreview);
 videoTemplateForm()?.addEventListener("change", event => {
-  if (event.target.matches("[data-shot-method], [data-shot-video-model]")) {
+  if (event.target.matches("[data-shot-method], [data-shot-video-model], [data-shot-image-model]")) {
     applyTemplateShotMethodUi(event.target.closest("[data-template-shot]"));
   }
   renderTemplatePreview();

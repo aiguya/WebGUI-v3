@@ -704,3 +704,20 @@
   - `/static/app.js?v=20260604-v3-46`에서 해상도 컨트롤 표시 로직과 새 정적 버전 포함 확인.
   - `/static/styles.css?v=20260604-v3-46`에서 `muted-control` 스타일 포함 확인.
 - 백업: `backups/before-image-resolution-ui-20260604-185131`
+
+### 템플릿 블록 이미지 해상도 선택
+- 목표: 템플릿 화면의 이미지 생성/이미지 편집 블록에서도 `auto / 1k / 2k` 해상도를 선택하고 실행 요청에 반영되게 한다.
+- 변경:
+  - `static/app.js`: 템플릿 이미지 생성/편집 방식의 표시 필드에 `image_resolution`을 추가했다.
+  - `static/app.js`: 템플릿 블록 카드에 `이미지 해상도` select를 추가하고 `auto / 1k / 2k` 옵션을 렌더링하도록 했다.
+  - `static/app.js`: 블록 저장, 블록 불러오기, 템플릿 저장 payload에 `image_resolution`이 유지되도록 했다.
+  - `static/app.js`: 템플릿 실행 시 `/api/t2i`, `/api/i2i` 요청에 블록별 `image_resolution` 값을 전달하도록 했다.
+  - `static/app.js`: 이미지 모델이 Grok이 아닐 때는 템플릿 블록 해상도를 `auto`로 고정하고 비활성화한다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260604-v3-47` / `webgui-shell-v3-47`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-47`에서 새 HTML 정적 버전 서빙 확인.
+  - `/static/app.js?v=20260604-v3-47`에서 `data-shot-image-resolution`, `templateImageResolutionLabels`, `/api/t2i` JSON 요청의 `image_resolution`, `/api/i2i` FormData 요청의 `image_resolution` 포함 확인.
+- 백업: `backups/before-template-image-resolution-20260604-193456`
