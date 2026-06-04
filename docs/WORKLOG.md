@@ -545,3 +545,17 @@
   - `git diff --check` 통과.
   - `http://127.0.0.1:7863/?v=20260604-v3-36` 및 `/static/app.js?v=20260604-v3-36` 서빙 확인.
 - 백업: `backups/before-template-assembly-console-20260604-111457`
+
+### 템플릿 이미지 생성/편집 전역 프롬프트 제외
+- 목표: 템플릿의 `이미지 생성`과 `이미지 편집` 블록에는 전역 프롬프트를 적용하지 않는다.
+- 변경:
+  - `static/app.js`: `templateShotPromptText()`에서 `image`, `edit` 블록은 `payload.global_prompt`를 제외하고 컷 프롬프트를 조립하도록 변경했다.
+  - `static/app.js`: API 요청과 적용 미리보기가 같은 조립 규칙을 사용하므로 실제 요청 프롬프트와 미리보기 모두 전역 프롬프트 제외가 반영된다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260604-v3-37` / `webgui-shell-v3-37`로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - 이미지 생성/편집 프롬프트 조립에서 전역 프롬프트 제외 로직 확인.
+  - `http://127.0.0.1:7863/?v=20260604-v3-37` 및 `/static/app.js?v=20260604-v3-37` 서빙 확인.
+- 백업: `backups/before-template-image-edit-no-global-20260604-114954`

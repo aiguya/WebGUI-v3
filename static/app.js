@@ -207,8 +207,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-36";
-const appShellCacheName = "webgui-shell-v3-36";
+const appStaticVersion = "20260604-v3-37";
+const appShellCacheName = "webgui-shell-v3-37";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -3253,11 +3253,12 @@ function templateShotPromptText(payload, shot, options = {}) {
   const includeReferenceText = options.includeReferenceText !== false;
   const variables = payload.variables || [];
   const slots = payload.slots || [];
+  const useGlobalPrompt = !["image", "edit"].includes(shot.method);
   const referenceText = templateReferenceSlots(shot)
     .map(slot => `{{${slot}}}`)
     .join(", ");
   const chunks = [
-    payload.global_prompt,
+    useGlobalPrompt ? payload.global_prompt : "",
     shot.prompt,
     shot.camera ? `카메라: ${shot.camera}` : "",
     includeReferenceText && referenceText ? `참조 슬롯: ${referenceText}` : "",
