@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260604-v3-35">
+  <link rel="stylesheet" href="/static/styles.css?v=20260604-v3-36">
 </head>
 <body>
   <header class="topbar">
@@ -864,6 +864,10 @@
               <button type="button" class="secondary" id="copyTemplateRunPlan">실행 계획 복사</button>
             </div>
             <div class="template-run-note" id="templateRunNote"></div>
+            <details class="template-run-console" open>
+              <summary>실행 콘솔</summary>
+              <div class="template-console-log" id="templateRunConsole" aria-live="polite"></div>
+            </details>
           </div>
           <div class="template-block-library">
             <div class="template-section-head">
@@ -1099,6 +1103,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260604-v3-35"></script>
+  <script src="/static/app.js?v=20260604-v3-36"></script>
 </body>
 </html>

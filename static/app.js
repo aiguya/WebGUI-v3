@@ -207,8 +207,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-35";
-const appShellCacheName = "webgui-shell-v3-35";
+const appStaticVersion = "20260604-v3-36";
+const appShellCacheName = "webgui-shell-v3-36";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1395,6 +1395,42 @@ function templateVideoItems(items = []) {
   });
 }
 
+function resetTemplateRunConsole() {
+  const log = document.querySelector("#templateRunConsole");
+  if (log) log.innerHTML = "";
+}
+
+function appendTemplateRunLog(message, detail = "", level = "info") {
+  const log = document.querySelector("#templateRunConsole");
+  if (!log) return;
+  const row = document.createElement("div");
+  row.className = `template-console-line ${level}`;
+  const time = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  row.innerHTML = `
+    <span>${escapeHtml(time)}</span>
+    <strong>${escapeHtml(message)}</strong>
+    ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}`;
+  log.appendChild(row);
+  while (log.children.length > 180) log.firstElementChild?.remove();
+  log.scrollTop = log.scrollHeight;
+}
+
+function updateTemplateAssemblyVideos(assemblyVideos, shot, produced) {
+  const videos = templateVideoItems(produced);
+  if (!videos.length) return "none";
+  const result = videos[videos.length - 1];
+  if (shot.method === "official" || shot.method === "frame") {
+    if (assemblyVideos.length) {
+      assemblyVideos.splice(assemblyVideos.length - 1, 1, result);
+      return "replace";
+    }
+    assemblyVideos.push(result);
+    return "append";
+  }
+  assemblyVideos.push(...videos);
+  return "append";
+}
+
 function templateFinalEditSettings(payload) {
   const videoMethods = templateVideoShotMethods();
   const transitions = (payload.shots || [])
@@ -1545,7 +1581,10 @@ async function runTemplateJob(job) {
   const slotState = job.templateRun.slotState || {};
   const previous = { lastImagePath: "", lastVideoPath: "" };
   const items = [];
+  const assemblyVideos = [];
   const manualMode = job.templateRun.mode === "manual" || payload.run_mode === "manual";
+  resetTemplateRunConsole();
+  appendTemplateRunLog("템플릿 실행 시작", `${payload.shots.length}개 컷 · ${manualMode ? "수동 확인" : "자동"}`);
   updateJob(job, {
     progressText: `템플릿 실행 시작 · ${manualMode ? "수동 확인" : "자동"}`,
   });
@@ -1555,10 +1594,12 @@ async function runTemplateJob(job) {
       const label = `${index + 1}/${payload.shots.length} · ${shot.title || "컷"}`;
       const committedCount = items.length;
       const previousBeforeShot = { ...previous };
+      const assemblyBeforeShot = [...assemblyVideos];
       let accepted = false;
       while (!accepted) {
         if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
         const request = buildTemplateShotRequest(payload, shot, previousBeforeShot, slotState);
+        appendTemplateRunLog("요청 시작", `${label} · ${request.endpoint}`);
         progress.setCount(index, payload.shots.length, 0, 1);
         updateJob(job, {
           status: "running",
@@ -1569,8 +1610,10 @@ async function runTemplateJob(job) {
         let data;
         try {
           data = await fetchTemplateShot(request);
+          appendTemplateRunLog("응답 수신", `${label} · ${templateResultItems(data).length}개 결과`);
         } catch (error) {
           const friendly = friendlyFetchError(error, request.endpoint);
+          appendTemplateRunLog("요청 실패", `${label} · ${friendly.message}`, "error");
           const retryPercent = Math.round((index / payload.shots.length) * 100);
           const action = await waitForTemplateRetry(job, {
             index,
@@ -1582,7 +1625,9 @@ async function runTemplateJob(job) {
             progressPercent: retryPercent,
           }, progress);
           if (action === "retry") {
+            assemblyVideos.splice(0, assemblyVideos.length, ...assemblyBeforeShot);
             showToast(`${shot.title || "컷"} 재시도`);
+            appendTemplateRunLog("재시도 선택", label, "warn");
             continue;
           }
           updateJob(job, { status: "cancelled" });
@@ -1617,34 +1662,46 @@ async function runTemplateJob(job) {
           }
           if (action === "retry") {
             items.splice(committedCount);
+            assemblyVideos.splice(0, assemblyVideos.length, ...assemblyBeforeShot);
             previous.lastImagePath = previousBeforeShot.lastImagePath;
             previous.lastVideoPath = previousBeforeShot.lastVideoPath;
             showToast(`${shot.title || "컷"} 재시도`);
+            appendTemplateRunLog("결과 확인 후 재시도", label, "warn");
             continue;
           }
         }
         previous.lastImagePath = nextPrevious.lastImagePath;
         previous.lastVideoPath = nextPrevious.lastVideoPath;
+        const assemblyAction = updateTemplateAssemblyVideos(assemblyVideos, shot, produced);
+        if (assemblyAction === "replace") {
+          appendTemplateRunLog("최종 조립 목록 교체", `${label} · 연장 결과가 이전 영상을 포함하므로 직전 클립을 대체`);
+        } else if (assemblyAction === "append") {
+          appendTemplateRunLog("최종 조립 목록 추가", `${label} · 조립 클립 ${assemblyVideos.length}개`);
+        }
         registerTemplateShotOutputSlot(payload, shot, produced, slotState);
         accepted = true;
       }
     }
-    if (templateVideoItems(items).length > 1) {
+    if (templateVideoItems(assemblyVideos).length > 1) {
+      appendTemplateRunLog("최종 영상 병합 시작", `${assemblyVideos.length}개 클립`);
       updateJob(job, { status: "running", progressPercent: 99, progressText: "템플릿 최종 영상 병합 중" });
     }
-    const merged = await mergeTemplateVideos(payload, items);
+    const merged = await mergeTemplateVideos(payload, assemblyVideos);
     if (merged?.item) {
       items.push(merged.item);
       updateTemplatePreviousResult(previous, merged);
       loadLibrary();
+      appendTemplateRunLog("최종 영상 병합 완료", merged.item.file_path || "");
     }
     progress.set(100);
+    appendTemplateRunLog("템플릿 실행 완료", `${items.length}개 결과`);
     updateJob(job, { status: "done", result: { ok: true, items }, progressPercent: 100, progressText: "템플릿 실행 완료" });
     showToast("템플릿 실행이 완료되었습니다.");
   } catch (error) {
     const currentPercent = Number.isFinite(job.progressPercent) ? job.progressPercent : 0;
     progress.message(error.message, currentPercent, "error");
     updateJob(job, { status: job.status === "cancelled" ? "cancelled" : "failed", error: error.message, progressText: error.message });
+    appendTemplateRunLog("템플릿 실행 오류", error.message, "error");
     showToast(error.message, true);
   } finally {
     if (job.status === "failed") {

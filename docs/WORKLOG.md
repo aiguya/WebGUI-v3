@@ -526,3 +526,22 @@
   - `git diff --check` 통과.
   - `http://127.0.0.1:7863/?v=20260604-v3-35` 및 `/static/app.js?v=20260604-v3-35` 서빙 확인.
 - 백업: `backups/before-template-i2v-extra-slots-20260604-015222`
+
+### 템플릿 공식 연장 최종 조립 중복 방지와 실행 콘솔
+- 목표: 템플릿에서 `공식 연장` 결과가 이미 원본 영상을 포함하는데도 최종 병합에서 원본 영상을 다시 붙여 중복 재생되는 문제를 막고, 템플릿 실행 중 서버 통신/진행 상태를 볼 수 있는 콘솔을 제공한다.
+- 원인:
+  - 최종 병합 단계가 전체 결과 `items`에서 영상만 단순 추출해 병합했다.
+  - `공식 연장`과 `프레임 연장` 결과는 원본+연장 결과인데, 이전 원본 영상과 함께 다시 병합되어 `원본 → 원본+연장` 형태가 되었다.
+- 변경:
+  - `static/app.js`: 템플릿 실행 중 별도의 최종 조립 영상 목록을 유지한다.
+  - `static/app.js`: `공식 연장`/`프레임 연장` 결과가 나오면 직전 조립 클립을 새 결과로 교체해 원본 중복 병합을 방지한다.
+  - `static/app.js`: 요청 시작, 응답 수신, 실패, 재시도, 조립 목록 추가/교체, 최종 병합 로그를 템플릿 실행 콘솔에 기록한다.
+  - `templates/index.html`: 템플릿 실행 패널에 `실행 콘솔` 로그 영역을 추가했다.
+  - `static/styles.css`: 실행 콘솔을 작은 터미널 스타일로 표시하도록 추가했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 셸 캐시를 `20260604-v3-36` / `webgui-shell-v3-36`으로 갱신.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-36` 및 `/static/app.js?v=20260604-v3-36` 서빙 확인.
+- 백업: `backups/before-template-assembly-console-20260604-111457`
