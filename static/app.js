@@ -218,8 +218,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-45";
-const appShellCacheName = "webgui-shell-v3-45";
+const appStaticVersion = "20260604-v3-46";
+const appShellCacheName = "webgui-shell-v3-46";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -304,7 +304,9 @@ function updateGrokResolutionControls(form) {
   const model = form.querySelector("[name='image_model']")?.value || "";
   const enabled = isGrokImageModel(model);
   form.querySelectorAll("[data-grok-resolution-field]").forEach(element => {
-    element.hidden = !enabled;
+    element.hidden = false;
+    element.classList.toggle("muted-control", !enabled);
+    element.title = enabled ? "" : "Grok 이미지 모델에서만 1k / 2k 해상도 요청을 적용합니다.";
     if (element.matches("select")) {
       element.disabled = !enabled;
       if (!enabled) element.value = "auto";

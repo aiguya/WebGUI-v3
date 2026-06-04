@@ -688,3 +688,19 @@
   - `http://127.0.0.1:7863/?v=20260604-v3-45`에서 새 HTML 정적 버전 서빙 확인.
   - `/static/app.js?v=20260604-v3-45`에서 `templateExistingOutputSlotItem`, `단계 스킵`, 새 정적 버전 포함 확인.
 - 백업: `backups/before-template-skip-existing-output-20260604-151500`
+
+### 이미지 생성/편집 해상도 선택 노출
+- 목표: 이미지 생성과 이미지 편집 탭에서 `auto / 1k / 2k` 해상도 선택 항목이 화면에 명확히 보이도록 한다.
+- 변경:
+  - `static/app.js`: `data-grok-resolution-field` 컨트롤을 숨기지 않고 항상 표시하되, Grok 이미지 모델이 아닐 때만 비활성화하고 `auto`로 되돌리도록 변경했다.
+  - `templates/index.html`: 이미지 생성/편집의 해상도 레이블을 `이미지 해상도`로 통일했다.
+  - `static/styles.css`: 비활성 해상도 컨트롤용 `muted-control` 스타일을 추가했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260604-v3-46` / `webgui-shell-v3-46`으로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-46`에서 새 HTML 정적 버전과 `이미지 해상도` 레이블 서빙 확인.
+  - `/static/app.js?v=20260604-v3-46`에서 해상도 컨트롤 표시 로직과 새 정적 버전 포함 확인.
+  - `/static/styles.css?v=20260604-v3-46`에서 `muted-control` 스타일 포함 확인.
+- 백업: `backups/before-image-resolution-ui-20260604-185131`

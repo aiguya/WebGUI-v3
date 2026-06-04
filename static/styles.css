@@ -160,6 +160,10 @@ button:hover, .button-link:hover {
 
 button:disabled { cursor: wait; opacity: .6; }
 
+.muted-control {
+  opacity: .58;
+}
+
 .secondary, .tab {
   color: var(--text);
   background: rgba(255, 255, 255, .045);
