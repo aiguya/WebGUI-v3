@@ -640,3 +640,19 @@
   - `http://127.0.0.1:7863/?v=20260604-v3-42`에서 새 HTML과 작업 상황 패널 DOM 서빙 확인.
   - `/static/app.js?v=20260604-v3-42`에서 `cancelTemplateRunSession`, `data-template-monitor-cancel`, `AbortController` 포함 확인.
 - 백업: `backups/before-template-run-cancel-20260604-141000`
+
+### 템플릿 실행 플로팅 작업 패널
+- 목표: 템플릿 실행 중 진행/수동 확인 UI가 템플릿 실행 준비 패널을 덮어 탭 조작을 막던 문제를 해결하고, 실행 중에도 다른 설정 수정이나 추가 큐 등록을 할 수 있게 한다.
+- 변경:
+  - `static/app.js`: 템플릿 실행 진행 UI를 `#templateRunner` 내부가 아니라 `body` 하단의 `floatingProgressHost`에 붙이도록 변경했다.
+  - `static/app.js`: 기존 `createProgress()` 흐름은 유지해 수동 확인, 재시도, 중단 버튼은 그대로 동작하되 페이지 본문을 막지 않게 했다.
+  - `static/styles.css`: 플로팅 작업 패널을 오른쪽 아래에 고정하고, 패널 자체만 클릭을 받도록 스타일을 추가했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260604-v3-43` / `webgui-shell-v3-43`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-43`에서 새 HTML 서빙 확인.
+  - `/static/app.js?v=20260604-v3-43`에서 `templateProgressHost`, `floatingProgressHost`, 새 정적 버전 포함 확인.
+  - `/static/styles.css?v=20260604-v3-43`에서 `floating-progress-host` 스타일 포함 확인.
+- 백업: `backups/before-template-floating-progress-20260604-143000`

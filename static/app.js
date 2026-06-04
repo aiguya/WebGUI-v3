@@ -217,8 +217,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-42";
-const appShellCacheName = "webgui-shell-v3-42";
+const appStaticVersion = "20260604-v3-43";
+const appShellCacheName = "webgui-shell-v3-43";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -572,6 +572,18 @@ function createProgress(panel, label = "진행 중") {
       setTimeout(() => overlay.remove(), 260);
     },
   };
+}
+
+function templateProgressHost() {
+  let host = document.querySelector("#floatingProgressHost");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "floatingProgressHost";
+    host.className = "floating-progress-host";
+    host.setAttribute("aria-live", "polite");
+    document.body.appendChild(host);
+  }
+  return host;
 }
 
 function previewItem(target, item) {
@@ -2130,7 +2142,7 @@ function enqueueTemplateRun() {
 async function runTemplateJob(job) {
   activeJobs += 1;
   updateJob(job, { status: "running", progressPercent: 0, progressText: "템플릿 실행 시작" });
-  const progress = createProgress(document.querySelector("#templateRunner"), job.type);
+  const progress = createProgress(templateProgressHost(), job.type);
   const payload = job.templateRun.payload;
   const slotState = job.templateRun.slotState || {};
   const previous = { ...(job.templateRun.basePrevious || { lastImagePath: "", lastVideoPath: "" }) };
