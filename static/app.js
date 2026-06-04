@@ -217,8 +217,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-40";
-const appShellCacheName = "webgui-shell-v3-40";
+const appStaticVersion = "20260604-v3-42";
+const appShellCacheName = "webgui-shell-v3-42";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -905,6 +905,7 @@ function renderQueue() {
     const reviewNextLabel = review.isLast ? "완료" : "다음 컷";
     const reviewHint = review.retryOnly ? "팝업에서 재시도/중단 선택" : `팝업에서 ${reviewNextLabel}/재시도/중단 선택`;
     const canViewFromQueue = job.status === "done" && (job.result?.item || job.result?.items?.length);
+    const canCancelJob = job.status === "queued" || job.status === "running" || (job.templateRun && job.status === "review");
     const thumbViewAttribute = canViewFromQueue ? `data-view-job aria-label="작업 결과 보기"` : `aria-label="작업 상태"`;
     node.innerHTML = `
       <button type="button" class="queue-thumb" ${thumbViewAttribute}>${media}</button>
@@ -920,7 +921,7 @@ function renderQueue() {
         </div>
         <div class="queue-progress"><span style="width:${progress}%"></span></div>
         <div class="queue-actions">
-          ${job.status === "queued" ? `<button type="button" data-cancel-job>취소</button>` : ""}
+          ${canCancelJob ? `<button type="button" data-cancel-job>${job.status === "queued" ? "취소" : "중단"}</button>` : ""}
           ${job.status === "review" ? `<span class="queue-review-hint">${reviewHint}</span>` : ""}
           ${canViewFromQueue ? `<button type="button" data-view-job>보기</button>` : ""}
           ${(job.status === "done" || job.status === "failed" || job.status === "cancelled") ? `<button type="button" class="secondary" data-remove-job>정리</button>` : ""}
@@ -1229,8 +1230,11 @@ async function runJob(job) {
   clearPreviewPanel(previewPanel, job.referenceUrl);
   const progress = createProgress(previewPanel, job.type);
   try {
-    const response = await fetch(job.endpoint, job.options);
+    job.abortController = new AbortController();
+    const response = await fetch(job.endpoint, { ...job.options, signal: job.abortController.signal });
+    if (job.status === "cancelled") throw new Error("작업이 중단되었습니다.");
     const data = await response.json();
+    if (job.status === "cancelled") throw new Error("작업이 중단되었습니다.");
     if (!data.ok) rememberApiError(data);
     if (!data.ok) throw new Error(data.error || "요청 실패");
     if (job.endpoint === "/api/manga-batch" && data.job_id) {
@@ -1256,10 +1260,16 @@ async function runJob(job) {
     updateJob(job, { status: "done", result: data });
     showToast(`${job.type} 완료`);
   } catch (error) {
+    if (job.status === "cancelled" || error.name === "AbortError") {
+      updateJob(job, { status: "cancelled", error: "사용자 중단", progressText: "작업이 중단되었습니다." });
+      showToast("작업이 중단되었습니다.");
+      return;
+    }
     const friendly = friendlyFetchError(error, job.endpoint);
     updateJob(job, { status: "failed", error: friendly.message });
     showToast(friendly.message, true);
   } finally {
+    delete job.abortController;
     progress.done();
     activeJobs -= 1;
     loadHealth();
@@ -1275,6 +1285,7 @@ function sleep(ms) {
 async function pollMangaBatch(job, batchId, progress) {
   let latest = null;
   while (true) {
+    if (job.status === "cancelled") throw new Error("작업이 중단되었습니다.");
     const response = await fetch(`/api/manga-batch/${batchId}`);
     const data = await response.json();
     if (!data.ok) throw new Error(data.error || "배치 상태 조회 실패");
@@ -1913,16 +1924,108 @@ function prepareTemplateRunSessionFromIndex(sessionId, startIndex) {
   });
 }
 
-function renderTemplateRunSessions() {
-  const list = document.querySelector("#templateRunSessions");
-  if (!list) return;
+function templateRunSessionsForCurrentTemplate(limit = 8) {
   const current = templatePayloadFromEditor();
-  const sessions = templateRunSessions
+  return templateRunSessions
     .filter(session => {
       if (current.id && session.template_id) return session.template_id === current.id;
       return session.template_title === current.title || !current.title;
     })
-    .slice(0, 8);
+    .slice(0, limit);
+}
+
+function templateRunActiveStep(session) {
+  if (!session?.steps?.length) return null;
+  return session.steps.find(step => ["running", "review", "failed"].includes(step.status))
+    || session.steps[session.current_index]
+    || session.steps.find(step => step.status !== "done")
+    || session.steps[session.steps.length - 1]
+    || null;
+}
+
+function templateRunActiveJob(sessionId) {
+  return jobQueue.find(job => job.templateRun?.sessionId === sessionId && ["queued", "running", "review"].includes(job.status)) || null;
+}
+
+function cancelTemplateRunSession(sessionId) {
+  const session = templateRunSessionById(sessionId);
+  if (!session) return false;
+  const job = templateRunActiveJob(sessionId);
+  const activeStep = templateRunActiveStep(session);
+  if (job) {
+    job.abortController?.abort?.();
+    updateJob(job, { status: "cancelled", progressText: "사용자 중단" });
+    resolveTemplateReview(job, "cancel");
+  }
+  if (activeStep) {
+    updateTemplateRunStep(sessionId, activeStep.index, {
+      status: "cancelled",
+      error: "사용자 중단",
+      completed_at: new Date().toISOString(),
+    });
+  }
+  updateTemplateRunSession(sessionId, {
+    status: "cancelled",
+    current_index: activeStep ? activeStep.index : session.current_index,
+  });
+  appendTemplateRunLog("사용자 중단", session.template_title || "템플릿", "warn");
+  showToast("템플릿 작업을 중단했습니다.");
+  processQueue();
+  return true;
+}
+
+function renderTemplateRunMonitor(sessions = templateRunSessionsForCurrentTemplate(8)) {
+  const node = document.querySelector("#templateRunMonitor");
+  if (!node) return;
+  const session = sessions.find(item => ["running", "review", "queued", "failed"].includes(item.status)) || sessions[0];
+  if (!session) {
+    node.classList.add("is-empty");
+    delete node.dataset.monitorSession;
+    node.innerHTML = `
+      <div class="template-run-monitor-head">
+        <div>
+          <span>작업 상황</span>
+          <strong>아직 실행된 템플릿 작업이 없습니다.</strong>
+        </div>
+      </div>
+      <p>템플릿을 큐에 등록하면 현재 단계와 재실행 지점이 여기에 표시됩니다.</p>`;
+    return;
+  }
+  const progress = templateRunSessionProgress(session);
+  const currentStep = templateRunActiveStep(session);
+  const updated = session.updated_at ? new Date(session.updated_at).toLocaleString("ko-KR", { hour12: false }) : "";
+  const canCancel = ["queued", "running", "review"].includes(session.status) || Boolean(templateRunActiveJob(session.id));
+  node.classList.remove("is-empty");
+  node.dataset.monitorSession = session.id;
+  node.innerHTML = `
+    <div class="template-run-monitor-head">
+      <div>
+        <span>작업 상황</span>
+        <strong>${escapeHtml(session.template_title || "템플릿")}</strong>
+      </div>
+      <em class="is-${escapeHtml(session.status || "queued")}">${escapeHtml(templateRunStatusLabel(session.status))}</em>
+    </div>
+    <div class="template-run-monitor-progress">
+      <span style="width:${progress.percent}%"></span>
+      <strong>${progress.done}/${progress.total} · ${progress.percent}%</strong>
+    </div>
+    <div class="template-run-monitor-current">
+      <small>현재 단계</small>
+      <strong>${currentStep ? `${currentStep.index + 1}. ${escapeHtml(currentStep.title || `컷 ${currentStep.index + 1}`)}` : "대기 중"}</strong>
+      <span>${currentStep ? escapeHtml(templateRunStepStatusLabel(currentStep.status)) : "실행 전"}${updated ? ` · ${escapeHtml(updated)}` : ""}</span>
+    </div>
+    <div class="template-run-monitor-actions">
+      ${currentStep ? `<button type="button" class="secondary compact-btn" data-monitor-rerun-from="${currentStep.index}">현재 단계부터</button>` : ""}
+      <button type="button" class="secondary compact-btn" data-template-monitor-focus>체크포인트 보기</button>
+      ${canCancel ? `<button type="button" class="secondary compact-btn danger-inline" data-template-monitor-cancel>작업 중단</button>` : ""}
+    </div>`;
+}
+
+function renderTemplateRunSessions() {
+  const list = document.querySelector("#templateRunSessions");
+  const sessions = templateRunSessionsForCurrentTemplate(8);
+  renderTemplateRunMonitor(sessions);
+  if (!list) return;
   if (!sessions.length) {
     list.innerHTML = `<p class="template-empty">저장된 실행 체크포인트가 없습니다.</p>`;
     return;
@@ -2087,9 +2190,14 @@ async function runTemplateJob(job) {
         });
         let data;
         try {
-          data = await fetchTemplateShot(request);
+          job.abortController = new AbortController();
+          data = await fetchTemplateShot({
+            ...request,
+            options: { ...(request.options || {}), signal: job.abortController.signal },
+          });
           appendTemplateRunLog("응답 수신", `${label} · ${templateResultItems(data).length}개 결과`);
         } catch (error) {
+          if (job.status === "cancelled") throw new Error("템플릿 실행이 중단되었습니다.");
           const friendly = friendlyFetchError(error, request.endpoint);
           appendTemplateRunLog("요청 실패", `${label} · ${friendly.message}`, "error");
           updateTemplateRunStep(sessionId, index, {
@@ -2140,6 +2248,8 @@ async function runTemplateJob(job) {
           updateTemplateRunStep(sessionId, index, { status: "cancelled", error: "사용자 중단", completed_at: new Date().toISOString() });
           updateTemplateRunSession(sessionId, { status: "cancelled", current_index: index });
           throw new Error("템플릿 실행이 중단되었습니다.");
+        } finally {
+          delete job.abortController;
         }
         if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
         const produced = templateResultItems(data);
@@ -2236,6 +2346,7 @@ async function runTemplateJob(job) {
         accepted = true;
       }
     }
+    if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
     if (templateVideoItems(assemblyVideos).length > 1) {
       appendTemplateRunLog("최종 영상 병합 시작", `${assemblyVideos.length}개 클립`);
       updateJob(job, { status: "running", progressPercent: 99, progressText: "템플릿 최종 영상 병합 중" });
@@ -4747,6 +4858,23 @@ document.querySelector("#templateRunSessions")?.addEventListener("click", event 
   }
 });
 
+document.querySelector("#templateRunMonitor")?.addEventListener("click", event => {
+  const card = event.currentTarget;
+  const id = card.dataset.monitorSession;
+  const rerun = event.target.closest("[data-monitor-rerun-from]");
+  if (rerun && id) {
+    enqueueTemplateRunFromCheckpoint(id, Number.parseInt(rerun.dataset.monitorRerunFrom || "0", 10));
+    return;
+  }
+  if (event.target.closest("[data-template-monitor-cancel]") && id) {
+    cancelTemplateRunSession(id);
+    return;
+  }
+  if (event.target.closest("[data-template-monitor-focus]")) {
+    document.querySelector("#templateRunSessions")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+});
+
 document.querySelector("#templatePreview")?.addEventListener("click", event => {
   if (event.target.closest("[data-preview-drag-handle]")) return;
   const item = event.target.closest("[data-template-preview-shot]");
@@ -6355,8 +6483,14 @@ document.querySelector("#queueList")?.addEventListener("click", event => {
       showToast("미리보기 닫힘 직후의 중단 입력은 무시했습니다.");
       return;
     }
+    if (job.templateRun?.sessionId) {
+      cancelTemplateRunSession(job.templateRun.sessionId);
+      return;
+    }
+    job.abortController?.abort?.();
     updateJob(job, { status: "cancelled" });
     resolveTemplateReview(job, "cancel");
+    processQueue();
     return;
   }
   if (event.target.closest("[data-remove-job]")) {

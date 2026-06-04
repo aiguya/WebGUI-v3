@@ -608,3 +608,35 @@
   - `http://127.0.0.1:7863/?v=20260604-v3-40` 및 `/static/app.js?v=20260604-v3-40` 서빙 확인.
   - 체크포인트 UI DOM과 `webgork.templateRunSessions.v1` 저장 로직, 특정 컷 재실행 함수가 새 정적 파일에 포함되는지 확인.
 - 백업: `backups/before-template-run-checkpoints-20260604-131851`
+
+### 템플릿 작업 상황 패널 노출
+- 목표: 템플릿 실행 상태가 접힌 체크포인트 영역에만 숨어 보이지 않던 문제를 해결하고, 실행 중 상황을 우측 패널에서 바로 확인할 수 있게 한다.
+- 변경:
+  - `templates/index.html`: 템플릿 적용 미리보기 패널 상단에 `templateRunMonitor` 영역을 배치했다.
+  - `static/app.js`: 저장된 템플릿 실행 세션을 현재 템플릿 기준으로 필터링하고, 최신 실행 상태/진행률/현재 단계/업데이트 시간을 `작업 상황` 패널에 렌더링하도록 추가했다.
+  - `static/app.js`: 작업 상황 패널에서 현재 단계부터 재실행하거나 상세 체크포인트 영역으로 이동할 수 있게 이벤트를 연결했다.
+  - `static/styles.css`: 작업 상황 카드, 상태 배지, 진행 바, 현재 단계 요약 스타일을 추가했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260604-v3-41` / `webgui-shell-v3-41`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-41`에서 작업 상황 패널 DOM과 새 정적 파일 서빙 확인.
+  - `/static/app.js?v=20260604-v3-41`에서 `renderTemplateRunMonitor`와 현재 단계 재실행 이벤트가 포함되는지 확인.
+- 백업: `backups/before-template-run-visible-monitor-20260604-133911`
+
+### 템플릿 작업 중단 기능
+- 목표: 템플릿 실행 중 상황을 확인하는 패널에서 바로 실행을 중단하고, 큐/체크포인트 상태도 함께 중단으로 정리되게 한다.
+- 변경:
+  - `static/app.js`: 작업 상황 패널에 `작업 중단` 버튼을 추가하고, 현재 템플릿 실행 세션과 연결된 큐 작업을 찾아 `cancelled` 상태로 전환하도록 추가했다.
+  - `static/app.js`: 일반 큐 작업과 템플릿 컷 요청에 `AbortController`를 연결해 가능한 경우 진행 중인 브라우저 요청을 중단하도록 했다.
+  - `static/app.js`: 템플릿 실행 루프가 중단 상태를 감지하면 다음 컷이나 최종 병합으로 넘어가지 않도록 방어 지점을 추가했다.
+  - `static/styles.css`: 작업 상황 패널의 중단 버튼을 작은 위험 톤 버튼으로 표시하도록 추가했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260604-v3-42` / `webgui-shell-v3-42`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-42`에서 새 HTML과 작업 상황 패널 DOM 서빙 확인.
+  - `/static/app.js?v=20260604-v3-42`에서 `cancelTemplateRunSession`, `data-template-monitor-cancel`, `AbortController` 포함 확인.
+- 백업: `backups/before-template-run-cancel-20260604-141000`

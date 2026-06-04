@@ -7251,6 +7251,149 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   font-size: 12px;
 }
 
+.template-run-monitor {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px solid rgba(94, 234, 212, .22);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(94, 234, 212, .09), rgba(96, 165, 250, .04)),
+    rgba(0, 0, 0, .18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+
+.template-run-monitor.is-empty {
+  border-color: rgba(235, 239, 244, .10);
+  background: rgba(255, 255, 255, .025);
+}
+
+.template-run-monitor-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 8px;
+  align-items: start;
+}
+
+.template-run-monitor-head span,
+.template-run-monitor-current small {
+  display: block;
+  color: rgba(245, 245, 242, .50);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.template-run-monitor-head strong,
+.template-run-monitor-current strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: rgba(245, 245, 242, .92);
+  font-size: 13px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-run-monitor-head em {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: rgba(245, 245, 242, .80);
+  background: rgba(255, 255, 255, .07);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.template-run-monitor-head em.is-running,
+.template-run-monitor-head em.is-review {
+  color: #bad7ff;
+  background: rgba(96, 165, 250, .18);
+}
+
+.template-run-monitor-head em.is-done {
+  color: #9ff7e8;
+  background: rgba(94, 234, 212, .18);
+}
+
+.template-run-monitor-head em.is-failed,
+.template-run-monitor-head em.is-cancelled {
+  color: #ffb5b5;
+  background: rgba(255, 119, 119, .18);
+}
+
+.template-run-monitor p {
+  margin: 0;
+  color: rgba(245, 245, 242, .54);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.template-run-monitor-progress {
+  position: relative;
+  height: 16px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .07);
+}
+
+.template-run-monitor-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #5eead4, #60a5fa);
+}
+
+.template-run-monitor-progress > strong {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, .92);
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 950;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .85);
+}
+
+.template-run-monitor-current {
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, .18);
+}
+
+.template-run-monitor-current span {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: rgba(245, 245, 242, .52);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-run-monitor-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
+  gap: 6px;
+}
+
+.template-run-monitor-actions button {
+  min-height: 28px !important;
+  padding: 4px 7px !important;
+  font-size: 11px;
+}
+
+.template-run-monitor-actions .danger-inline {
+  color: #ffb5b5 !important;
+  border-color: rgba(255, 119, 119, .25) !important;
+  background: rgba(255, 119, 119, .08) !important;
+}
+
 .template-run-note {
   margin-top: 8px;
   color: rgba(245, 245, 242, .52);
