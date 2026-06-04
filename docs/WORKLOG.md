@@ -575,3 +575,19 @@
   - `http://127.0.0.1:7863/?v=20260604-v3-38` 및 `/static/app.js?v=20260604-v3-38` 서빙 확인.
   - localhost `/api/video-template-blocks` 저장 후 `/api/video-template-blocks/delete`로 테스트 블록 삭제 확인.
 - 백업: `backups/before-form-to-template-block-20260604-125921`
+
+### 템플릿 산출물 라이브러리 분리
+- 목표: 템플릿 실행으로 생성된 이미지/영상/최종 병합 결과를 라이브러리의 별도 `템플릿` 분류에서 확인할 수 있게 한다.
+- 변경:
+  - `static/app.js`: 템플릿 컷 실행 요청과 최종 병합 요청에 `template_result`, 템플릿 ID/제목, 컷 ID/제목/방식, 단계 정보를 함께 전송하도록 추가했다.
+  - `app.py`: 생성/편집/이미지→영상/공식 연장/프레임 연장/영상 편집 저장 시 템플릿 요청 메타데이터를 결과물 `extra`에 보존하도록 추가했다.
+  - `templates/index.html`: 라이브러리 상단 필터에 `템플릿` 항목을 추가했다.
+  - `static/app.js`: 라이브러리 필터에서 템플릿 결과물을 기본 전체 목록에서 분리하고, `템플릿` 필터 선택 시에만 모아 보여주도록 변경했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260604-v3-39` / `webgui-shell-v3-39`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-39` 및 `/static/app.js?v=20260604-v3-39` 서빙 확인.
+  - `template_request_metadata()`가 템플릿 결과 플래그와 컷 방식을 정상 추출하는지 확인.
+- 백업: `backups/before-template-library-filter-20260604-131006`

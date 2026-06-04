@@ -214,8 +214,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-38";
-const appShellCacheName = "webgui-shell-v3-38";
+const appStaticVersion = "20260604-v3-39";
+const appShellCacheName = "webgui-shell-v3-39";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1379,19 +1379,48 @@ function appendTemplateImageReferences(body, paths) {
   selected.forEach(path => appendTemplateImageReference(body, path));
 }
 
-function buildTemplateShotRequest(payload, shot, previous, slotState = templateRunState.slots) {
+function templateRequestMetadata(payload, shot = {}, index = -1) {
+  return {
+    template_result: "true",
+    generation_origin: "template",
+    template_id: payload?.id || "",
+    template_title: payload?.title || "",
+    template_shot_id: shot.id || "",
+    template_shot_title: shot.title || "",
+    template_shot_method: shot.method || "",
+    template_step_index: index >= 0 ? String(index + 1) : "",
+    template_total_steps: String(payload?.shots?.length || ""),
+  };
+}
+
+function appendTemplateRequestMetadata(target, payload, shot = {}, index = -1) {
+  const metadata = templateRequestMetadata(payload, shot, index);
+  if (target instanceof FormData) {
+    Object.entries(metadata).forEach(([key, value]) => target.set(key, value));
+    return target;
+  }
+  Object.assign(target, metadata);
+  return target;
+}
+
+function buildTemplateShotRequest(payload, shot, previous, slotState = templateRunState.slots, index = -1) {
   const prompt = templateShotPromptText(payload, shot, { includeReferenceText: false });
   const duration = String(shot.duration || payload.settings.default_shot_duration || 6);
   const aspectRatio = payload.settings.aspect_ratio || "9:16";
   const resolution = payload.settings.resolution || "720p";
   if (shot.method === "image") {
+    const body = appendTemplateRequestMetadata({
+      prompt,
+      aspect_ratio: aspectRatio,
+      image_model: shot.image_model || "",
+    }, payload, shot, index);
     return {
       endpoint: "/api/t2i",
       prompt,
       options: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, aspect_ratio: aspectRatio, image_model: shot.image_model || "" }),
+        body: JSON.stringify(body),
       },
     };
   }
@@ -1404,6 +1433,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     if (shot.image_model) body.set("image_model", shot.image_model);
     body.set("edit_input_mode", "multi");
     appendTemplateImageReferences(body, templateImageSourcePaths(shot, previous, slotState, 3));
+    appendTemplateRequestMetadata(body, payload, shot, index);
     return { endpoint: "/api/i2i", prompt, options: { method: "POST", body } };
   }
   if (shot.method === "i2v") {
@@ -1417,6 +1447,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     body.set("resolution", resolution);
     if (shot.video_model) body.set("video_model", shot.video_model);
     appendTemplateImageReferences(body, templateImageSourcePaths(referenceShot, previous, slotState, referenceLimit));
+    appendTemplateRequestMetadata(body, payload, shot, index);
     return { endpoint: "/api/i2v", prompt, options: { method: "POST", body } };
   }
   if (shot.method === "official" || shot.method === "frame") {
@@ -1431,6 +1462,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     if (shot.video_model) body.set("video_model", shot.video_model);
     body.set("library_video_path", source);
     if (shot.method === "frame") body.set("mute", "false");
+    appendTemplateRequestMetadata(body, payload, shot, index);
     return {
       endpoint: shot.method === "official" ? "/api/v2v-extend" : "/api/v2v-frame-extend",
       prompt,
@@ -1573,6 +1605,11 @@ async function mergeTemplateVideos(payload, sourceItems) {
   body.set("fade_in", String(settings.fade_in));
   body.set("fade_out", String(settings.fade_out));
   body.set("mute", "false");
+  appendTemplateRequestMetadata(body, payload, {
+    id: "",
+    title: "최종 병합",
+    method: "final_merge",
+  }, payload.shots?.length || -1);
   videos.forEach(item => {
     body.append("video_source_order", `library:${item.file_path}`);
     body.append("library_video_paths", item.file_path);
@@ -1713,7 +1750,7 @@ async function runTemplateJob(job) {
       let accepted = false;
       while (!accepted) {
         if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
-        const request = buildTemplateShotRequest(payload, shot, previousBeforeShot, slotState);
+        const request = buildTemplateShotRequest(payload, shot, previousBeforeShot, slotState, index);
         appendTemplateRunLog("요청 시작", `${label} · ${request.endpoint}`);
         progress.setCount(index, payload.shots.length, 0, 1);
         updateJob(job, {
@@ -4469,6 +4506,7 @@ function syncLibraryPreferenceControls() {
 function libraryOperation(item) {
   const extra = item.extra || {};
   if (extra.generation_type) return extra.generation_type;
+  if (extra.template_result) return "template";
   if (item.kind === "video" && /edit/i.test(item.model || "")) return "video_edit";
   if (item.kind === "video") return "video";
   if (item.kind === "edit") return "image_edit";
@@ -4479,6 +4517,11 @@ function isMangaOperation(value) {
   return ["manga_live_translate", "manga_panel_realize"].includes(value);
 }
 
+function isTemplateLibraryItem(item) {
+  const extra = item.extra || {};
+  return Boolean(extra.template_result || extra.generation_origin === "template");
+}
+
 function libraryOperationLabel(value) {
   return ({
     image_generation: "이미지 생성",
@@ -4486,6 +4529,7 @@ function libraryOperationLabel(value) {
     i2v: "이미지→영상",
     v2v_extend: "영상 연장",
     video_edit: "영상 편집",
+    template: "템플릿",
     manga_live_translate: "망가 실사화·역식",
     manga_panel_realize: "컷 분리 실사화",
     video: "미분류 영상",
@@ -4512,6 +4556,9 @@ function itemSearchText(item) {
     item.kind,
     libraryOperationLabel(libraryOperation(item)),
     extra.generation_type,
+    extra.template_title,
+    extra.template_shot_title,
+    extra.template_shot_method,
     extra.batch_mode,
     extra.source_original_name,
     extra.source_page_name,
@@ -4559,8 +4606,10 @@ function applyLibraryFilters(items) {
   const filtered = items.filter(item => {
     const operation = libraryOperation(item);
     const mangaItem = isMangaOperation(operation);
+    const templateItem = isTemplateLibraryItem(item);
     if (libraryFilter === "manga" && !mangaItem) return false;
-    if (libraryFilter !== "manga" && libraryOperationFilter === "all" && mangaItem) return false;
+    if (libraryFilter === "template" && !templateItem) return false;
+    if (!["manga", "template"].includes(libraryFilter) && libraryOperationFilter === "all" && (mangaItem || templateItem)) return false;
     if (libraryFilter === "image" && item.kind === "video") return false;
     if (libraryFilter === "video" && item.kind !== "video") return false;
     if (libraryFilter === "favorite" && !item.favorite) return false;

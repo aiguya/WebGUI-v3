@@ -3266,6 +3266,26 @@ def prompt_planner_request_metadata(source, effective_prompt):
     }
 
 
+def template_request_metadata(source):
+    getter = source.get if isinstance(source, dict) else source.get
+    template_result = checked(getter("template_result")) or (getter("generation_origin") or "").strip() == "template"
+    template_id = (getter("template_id") or "").strip()
+    template_title = (getter("template_title") or "").strip()
+    if not template_result and not template_id and not template_title:
+        return {}
+    return {
+        "template_result": True,
+        "generation_origin": "template",
+        "template_id": template_id[:160],
+        "template_title": template_title[:240],
+        "template_shot_id": (getter("template_shot_id") or "").strip()[:160],
+        "template_shot_title": (getter("template_shot_title") or "").strip()[:240],
+        "template_shot_method": (getter("template_shot_method") or "").strip()[:80],
+        "template_step_index": (getter("template_step_index") or "").strip()[:40],
+        "template_total_steps": (getter("template_total_steps") or "").strip()[:40],
+    }
+
+
 def prompt_planner_base_and_headers():
     cfg = config()
     hermes_base = (cfg.get("hermes_base_url") or "").strip().rstrip("/")
@@ -4322,6 +4342,7 @@ def t2i():
         else:
             path, extra = mock_svg(media_path("image"), "Text to Image", prompt), {"aspect_ratio": aspect_ratio, "image_resolution": image_resolution, "image_model": image_model, "image_provider": image_provider}
         extra.update(prompt_planner_request_metadata(payload, prompt))
+        extra.update(template_request_metadata(payload))
         item = add_metadata("image", prompt, image_model, path, extra=extra)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:
@@ -4392,6 +4413,7 @@ def i2i():
             "generation_type": "manga_live_translate" if manga_edit else extra.get("generation_type"),
         })
         extra.update(prompt_planner_request_metadata(request.form, prompt))
+        extra.update(template_request_metadata(request.form))
         item = add_metadata("edit", prompt, image_model, path, source_path=sources[0], extra=extra)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:
@@ -5081,6 +5103,7 @@ def i2v():
             "video_model": video_model,
         })
         extra.update(prompt_planner_request_metadata(request.form, prompt))
+        extra.update(template_request_metadata(request.form))
         item = add_metadata("video", prompt, video_model, path, source_path=source, extra=extra)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:
@@ -5128,6 +5151,7 @@ def video_edit():
             clip_settings=clip_settings,
         )
         extra["source_video_ids"] = [item.get("id") if item else None for item in source_items]
+        extra.update(template_request_metadata(request.form))
         item = add_metadata("video", title, "ffmpeg-video-editor", path, source_path=sources[0], extra=extra)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:
@@ -5249,6 +5273,7 @@ def handle_v2v_extend(strategy):
             "video_model": video_model,
         })
         extra.update(prompt_planner_request_metadata(request.form, prompt))
+        extra.update(template_request_metadata(request.form))
         item = add_metadata("video", prompt, video_model, path, source_path=prepared_frame, extra=extra)
         return jsonify({"ok": True, "item": item, "frame_path": public_path(prepared_frame) if prepared_frame else None, "upscaled": upscaled})
     except ValueError as exc:
