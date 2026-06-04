@@ -97,6 +97,13 @@ const repeatableQueueEndpoints = new Set([
   "/api/v2v-extend",
   "/api/v2v-frame-extend",
 ]);
+const formTemplateBlockConfigs = {
+  "/api/t2i": { method: "image", label: "이미지 생성", title: "이미지 생성 블록" },
+  "/api/i2i": { method: "edit", label: "이미지 편집", title: "이미지 편집 블록" },
+  "/api/i2v": { method: "i2v", label: "이미지→영상", title: "이미지→영상 블록" },
+  "/api/v2v-extend": { method: "official", label: "공식 연장", title: "공식 연장 블록" },
+  "/api/v2v-frame-extend": { method: "frame", label: "프레임 연장", title: "프레임 연장 블록" },
+};
 const batchMaxImages = 500;
 let pendingErrorLog = null;
 let lastQuotaRefresh = 0;
@@ -207,8 +214,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-37";
-const appShellCacheName = "webgui-shell-v3-37";
+const appStaticVersion = "20260604-v3-38";
+const appShellCacheName = "webgui-shell-v3-38";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -943,6 +950,114 @@ function installQueueCountControl(form) {
     select.appendChild(option);
   }
   submitButton.insertAdjacentElement("beforebegin", box);
+}
+
+function formTemplateBlockConfig(form) {
+  return formTemplateBlockConfigs[form.dataset.endpoint] || null;
+}
+
+function installFormTemplateBlockControl(form) {
+  if (!formTemplateBlockConfig(form) || form.querySelector("[data-save-form-template-block]")) return;
+  const submitButton = form.querySelector("button[type='submit']");
+  if (!submitButton) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "secondary form-template-block-save";
+  button.dataset.saveFormTemplateBlock = "true";
+  button.textContent = "블록 저장";
+  submitButton.insertAdjacentElement("beforebegin", button);
+}
+
+function formPromptValue(form) {
+  return (form.querySelector("[name='prompt']")?.value || "").trim();
+}
+
+function compactText(value, maxLength = 36) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text;
+}
+
+function numericFormValue(form, name, fallback, min = 1, max = 15) {
+  const parsed = Number.parseFloat(form.querySelector(`[name='${name}']`)?.value || "");
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.max(min, Math.min(max, value));
+}
+
+function checkedNote(form, name, label) {
+  return form.querySelector(`[name='${name}']`)?.checked ? label : "";
+}
+
+function formTemplateBlockNotes(form) {
+  const notes = [];
+  const aspect = form.querySelector("[name='aspect_ratio']")?.value || "";
+  const imageResolution = form.querySelector("[name='image_resolution']")?.value || "";
+  const videoResolution = form.querySelector("[name='resolution']")?.value || "";
+  const editInputMode = form.querySelector("[name='edit_input_mode']")?.value || "";
+  if (aspect) notes.push(`결과 비율: ${aspect}`);
+  if (imageResolution) notes.push(`이미지 해상도: ${imageResolution}`);
+  if (videoResolution) notes.push(`영상 해상도: ${videoResolution}`);
+  if (editInputMode) notes.push(`다중 이미지 처리: ${editInputMode}`);
+  [
+    checkedNote(form, "upscale_source", "참조 이미지 2K 업스케일"),
+    checkedNote(form, "upscale_frame", "마지막 프레임 2K 업스케일"),
+    checkedNote(form, "mute", "음소거"),
+    checkedNote(form, "manga_edit", "망가 작업으로 분류"),
+  ].filter(Boolean).forEach(note => notes.push(note));
+  return notes.join("\n");
+}
+
+function formTemplateBlockPayload(form) {
+  const config = formTemplateBlockConfig(form);
+  if (!config) throw new Error("이 작업은 템플릿 블록으로 저장할 수 없습니다.");
+  const prompt = formPromptValue(form);
+  if (!prompt) throw new Error("블록으로 저장할 프롬프트를 입력해 주세요.");
+  const promptTitle = compactText(prompt, 38);
+  const title = promptTitle ? `${config.title} - ${promptTitle}` : config.title;
+  const isImageMethod = config.method === "image" || config.method === "edit";
+  const isVideoMethod = !isImageMethod;
+  return {
+    id: "",
+    title,
+    method: config.method,
+    image_model: isImageMethod ? form.querySelector("[name='image_model']")?.value || "" : "",
+    video_model: isVideoMethod ? form.querySelector("[name='video_model']")?.value || "" : "",
+    duration: isVideoMethod ? numericFormValue(form, "duration", 6, 1, 15) : 6,
+    reference_slot: "",
+    reference_slots: [],
+    output_slot: "",
+    transition: "cut",
+    prompt,
+    camera: "",
+    retry_prompt: "",
+    notes: formTemplateBlockNotes(form),
+    tags: [config.label],
+    favorite: false,
+    source_template_id: "",
+    source_template_title: "",
+    source_shot_id: "",
+  };
+}
+
+async function saveFormTemplateBlock(form, button) {
+  const previousDisabled = button?.disabled;
+  const previousText = button?.textContent;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "저장 중";
+  }
+  try {
+    const data = await postJson("/api/video-template-blocks", formTemplateBlockPayload(form));
+    const existing = templateBlocks.findIndex(item => item.id === data.item.id);
+    if (existing >= 0) templateBlocks[existing] = data.item;
+    else templateBlocks.unshift(data.item);
+    renderTemplateBlocks();
+    showToast("현재 설정을 템플릿 블록으로 저장했습니다.");
+  } finally {
+    if (button) {
+      button.disabled = previousDisabled;
+      button.textContent = previousText || "블록 저장";
+    }
+  }
 }
 
 function queueCopyCount(form) {
@@ -1719,9 +1834,13 @@ async function runTemplateJob(job) {
 document.querySelectorAll("form[data-endpoint]").forEach(form => {
   installPromptPlannerControls(form);
   installQueueCountControl(form);
+  installFormTemplateBlockControl(form);
   updateGrokResolutionControls(form);
   form.querySelector("[name='image_model']")?.addEventListener("change", () => updateGrokResolutionControls(form));
   form.querySelector("[name='video_model']")?.addEventListener("change", () => enforceI2vReferenceLimit(form, true));
+  form.querySelector("[data-save-form-template-block]")?.addEventListener("click", event => {
+    saveFormTemplateBlock(form, event.currentTarget).catch(error => showToast(error.message, true));
+  });
   form.addEventListener("submit", event => {
     event.preventDefault();
     enqueueForm(form);

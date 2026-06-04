@@ -559,3 +559,19 @@
   - 이미지 생성/편집 프롬프트 조립에서 전역 프롬프트 제외 로직 확인.
   - `http://127.0.0.1:7863/?v=20260604-v3-37` 및 `/static/app.js?v=20260604-v3-37` 서빙 확인.
 - 백업: `backups/before-template-image-edit-no-global-20260604-114954`
+
+### 일반 기능 탭에서 템플릿 블록 저장
+- 목표: 템플릿 편집 화면 안에서만 블록을 만들 수 있던 흐름을 확장해, 일반 이미지 생성/편집/이미지→영상/공식 연장/프레임 연장 탭의 현재 설정을 바로 재사용 가능한 템플릿 블록으로 저장할 수 있게 한다.
+- 변경:
+  - `static/app.js`: 대상 endpoint를 템플릿 블록 방식(`image`, `edit`, `i2v`, `official`, `frame`)으로 매핑하는 설정을 추가했다.
+  - `static/app.js`: 일반 폼의 프롬프트, 모델, 길이, 해상도/비율, 업스케일/음소거 등 보조 설정을 템플릿 블록 payload로 변환하는 저장 헬퍼를 추가했다.
+  - `static/app.js`: 대상 일반 기능 탭에 `블록 저장` 보조 버튼을 자동 삽입하고 `/api/video-template-blocks`에 저장하도록 연결했다.
+  - `static/styles.css`: 블록 저장 버튼을 기존 보조 버튼 톤으로 맞추고 제출 버튼과 간격을 정리했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260604-v3-38` / `webgui-shell-v3-38`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-38` 및 `/static/app.js?v=20260604-v3-38` 서빙 확인.
+  - localhost `/api/video-template-blocks` 저장 후 `/api/video-template-blocks/delete`로 테스트 블록 삭제 확인.
+- 백업: `backups/before-form-to-template-block-20260604-125921`
