@@ -2,6 +2,8 @@ const tabs = document.querySelectorAll(".tab");
 const panels = document.querySelectorAll(".panel");
 const toast = document.querySelector("#toast");
 const libraryPrefsKey = "webgork.libraryPrefs.v1";
+const templateRunSessionsKey = "webgork.templateRunSessions.v1";
+const maxTemplateRunSessions = 80;
 
 function loadLibraryPrefs() {
   try {
@@ -80,6 +82,7 @@ const templateRunState = {
   slots: {},
   mode: "auto",
 };
+let templateRunSessions = loadTemplateRunSessions();
 let pickerVisibleCount = 80;
 let pickerPageSize = 80;
 const multiImageSources = new WeakMap();
@@ -214,8 +217,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-39";
-const appShellCacheName = "webgui-shell-v3-39";
+const appStaticVersion = "20260604-v3-40";
+const appShellCacheName = "webgui-shell-v3-40";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1692,6 +1695,295 @@ function selectedTemplateRunMode() {
   return mode;
 }
 
+function templateSafeClone(value, fallback = null) {
+  try {
+    return JSON.parse(JSON.stringify(value ?? fallback));
+  } catch {
+    return fallback;
+  }
+}
+
+function templateRunId() {
+  return crypto.randomUUID ? crypto.randomUUID() : `template-run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeTemplateRunSession(raw = {}) {
+  const payload = raw.payload && typeof raw.payload === "object" ? raw.payload : {};
+  const shots = Array.isArray(payload.shots) ? payload.shots : [];
+  const now = new Date().toISOString();
+  const steps = shots.map((shot, index) => {
+    const previous = Array.isArray(raw.steps) ? raw.steps[index] || {} : {};
+    return {
+      index,
+      shot_id: shot.id || previous.shot_id || "",
+      title: shot.title || previous.title || `컷 ${index + 1}`,
+      method: shot.method || previous.method || "i2v",
+      status: previous.status || "pending",
+      prompt: previous.prompt || "",
+      items: Array.isArray(previous.items) ? previous.items : [],
+      error: previous.error || "",
+      started_at: previous.started_at || "",
+      completed_at: previous.completed_at || "",
+    };
+  });
+  const status = raw.status || (steps.some(step => step.status === "failed") ? "failed" : "queued");
+  return {
+    id: raw.id || templateRunId(),
+    template_id: raw.template_id || payload.id || "",
+    template_title: raw.template_title || payload.title || "템플릿",
+    created_at: raw.created_at || now,
+    updated_at: raw.updated_at || now,
+    mode: raw.mode === "manual" ? "manual" : "auto",
+    status,
+    current_index: Math.max(0, Math.min(shots.length, Number(raw.current_index) || 0)),
+    resume_from: Math.max(0, Math.min(shots.length, Number(raw.resume_from) || 0)),
+    payload,
+    initial_slot_state: raw.initial_slot_state && typeof raw.initial_slot_state === "object" ? raw.initial_slot_state : {},
+    slot_state: raw.slot_state && typeof raw.slot_state === "object" ? raw.slot_state : {},
+    previous: raw.previous && typeof raw.previous === "object" ? raw.previous : { lastImagePath: "", lastVideoPath: "" },
+    items: Array.isArray(raw.items) ? raw.items : [],
+    assembly_videos: Array.isArray(raw.assembly_videos) ? raw.assembly_videos : [],
+    final_item: raw.final_item || null,
+    steps,
+  };
+}
+
+function loadTemplateRunSessions() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(templateRunSessionsKey) || "[]");
+    return Array.isArray(raw) ? raw.map(normalizeTemplateRunSession) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistTemplateRunSessions() {
+  try {
+    templateRunSessions = templateRunSessions
+      .map(normalizeTemplateRunSession)
+      .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
+      .slice(0, maxTemplateRunSessions);
+    localStorage.setItem(templateRunSessionsKey, JSON.stringify(templateRunSessions));
+  } catch {
+    // Checkpoints are a convenience layer; generation continues even if storage is unavailable.
+  }
+}
+
+function upsertTemplateRunSession(session) {
+  const normalized = normalizeTemplateRunSession({ ...session, updated_at: new Date().toISOString() });
+  const index = templateRunSessions.findIndex(item => item.id === normalized.id);
+  if (index >= 0) templateRunSessions[index] = normalized;
+  else templateRunSessions.unshift(normalized);
+  persistTemplateRunSessions();
+  renderTemplateRunSessions();
+  return normalized;
+}
+
+function createTemplateRunSession(payload, slotState, mode) {
+  return upsertTemplateRunSession({
+    id: templateRunId(),
+    template_id: payload.id || "",
+    template_title: payload.title || "템플릿",
+    mode,
+    status: "queued",
+    current_index: 0,
+    resume_from: 0,
+    payload: templateSafeClone(payload, {}),
+    initial_slot_state: templateSafeClone(slotState, {}),
+    slot_state: templateSafeClone(slotState, {}),
+    previous: { lastImagePath: "", lastVideoPath: "" },
+    items: [],
+    assembly_videos: [],
+  });
+}
+
+function templateRunSessionById(id) {
+  return templateRunSessions.find(session => session.id === id) || null;
+}
+
+function updateTemplateRunSession(id, patch = {}) {
+  const session = templateRunSessionById(id);
+  if (!session) return null;
+  return upsertTemplateRunSession({ ...session, ...patch });
+}
+
+function updateTemplateRunStep(id, index, patch = {}) {
+  const session = templateRunSessionById(id);
+  if (!session || !session.steps[index]) return null;
+  const steps = session.steps.map((step, stepIndex) => stepIndex === index ? { ...step, ...patch } : step);
+  return upsertTemplateRunSession({ ...session, steps });
+}
+
+function templateRunSessionProgress(session) {
+  const total = session.steps.length || 0;
+  const done = session.steps.filter(step => step.status === "done").length;
+  const failed = session.steps.filter(step => step.status === "failed").length;
+  const review = session.steps.filter(step => step.status === "review").length;
+  return { total, done, failed, review, percent: total ? Math.round((done / total) * 100) : 0 };
+}
+
+function templateRunStatusLabel(status) {
+  return ({
+    queued: "대기",
+    running: "진행 중",
+    review: "확인 대기",
+    done: "완료",
+    failed: "실패",
+    cancelled: "중단",
+  })[status] || status || "대기";
+}
+
+function templateRunStepStatusLabel(status) {
+  return ({
+    pending: "대기",
+    running: "진행",
+    review: "확인",
+    done: "완료",
+    failed: "실패",
+    cancelled: "중단",
+  })[status] || status || "대기";
+}
+
+function templateRunOutputSlotFromItems(payload, shot, produced, slotState) {
+  const key = String(shot.output_slot || "").trim();
+  if (!key || !["image", "edit"].includes(shot.method)) return null;
+  const item = (produced || []).find(entry => entry?.file_path && entry.kind !== "video");
+  if (!item) return null;
+  const slot = {
+    path: item.file_path,
+    kind: "image",
+    label: shot.title || item.prompt || key,
+    source: "template-result",
+    source_template_id: payload?.id || "",
+    source_shot_id: shot.id || "",
+    updated_at: new Date().toISOString(),
+  };
+  slotState[key] = slot;
+  return slot;
+}
+
+function rebuildTemplateRunSessionState(session, startIndex) {
+  const payload = session.payload || {};
+  const slotState = templateSafeClone(session.initial_slot_state || {}, {});
+  const previous = { lastImagePath: "", lastVideoPath: "" };
+  const items = [];
+  const assemblyVideos = [];
+  const steps = session.steps || [];
+  for (let index = 0; index < Math.min(startIndex, steps.length); index += 1) {
+    const step = steps[index];
+    if (step.status !== "done" || !step.items?.length) break;
+    const shot = payload.shots?.[index] || {};
+    const produced = templateSafeClone(step.items, []);
+    items.push(...produced);
+    updateTemplatePreviousResult(previous, { items: produced });
+    updateTemplateAssemblyVideos(assemblyVideos, shot, produced);
+    templateRunOutputSlotFromItems(payload, shot, produced, slotState);
+  }
+  return { slotState, previous, items, assemblyVideos };
+}
+
+function prepareTemplateRunSessionFromIndex(sessionId, startIndex) {
+  const session = templateRunSessionById(sessionId);
+  if (!session) throw new Error("재실행할 템플릿 체크포인트를 찾을 수 없습니다.");
+  const safeIndex = Math.max(0, Math.min(Number(startIndex) || 0, session.steps.length - 1));
+  const rebuilt = rebuildTemplateRunSessionState(session, safeIndex);
+  const steps = session.steps.map((step, index) => {
+    if (index < safeIndex) return step;
+    return {
+      ...step,
+      status: "pending",
+      prompt: "",
+      items: [],
+      error: "",
+      started_at: "",
+      completed_at: "",
+    };
+  });
+  return upsertTemplateRunSession({
+    ...session,
+    status: "queued",
+    current_index: safeIndex,
+    resume_from: safeIndex,
+    steps,
+    slot_state: rebuilt.slotState,
+    previous: rebuilt.previous,
+    items: rebuilt.items,
+    assembly_videos: rebuilt.assemblyVideos,
+    final_item: null,
+  });
+}
+
+function renderTemplateRunSessions() {
+  const list = document.querySelector("#templateRunSessions");
+  if (!list) return;
+  const current = templatePayloadFromEditor();
+  const sessions = templateRunSessions
+    .filter(session => {
+      if (current.id && session.template_id) return session.template_id === current.id;
+      return session.template_title === current.title || !current.title;
+    })
+    .slice(0, 8);
+  if (!sessions.length) {
+    list.innerHTML = `<p class="template-empty">저장된 실행 체크포인트가 없습니다.</p>`;
+    return;
+  }
+  list.innerHTML = sessions.map(session => {
+    const progress = templateRunSessionProgress(session);
+    const updated = session.updated_at ? new Date(session.updated_at).toLocaleString("ko-KR", { hour12: false }) : "";
+    return `
+      <article class="template-run-session" data-template-run-session="${escapeHtml(session.id)}">
+        <header>
+          <div>
+            <strong>${escapeHtml(session.template_title || "템플릿")}</strong>
+            <small>${escapeHtml(templateRunStatusLabel(session.status))} · ${progress.done}/${progress.total} 완료${updated ? ` · ${escapeHtml(updated)}` : ""}</small>
+          </div>
+          <button type="button" class="secondary compact-btn" data-template-run-delete>삭제</button>
+        </header>
+        <div class="template-run-session-bar"><span style="width:${progress.percent}%"></span></div>
+        <div class="template-run-step-list">
+          ${session.steps.map((step, index) => `
+            <button type="button" class="template-run-step is-${escapeHtml(step.status || "pending")}" data-template-rerun-from="${index}">
+              <span>${index + 1}</span>
+              <strong>${escapeHtml(step.title || `컷 ${index + 1}`)}</strong>
+              <small>${escapeHtml(templateRunStepStatusLabel(step.status))}</small>
+            </button>
+          `).join("")}
+        </div>
+      </article>`;
+  }).join("");
+}
+
+function enqueueTemplateRunFromCheckpoint(sessionId, startIndex) {
+  const selectedMode = selectedTemplateRunMode();
+  const session = prepareTemplateRunSessionFromIndex(sessionId, startIndex);
+  const rebuilt = rebuildTemplateRunSessionState(session, Number(startIndex) || 0);
+  const job = {
+    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+    type: `템플릿 재실행 · ${session.template_title} · ${Number(startIndex) + 1}번부터`,
+    shortType: "템플릿",
+    status: "queued",
+    endpoint: "template-run",
+    previewSelector: "",
+    templateRun: {
+      payload: templateSafeClone(session.payload, {}),
+      slotState: rebuilt.slotState,
+      mode: selectedMode || session.mode,
+      sessionId: session.id,
+      resumeFrom: Number(startIndex) || 0,
+      baseItems: rebuilt.items,
+      baseAssemblyVideos: rebuilt.assemblyVideos,
+      basePrevious: rebuilt.previous,
+    },
+    prompt: `${session.steps.length}개 컷 중 ${Number(startIndex) + 1}번부터 재실행`,
+    result: { ok: true, items: rebuilt.items },
+    error: null,
+  };
+  jobQueue.unshift(job);
+  renderQueue();
+  processQueue();
+  showToast(`${Number(startIndex) + 1}번 컷부터 템플릿을 다시 실행합니다.`);
+}
+
 function enqueueTemplateRun() {
   const selectedMode = selectedTemplateRunMode();
   const payload = templateRuntimePayload();
@@ -1703,6 +1995,8 @@ function enqueueTemplateRun() {
     showToast("실행할 컷 블록이 없습니다.", true);
     return;
   }
+  const initialSlotState = templateSafeClone(templateRunState.slots, {});
+  const session = createTemplateRunSession(payload, initialSlotState, selectedMode);
   const job = {
     id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
     type: `템플릿 · ${payload.title}`,
@@ -1712,8 +2006,13 @@ function enqueueTemplateRun() {
     previewSelector: "",
     templateRun: {
       payload,
-      slotState: JSON.parse(JSON.stringify(templateRunState.slots)),
+      slotState: initialSlotState,
       mode: selectedMode,
+      sessionId: session.id,
+      resumeFrom: 0,
+      baseItems: [],
+      baseAssemblyVideos: [],
+      basePrevious: { lastImagePath: "", lastVideoPath: "" },
     },
     prompt: `${payload.shots.length}개 컷 순차 실행 · ${selectedMode === "manual" ? "수동 확인" : "자동"}`,
     result: null,
@@ -1731,17 +2030,29 @@ async function runTemplateJob(job) {
   const progress = createProgress(document.querySelector("#templateRunner"), job.type);
   const payload = job.templateRun.payload;
   const slotState = job.templateRun.slotState || {};
-  const previous = { lastImagePath: "", lastVideoPath: "" };
-  const items = [];
-  const assemblyVideos = [];
+  const previous = { ...(job.templateRun.basePrevious || { lastImagePath: "", lastVideoPath: "" }) };
+  const items = templateSafeClone(job.templateRun.baseItems || [], []);
+  const assemblyVideos = templateSafeClone(job.templateRun.baseAssemblyVideos || [], []);
+  const resumeFrom = Math.max(0, Math.min(Number(job.templateRun.resumeFrom) || 0, payload.shots.length));
+  const sessionId = job.templateRun.sessionId;
   const manualMode = job.templateRun.mode === "manual" || payload.run_mode === "manual";
   resetTemplateRunConsole();
-  appendTemplateRunLog("템플릿 실행 시작", `${payload.shots.length}개 컷 · ${manualMode ? "수동 확인" : "자동"}`);
+  updateTemplateRunSession(sessionId, {
+    status: "running",
+    mode: manualMode ? "manual" : "auto",
+    current_index: resumeFrom,
+    resume_from: resumeFrom,
+    slot_state: templateSafeClone(slotState, {}),
+    previous: templateSafeClone(previous, {}),
+    items: templateSafeClone(items, []),
+    assembly_videos: templateSafeClone(assemblyVideos, []),
+  });
+  appendTemplateRunLog("템플릿 실행 시작", `${payload.shots.length}개 컷 · ${manualMode ? "수동 확인" : "자동"}${resumeFrom ? ` · ${resumeFrom + 1}번부터` : ""}`);
   updateJob(job, {
-    progressText: `템플릿 실행 시작 · ${manualMode ? "수동 확인" : "자동"}`,
+    progressText: `템플릿 실행 시작 · ${manualMode ? "수동 확인" : "자동"}${resumeFrom ? ` · ${resumeFrom + 1}번부터` : ""}`,
   });
   try {
-    for (let index = 0; index < payload.shots.length; index += 1) {
+    for (let index = resumeFrom; index < payload.shots.length; index += 1) {
       const shot = payload.shots[index];
       const label = `${index + 1}/${payload.shots.length} · ${shot.title || "컷"}`;
       const committedCount = items.length;
@@ -1752,6 +2063,21 @@ async function runTemplateJob(job) {
         if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
         const request = buildTemplateShotRequest(payload, shot, previousBeforeShot, slotState, index);
         appendTemplateRunLog("요청 시작", `${label} · ${request.endpoint}`);
+        updateTemplateRunStep(sessionId, index, {
+          status: "running",
+          prompt: request.prompt,
+          items: [],
+          error: "",
+          started_at: new Date().toISOString(),
+        });
+        updateTemplateRunSession(sessionId, {
+          status: "running",
+          current_index: index,
+          previous: templateSafeClone(previousBeforeShot, {}),
+          slot_state: templateSafeClone(slotState, {}),
+          items: templateSafeClone(items, []),
+          assembly_videos: templateSafeClone(assemblyVideos, []),
+        });
         progress.setCount(index, payload.shots.length, 0, 1);
         updateJob(job, {
           status: "running",
@@ -1766,6 +2092,20 @@ async function runTemplateJob(job) {
         } catch (error) {
           const friendly = friendlyFetchError(error, request.endpoint);
           appendTemplateRunLog("요청 실패", `${label} · ${friendly.message}`, "error");
+          updateTemplateRunStep(sessionId, index, {
+            status: "failed",
+            prompt: request.prompt,
+            error: friendly.message,
+            completed_at: new Date().toISOString(),
+          });
+          updateTemplateRunSession(sessionId, {
+            status: "review",
+            current_index: index,
+            previous: templateSafeClone(previousBeforeShot, {}),
+            slot_state: templateSafeClone(slotState, {}),
+            items: templateSafeClone(items, []),
+            assembly_videos: templateSafeClone(assemblyVideos, []),
+          });
           const retryPercent = Math.round((index / payload.shots.length) * 100);
           const action = await waitForTemplateRetry(job, {
             index,
@@ -1778,11 +2118,27 @@ async function runTemplateJob(job) {
           }, progress);
           if (action === "retry") {
             assemblyVideos.splice(0, assemblyVideos.length, ...assemblyBeforeShot);
+            updateTemplateRunStep(sessionId, index, {
+              status: "pending",
+              items: [],
+              error: "",
+              completed_at: "",
+            });
+            updateTemplateRunSession(sessionId, {
+              status: "running",
+              current_index: index,
+              previous: templateSafeClone(previousBeforeShot, {}),
+              slot_state: templateSafeClone(slotState, {}),
+              items: templateSafeClone(items, []),
+              assembly_videos: templateSafeClone(assemblyBeforeShot, []),
+            });
             showToast(`${shot.title || "컷"} 재시도`);
             appendTemplateRunLog("재시도 선택", label, "warn");
             continue;
           }
           updateJob(job, { status: "cancelled" });
+          updateTemplateRunStep(sessionId, index, { status: "cancelled", error: "사용자 중단", completed_at: new Date().toISOString() });
+          updateTemplateRunSession(sessionId, { status: "cancelled", current_index: index });
           throw new Error("템플릿 실행이 중단되었습니다.");
         }
         if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
@@ -1790,6 +2146,21 @@ async function runTemplateJob(job) {
         items.splice(committedCount, items.length - committedCount, ...produced);
         const nextPrevious = { ...previousBeforeShot };
         updateTemplatePreviousResult(nextPrevious, data);
+        updateTemplateRunStep(sessionId, index, {
+          status: manualMode ? "review" : "done",
+          prompt: request.prompt,
+          items: templateSafeClone(produced, []),
+          error: "",
+          completed_at: new Date().toISOString(),
+        });
+        updateTemplateRunSession(sessionId, {
+          status: manualMode ? "review" : "running",
+          current_index: index + 1,
+          items: templateSafeClone(items, []),
+          previous: templateSafeClone(nextPrevious, {}),
+          slot_state: templateSafeClone(slotState, {}),
+          assembly_videos: templateSafeClone(assemblyVideos, []),
+        });
         progress.setCount(index + 1, payload.shots.length, 0, 0);
         updateJob(job, {
           result: { ok: true, items: [...items] },
@@ -1810,6 +2181,8 @@ async function runTemplateJob(job) {
           }, progress);
           if (action === "cancel") {
             updateJob(job, { status: "cancelled" });
+            updateTemplateRunStep(sessionId, index, { status: "cancelled", error: "사용자 중단", completed_at: new Date().toISOString() });
+            updateTemplateRunSession(sessionId, { status: "cancelled", current_index: index });
             throw new Error("템플릿 실행이 취소되었습니다.");
           }
           if (action === "retry") {
@@ -1817,6 +2190,20 @@ async function runTemplateJob(job) {
             assemblyVideos.splice(0, assemblyVideos.length, ...assemblyBeforeShot);
             previous.lastImagePath = previousBeforeShot.lastImagePath;
             previous.lastVideoPath = previousBeforeShot.lastVideoPath;
+            updateTemplateRunStep(sessionId, index, {
+              status: "pending",
+              items: [],
+              error: "",
+              completed_at: "",
+            });
+            updateTemplateRunSession(sessionId, {
+              status: "running",
+              current_index: index,
+              previous: templateSafeClone(previousBeforeShot, {}),
+              slot_state: templateSafeClone(slotState, {}),
+              items: templateSafeClone(items, []),
+              assembly_videos: templateSafeClone(assemblyBeforeShot, []),
+            });
             showToast(`${shot.title || "컷"} 재시도`);
             appendTemplateRunLog("결과 확인 후 재시도", label, "warn");
             continue;
@@ -1831,6 +2218,21 @@ async function runTemplateJob(job) {
           appendTemplateRunLog("최종 조립 목록 추가", `${label} · 조립 클립 ${assemblyVideos.length}개`);
         }
         registerTemplateShotOutputSlot(payload, shot, produced, slotState);
+        updateTemplateRunStep(sessionId, index, {
+          status: "done",
+          prompt: request.prompt,
+          items: templateSafeClone(produced, []),
+          error: "",
+          completed_at: new Date().toISOString(),
+        });
+        updateTemplateRunSession(sessionId, {
+          status: "running",
+          current_index: index + 1,
+          previous: templateSafeClone(previous, {}),
+          slot_state: templateSafeClone(slotState, {}),
+          items: templateSafeClone(items, []),
+          assembly_videos: templateSafeClone(assemblyVideos, []),
+        });
         accepted = true;
       }
     }
@@ -1844,16 +2246,36 @@ async function runTemplateJob(job) {
       updateTemplatePreviousResult(previous, merged);
       loadLibrary();
       appendTemplateRunLog("최종 영상 병합 완료", merged.item.file_path || "");
+      updateTemplateRunSession(sessionId, {
+        final_item: merged.item,
+        items: templateSafeClone(items, []),
+        previous: templateSafeClone(previous, {}),
+      });
     }
     progress.set(100);
     appendTemplateRunLog("템플릿 실행 완료", `${items.length}개 결과`);
     updateJob(job, { status: "done", result: { ok: true, items }, progressPercent: 100, progressText: "템플릿 실행 완료" });
+    updateTemplateRunSession(sessionId, {
+      status: "done",
+      current_index: payload.shots.length,
+      items: templateSafeClone(items, []),
+      previous: templateSafeClone(previous, {}),
+      slot_state: templateSafeClone(slotState, {}),
+      assembly_videos: templateSafeClone(assemblyVideos, []),
+    });
     showToast("템플릿 실행이 완료되었습니다.");
   } catch (error) {
     const currentPercent = Number.isFinite(job.progressPercent) ? job.progressPercent : 0;
     progress.message(error.message, currentPercent, "error");
     updateJob(job, { status: job.status === "cancelled" ? "cancelled" : "failed", error: error.message, progressText: error.message });
     appendTemplateRunLog("템플릿 실행 오류", error.message, "error");
+    updateTemplateRunSession(sessionId, {
+      status: job.status === "cancelled" ? "cancelled" : "failed",
+      previous: templateSafeClone(previous, {}),
+      slot_state: templateSafeClone(slotState, {}),
+      items: templateSafeClone(items, []),
+      assembly_videos: templateSafeClone(assemblyVideos, []),
+    });
     showToast(error.message, true);
   } finally {
     if (job.status === "failed") {
@@ -3523,6 +3945,7 @@ function renderTemplateRunPanel() {
       ? `${payload.shots.length}개 컷을 ${templateRunState.mode === "manual" ? "수동 확인" : "자동"}으로 순차 실행합니다.${needsReference ? " 첫 컷에 필요한 이미지/영상 슬롯이 없으면 실행 시 오류가 납니다." : ""}`
       : "컷을 추가하면 실행할 수 있습니다.";
   }
+  renderTemplateRunSessions();
 }
 
 function renderTemplatePreview() {
@@ -4305,6 +4728,23 @@ document.querySelector("#copyTemplateRunPlan")?.addEventListener("click", async 
   }
   await navigator.clipboard.writeText(text);
   showToast("템플릿 실행 계획을 복사했습니다.");
+});
+
+document.querySelector("#templateRunSessions")?.addEventListener("click", event => {
+  const card = event.target.closest("[data-template-run-session]");
+  if (!card) return;
+  const id = card.dataset.templateRunSession;
+  if (event.target.closest("[data-template-run-delete]")) {
+    templateRunSessions = templateRunSessions.filter(session => session.id !== id);
+    persistTemplateRunSessions();
+    renderTemplateRunSessions();
+    showToast("템플릿 실행 체크포인트를 삭제했습니다.");
+    return;
+  }
+  const rerun = event.target.closest("[data-template-rerun-from]");
+  if (rerun) {
+    enqueueTemplateRunFromCheckpoint(id, Number.parseInt(rerun.dataset.templateRerunFrom || "0", 10));
+  }
 });
 
 document.querySelector("#templatePreview")?.addEventListener("click", event => {

@@ -591,3 +591,20 @@
   - `http://127.0.0.1:7863/?v=20260604-v3-39` 및 `/static/app.js?v=20260604-v3-39` 서빙 확인.
   - `template_request_metadata()`가 템플릿 결과 플래그와 컷 방식을 정상 추출하는지 확인.
 - 백업: `backups/before-template-library-filter-20260604-131006`
+
+### 템플릿 실행 체크포인트와 중간 블록 재실행
+- 목표: 템플릿 실행 중 각 컷의 진행 상태와 결과물을 저장하고, 저장된 실행 기록에서 원하는 컷부터 다시 큐에 넣어 실행할 수 있게 한다.
+- 변경:
+  - `static/app.js`: 템플릿 실행 세션을 `localStorage`의 `webgork.templateRunSessions.v1`에 저장하도록 추가했다. 세션에는 템플릿 payload, 초기 슬롯 상태, 현재 슬롯 상태, 컷별 상태, 결과물 경로, 최종 조립용 영상 목록이 포함된다.
+  - `static/app.js`: 템플릿 컷 요청 시작/실패/확인대기/완료/취소/최종 완료 시점마다 체크포인트가 갱신되도록 `runTemplateJob()`에 저장 지점을 추가했다.
+  - `static/app.js`: 저장된 세션의 특정 컷을 선택하면 이전 컷의 결과와 슬롯 상태를 재구성한 뒤 해당 컷부터 다시 큐에 등록하는 재실행 흐름을 추가했다.
+  - `templates/index.html`: 템플릿 실행 패널에 `실행 체크포인트` 영역을 추가했다.
+  - `static/styles.css`: 체크포인트 카드, 진행 바, 컷별 재실행 버튼 스타일을 추가했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260604-v3-40` / `webgui-shell-v3-40`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-40` 및 `/static/app.js?v=20260604-v3-40` 서빙 확인.
+  - 체크포인트 UI DOM과 `webgork.templateRunSessions.v1` 저장 로직, 특정 컷 재실행 함수가 새 정적 파일에 포함되는지 확인.
+- 백업: `backups/before-template-run-checkpoints-20260604-131851`
