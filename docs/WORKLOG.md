@@ -656,3 +656,20 @@
   - `/static/app.js?v=20260604-v3-43`에서 `templateProgressHost`, `floatingProgressHost`, 새 정적 버전 포함 확인.
   - `/static/styles.css?v=20260604-v3-43`에서 `floating-progress-host` 스타일 포함 확인.
 - 백업: `backups/before-template-floating-progress-20260604-143000`
+
+### 템플릿 슬롯 빠른 삽입과 콘솔 확대
+- 목표: 템플릿 컷 편집 중 우측 실행 준비 슬롯을 빠르게 참조하고, 작은 실행 콘솔을 큰 팝업으로 확인할 수 있게 한다.
+- 변경:
+  - `static/app.js`: 템플릿 컷의 참조/프롬프트 입력칸 포커스를 기억하고, 우측 실행 준비 슬롯을 Ctrl/Command+클릭하면 해당 입력칸에 슬롯 참조를 삽입하도록 추가했다.
+  - `static/app.js`: 참조 슬롯 입력칸에는 `slot_name` 그대로, 프롬프트/카메라/메모 입력칸에는 `{{slot_name}}` 형태로 삽입하도록 분기했다.
+  - `templates/index.html`, `static/app.js`, `static/styles.css`: 실행 콘솔 확대 팝업을 추가하고, 작은 콘솔 로그를 클릭하면 큰 로그 뷰어가 열리도록 연결했다.
+  - `static/styles.css`: 우측 실행 준비 슬롯 hover와 콘솔 확대 팝업 스타일을 추가했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260604-v3-44` / `webgui-shell-v3-44`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-44`에서 새 HTML과 콘솔 뷰어 DOM 서빙 확인.
+  - `/static/app.js?v=20260604-v3-44`에서 `insertTemplateSlotReference`, `openTemplateConsoleViewer`, 새 정적 버전 포함 확인.
+  - `/static/styles.css?v=20260604-v3-44`에서 `template-console-viewer`, `template-run-slot:hover` 스타일 포함 확인.
+- 백업: `backups/before-template-slot-console-final-20260604-145500`

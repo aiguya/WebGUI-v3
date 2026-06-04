@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260604-v3-43">
+  <link rel="stylesheet" href="/static/styles.css?v=20260604-v3-44">
 </head>
 <body>
   <header class="topbar">
@@ -1106,9 +1106,24 @@
       </div>
     </div>
   </div>
+  <div class="template-console-viewer" id="templateConsoleViewer" hidden>
+    <div class="template-console-viewer-panel">
+      <header>
+        <div>
+          <h2>실행 콘솔</h2>
+          <p>템플릿 실행 중 기록된 요청, 응답, 재시도, 병합 로그입니다.</p>
+        </div>
+        <button type="button" class="icon-button" id="closeTemplateConsoleViewer" aria-label="닫기">×</button>
+      </header>
+      <pre class="template-console-viewer-log" id="templateConsoleViewerLog"></pre>
+      <div class="button-row">
+        <button type="button" id="copyTemplateConsoleViewer">콘솔 복사</button>
+      </div>
+    </div>
+  </div>
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260604-v3-43"></script>
+  <script src="/static/app.js?v=20260604-v3-44"></script>
 </body>
 </html>

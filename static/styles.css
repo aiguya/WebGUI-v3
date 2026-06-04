@@ -4021,6 +4021,77 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):active,
   min-width: 150px;
 }
 
+.template-console-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 125;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(0, 0, 0, .74);
+}
+
+.template-console-viewer[hidden] {
+  display: none;
+}
+
+.template-console-viewer-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  width: min(1040px, calc(100vw - 42px));
+  max-height: min(820px, calc(100vh - 48px));
+  padding: 16px;
+  border: 1px solid rgba(235, 239, 244, .14);
+  border-radius: 12px;
+  background: rgba(12, 14, 18, .97);
+  box-shadow: 0 22px 64px rgba(0, 0, 0, .52);
+}
+
+.template-console-viewer-panel header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: start;
+}
+
+.template-console-viewer-panel h2,
+.template-console-viewer-panel p {
+  margin: 0;
+}
+
+.template-console-viewer-panel h2 {
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.template-console-viewer-panel p {
+  margin-top: 4px;
+  color: rgba(245, 245, 242, .54);
+  font-size: 12px;
+}
+
+.template-console-viewer-log {
+  min-height: 260px;
+  max-height: calc(100vh - 210px);
+  overflow: auto;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid rgba(235, 239, 244, .10);
+  border-radius: 10px;
+  color: rgba(245, 245, 242, .88);
+  background: rgba(0, 0, 0, .32);
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.template-console-viewer-panel .button-row {
+  justify-content: center;
+}
+
 /* v2-47 square video thumbnails in library picker */
 .picker-grid {
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -7237,6 +7308,11 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   background: rgba(0, 0, 0, .12);
 }
 
+.template-run-slot:hover {
+  border-color: rgba(94, 234, 212, .22);
+  background: rgba(94, 234, 212, .035);
+}
+
 .template-slot-preview {
   width: 58px;
   height: 58px;
@@ -7600,6 +7676,11 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
   line-height: 1.45;
+  cursor: zoom-in;
+}
+
+.template-console-log:hover {
+  background: rgba(255, 255, 255, .025);
 }
 
 .template-console-line {

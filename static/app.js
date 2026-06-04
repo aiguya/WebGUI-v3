@@ -77,6 +77,7 @@ let templateShotAutoScrollFrame = null;
 let templateShotAutoScrollVelocity = 0;
 let templateShotAutoScrollTarget = null;
 let templatePickerSlotKey = "";
+let templateSlotInsertTarget = null;
 const templateRunState = {
   variables: {},
   slots: {},
@@ -217,8 +218,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-43";
-const appShellCacheName = "webgui-shell-v3-43";
+const appStaticVersion = "20260604-v3-44";
+const appShellCacheName = "webgui-shell-v3-44";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1586,6 +1587,30 @@ function appendTemplateRunLog(message, detail = "", level = "info") {
   log.appendChild(row);
   while (log.children.length > 180) log.firstElementChild?.remove();
   log.scrollTop = log.scrollHeight;
+}
+
+function templateConsoleText() {
+  const rows = Array.from(document.querySelectorAll("#templateRunConsole .template-console-line"));
+  return rows.map(row => {
+    const time = row.querySelector("span")?.textContent || "";
+    const message = row.querySelector("strong")?.textContent || "";
+    const detail = row.querySelector("small")?.textContent || "";
+    return `[${time}] ${message}${detail ? `\n  ${detail}` : ""}`;
+  }).join("\n");
+}
+
+function openTemplateConsoleViewer() {
+  const viewer = document.querySelector("#templateConsoleViewer");
+  const log = document.querySelector("#templateConsoleViewerLog");
+  if (!viewer || !log) return;
+  log.textContent = templateConsoleText() || "표시할 실행 콘솔 로그가 없습니다.";
+  viewer.hidden = false;
+  log.scrollTop = log.scrollHeight;
+}
+
+function closeTemplateConsoleViewer() {
+  const viewer = document.querySelector("#templateConsoleViewer");
+  if (viewer) viewer.hidden = true;
 }
 
 function updateTemplateAssemblyVideos(assemblyVideos, shot, produced) {
@@ -3974,6 +3999,57 @@ function templateSlotLabel(slot, selected) {
   return slot.label || slot.key || "slot";
 }
 
+function isTemplateReferenceInsertField(field) {
+  return Boolean(field?.matches?.("[data-shot-reference], [data-shot-reference-slot], [data-shot-output-slot]"));
+}
+
+function isTemplatePromptInsertField(field) {
+  return Boolean(field?.matches?.("[data-shot-prompt], [data-shot-retry], [data-shot-camera], [data-shot-notes], textarea[name='global_prompt'], textarea[name='negative_prompt']"));
+}
+
+function isTemplateSlotInsertField(field) {
+  return isTemplateReferenceInsertField(field) || isTemplatePromptInsertField(field);
+}
+
+function rememberTemplateSlotInsertTarget(field) {
+  if (isTemplateSlotInsertField(field)) templateSlotInsertTarget = field;
+}
+
+function insertTextAtCursor(field, text) {
+  const start = Number.isFinite(field.selectionStart) ? field.selectionStart : field.value.length;
+  const end = Number.isFinite(field.selectionEnd) ? field.selectionEnd : field.value.length;
+  const before = field.value.slice(0, start);
+  const after = field.value.slice(end);
+  const prefix = before && !/\s$/.test(before) ? " " : "";
+  const suffix = after && !/^\s/.test(after) ? " " : "";
+  const next = `${prefix}${text}${suffix}`;
+  field.setRangeText(next, start, end, "end");
+}
+
+function insertTemplateSlotReference(slotKey) {
+  const key = String(slotKey || "").trim();
+  if (!key) return false;
+  const active = document.activeElement;
+  const target = isTemplateSlotInsertField(active) ? active : (templateSlotInsertTarget?.isConnected ? templateSlotInsertTarget : null);
+  if (!target) {
+    navigator.clipboard?.writeText(`{{${key}}}`).catch(() => {});
+    showToast("삽입할 참조/프롬프트 입력칸을 먼저 클릭해 주세요. 토큰은 클립보드에 복사했습니다.");
+    return false;
+  }
+  if (isTemplateReferenceInsertField(target)) {
+    target.value = key;
+  } else {
+    insertTextAtCursor(target, `{{${key}}}`);
+  }
+  target.dispatchEvent(new Event("input", { bubbles: true }));
+  target.dispatchEvent(new Event("change", { bubbles: true }));
+  target.focus();
+  rememberTemplateSlotInsertTarget(target);
+  renderTemplatePreview();
+  showToast(isTemplateReferenceInsertField(target) ? `${key} 참조 슬롯을 입력했습니다.` : `{{${key}}} 토큰을 삽입했습니다.`);
+  return true;
+}
+
 function syncTemplateRunDefaults(payload = templatePayloadFromEditor()) {
   (payload.variables || []).forEach(variable => {
     if (!variable.key) return;
@@ -4051,7 +4127,7 @@ function renderTemplateRunPanel() {
             <button type="button" class="template-slot-preview" data-template-slot-preview ${selected ? "" : "disabled"}>${preview}</button>
             <div>
               <strong>${escapeHtml(slot.label || slot.key)}</strong>
-              <small>${escapeHtml(slot.key)} · ${kind}${slot.note ? ` · ${escapeHtml(slot.note)}` : ""}</small>
+              <small>${escapeHtml(slot.key)} · ${kind}${slot.note ? ` · ${escapeHtml(slot.note)}` : ""} · Ctrl+클릭 삽입</small>
               <div class="template-slot-actions">
                 <button type="button" class="secondary" data-template-slot-pick data-template-slot-kind="${kind}">라이브러리</button>
                 <button type="button" class="secondary" data-template-slot-clear ${selected ? "" : "disabled"}>해제</button>
@@ -4809,10 +4885,19 @@ document.querySelector("#templateRunVariables")?.addEventListener("input", event
   templateRunState.variables[input.dataset.templateRunVar] = input.value;
 });
 
+document.querySelector("#templates")?.addEventListener("focusin", event => {
+  rememberTemplateSlotInsertTarget(event.target);
+});
+
 document.querySelector("#templateRunSlots")?.addEventListener("click", event => {
   const row = event.target.closest("[data-template-run-slot]");
   if (!row) return;
   const key = row.dataset.templateRunSlot;
+  if (event.ctrlKey || event.metaKey) {
+    event.preventDefault();
+    insertTemplateSlotReference(key);
+    return;
+  }
   if (event.target.closest("[data-template-slot-pick]")) {
     const kind = event.target.closest("[data-template-slot-pick]").dataset.templateSlotKind || "image";
     openTemplateSlotPicker(key, kind);
@@ -4828,6 +4913,28 @@ document.querySelector("#templateRunSlots")?.addEventListener("click", event => 
     const slot = templateRunState.slots[key];
     if (slot?.path) openMediaViewer(slot.path, slot.kind === "video" ? "video" : "image");
   }
+});
+
+document.querySelector("#templateRunConsole")?.addEventListener("click", event => {
+  event.preventDefault();
+  event.stopPropagation();
+  openTemplateConsoleViewer();
+});
+
+document.querySelector("#templateConsoleViewer")?.addEventListener("click", event => {
+  if (event.target.id === "templateConsoleViewer") closeTemplateConsoleViewer();
+});
+
+document.querySelector("#closeTemplateConsoleViewer")?.addEventListener("click", closeTemplateConsoleViewer);
+
+document.querySelector("#copyTemplateConsoleViewer")?.addEventListener("click", async () => {
+  const text = document.querySelector("#templateConsoleViewerLog")?.textContent || "";
+  if (!text.trim()) {
+    showToast("복사할 콘솔 로그가 없습니다.", true);
+    return;
+  }
+  await navigator.clipboard.writeText(text);
+  showToast("실행 콘솔 로그를 복사했습니다.");
 });
 
 document.querySelector("#resetTemplateRun")?.addEventListener("click", () => {
@@ -5626,7 +5733,10 @@ document.querySelector("#copyPromptViewer")?.addEventListener("click", async eve
 });
 
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape") closePromptViewer();
+  if (event.key === "Escape") {
+    closePromptViewer();
+    closeTemplateConsoleViewer();
+  }
 });
 
 document.querySelector("#libraryGrid").addEventListener("click", async event => {
