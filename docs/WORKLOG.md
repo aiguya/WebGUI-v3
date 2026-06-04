@@ -673,3 +673,18 @@
   - `/static/app.js?v=20260604-v3-44`에서 `insertTemplateSlotReference`, `openTemplateConsoleViewer`, 새 정적 버전 포함 확인.
   - `/static/styles.css?v=20260604-v3-44`에서 `template-console-viewer`, `template-run-slot:hover` 스타일 포함 확인.
 - 백업: `backups/before-template-slot-console-final-20260604-145500`
+
+### 템플릿 기존 결과 슬롯 단계 스킵
+- 목표: 템플릿 실행 시 컷의 `결과 저장 슬롯`에 이미 파일이 들어 있으면 해당 컷을 다시 생성하지 않고 다음 단계로 넘어가게 한다.
+- 변경:
+  - `static/app.js`: 컷 실행 전에 `output_slot`이 가리키는 실행 준비 슬롯에 기존 파일 경로가 있는지 확인하는 `templateExistingOutputSlotItem()`을 추가했다.
+  - `static/app.js`: 기존 결과 슬롯이 있으면 API 요청을 보내지 않고 해당 파일을 컷 결과로 간주해 체크포인트를 `done`으로 저장하고, 이전 결과/최종 조립 목록/작업 큐 진행률을 갱신하도록 했다.
+  - `static/app.js`: 실행 콘솔에 `단계 스킵` 로그를 남겨 어떤 컷이 기존 결과 슬롯 때문에 건너뛰어졌는지 확인할 수 있게 했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260604-v3-45` / `webgui-shell-v3-45`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - `http://127.0.0.1:7863/?v=20260604-v3-45`에서 새 HTML 정적 버전 서빙 확인.
+  - `/static/app.js?v=20260604-v3-45`에서 `templateExistingOutputSlotItem`, `단계 스킵`, 새 정적 버전 포함 확인.
+- 백업: `backups/before-template-skip-existing-output-20260604-151500`

@@ -218,8 +218,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-44";
-const appShellCacheName = "webgui-shell-v3-44";
+const appStaticVersion = "20260604-v3-45";
+const appShellCacheName = "webgui-shell-v3-45";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1555,6 +1555,26 @@ function templateResultItems(data) {
   return [];
 }
 
+function templateExistingOutputSlotItem(shot, slotState) {
+  const key = String(shot.output_slot || "").trim();
+  if (!key) return null;
+  const slot = slotState?.[key];
+  if (!slot?.path) return null;
+  const kind = slot.kind === "video" ? "video" : "image";
+  if (["image", "edit"].includes(shot.method) && kind === "video") return null;
+  return {
+    kind,
+    file_path: slot.path,
+    prompt: `기존 결과 슬롯 사용: ${key}`,
+    model: "template-slot",
+    extra: {
+      template_skip_existing_output: true,
+      output_slot: key,
+      source: slot.source || "template-slot",
+    },
+  };
+}
+
 function templateVideoShotMethods() {
   return new Set(["i2v", "official", "frame"]);
 }
@@ -2198,6 +2218,47 @@ async function runTemplateJob(job) {
       const committedCount = items.length;
       const previousBeforeShot = { ...previous };
       const assemblyBeforeShot = [...assemblyVideos];
+      const existingOutputItem = templateExistingOutputSlotItem(shot, slotState);
+      if (existingOutputItem) {
+        const produced = [existingOutputItem];
+        const skipPrompt = `기존 결과 슬롯 사용: ${shot.output_slot}`;
+        items.splice(committedCount, items.length - committedCount, ...produced);
+        const nextPrevious = { ...previousBeforeShot };
+        updateTemplatePreviousResult(nextPrevious, { items: produced });
+        previous.lastImagePath = nextPrevious.lastImagePath;
+        previous.lastVideoPath = nextPrevious.lastVideoPath;
+        const assemblyAction = updateTemplateAssemblyVideos(assemblyVideos, shot, produced);
+        appendTemplateRunLog("단계 스킵", `${label} · ${skipPrompt}`, "warn");
+        if (assemblyAction === "replace") {
+          appendTemplateRunLog("최종 조립 목록 교체", `${label} · 기존 슬롯 영상으로 직전 클립 대체`);
+        } else if (assemblyAction === "append") {
+          appendTemplateRunLog("최종 조립 목록 추가", `${label} · 조립 클립 ${assemblyVideos.length}개`);
+        }
+        updateTemplateRunStep(sessionId, index, {
+          status: "done",
+          prompt: skipPrompt,
+          items: templateSafeClone(produced, []),
+          error: "",
+          started_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+        });
+        updateTemplateRunSession(sessionId, {
+          status: "running",
+          current_index: index + 1,
+          previous: templateSafeClone(previous, {}),
+          slot_state: templateSafeClone(slotState, {}),
+          items: templateSafeClone(items, []),
+          assembly_videos: templateSafeClone(assemblyVideos, []),
+        });
+        progress.setCount(index + 1, payload.shots.length, 0, 0);
+        updateJob(job, {
+          result: { ok: true, items: [...items] },
+          progressPercent: Math.round(((index + 1) / payload.shots.length) * 100),
+          progressText: `${index + 1}/${payload.shots.length} 컷 완료 · 기존 결과 슬롯 사용`,
+          prompt: skipPrompt,
+        });
+        continue;
+      }
       let accepted = false;
       while (!accepted) {
         if (job.status === "cancelled") throw new Error("템플릿 실행이 취소되었습니다.");
