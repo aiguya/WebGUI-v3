@@ -224,8 +224,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-51";
-const appShellCacheName = "webgui-shell-v3-51";
+const appStaticVersion = "20260605-v3-52";
+const appShellCacheName = "webgui-shell-v3-52";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -3741,6 +3741,8 @@ const templateMethodUi = {
 
 const templateImageModelLabels = {
   "grok-imagine-image-quality": "Grok 이미지 퀄리티",
+  "grok-imagine-image-pro": "Grok 이미지 Pro",
+  "grok-imagine-image-quality-latest": "Grok 이미지 퀄리티 latest",
   "grok-imagine-image": "Grok 이미지 기본",
   "gpt-5.4-mini": "Codex/ChatGPT gpt-5.4-mini",
   "gpt-5.4": "Codex/ChatGPT gpt-5.4",

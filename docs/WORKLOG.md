@@ -797,3 +797,17 @@
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
   - 실제 v3 서버를 `http://127.0.0.1:7863`에 재시작하고 `/health`, `/static/app.js?v=20260605-v3-51`, `/api/video-templates`, `/api/video-template-blocks` 응답 확인.
 - 백업: `backups/before-template-format-v1-20260605-154500`
+
+### Grok 이미지 신규 모델 선택지 추가
+- 목표: 이미지 생성/편집과 템플릿 이미지 블록에서 신규 Grok 이미지 모델을 선택할 수 있게 한다.
+- 변경:
+  - `templates/index.html`: 이미지 생성, 이미지 편집의 `image_model` 선택지에 `grok-imagine-image-pro`, `grok-imagine-image-quality-latest` 추가.
+  - `static/app.js`: 템플릿 이미지 생성/편집 블록 모델 목록에 동일한 두 모델 추가.
+  - `README.md`: 이미지 생성 모델 선택 설명 갱신.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260605-v3-52` / `webgui-shell-v3-52`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - 실제 v3 서버를 `http://127.0.0.1:7863`에 재시작하고 `/health`, `/?v=20260605-v3-52`, `/static/app.js?v=20260605-v3-52` 응답과 새 모델 옵션 포함 확인.
+- 백업: `backups/before-image-model-options-20260605-184546`
