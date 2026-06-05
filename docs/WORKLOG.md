@@ -776,3 +776,24 @@
   - 임시 app 복사본의 Flask test client로 `/api/projects` 생성/목록/즐겨찾기/삭제와 mock `/api/t2i` 결과 `extra.project_id`, `extra.project_title`, `extra.project_result` 저장 확인.
   - 실제 v3 서버를 `http://127.0.0.1:7863`에 재시작하고 `/health`, `/api/projects`, `/static/app.js?v=20260605-v3-50`, `/?v=20260605-v3-50` 응답 확인.
 - 백업: `backups/before-projects-phase1-20260605-142200`
+
+### 템플릿 저장 포맷 v1 고정과 마이그레이션 진입점
+- 목표: 현재 템플릿/블록 저장 형태를 1차 포맷으로 명시하고, 이후 포맷이 업그레이드되더라도 기존 무버전/v1 파일을 읽을 수 있는 구조를 만든다.
+- 결정:
+  - 영상 템플릿과 재사용 블록 JSON에 `format_version: 1`을 저장한다.
+  - 무버전 템플릿/블록은 v1로 간주한다.
+  - 읽기/저장/응답 시 서버 정규화 전에 마이그레이션 함수를 반드시 통과시킨다.
+  - future v2 이후 변환은 `migrate_video_template_format()`와 `migrate_template_block_format()`에 순차 변환으로 추가한다.
+- 변경:
+  - `app.py`: 템플릿/블록 포맷 버전 상수, 포맷 버전 파서, 템플릿/블록 마이그레이션 진입점 추가.
+  - `app.py`: `normalize_video_template()`, `normalize_template_block()` 결과에 `format_version` 저장 추가.
+  - `static/app.js`: 템플릿/블록 포맷 버전 상수와 저장 payload의 `format_version` 명시 추가.
+  - `README.md`: 템플릿 포맷 호환 정책 문서화.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260605-v3-51` / `webgui-shell-v3-51`로 갱신했다.
+- 검증:
+  - 무버전 템플릿/블록을 임시 앱 복사본의 Flask test client로 저장/조회했을 때 `format_version: 1`로 응답되고 실제 JSON 파일에도 v1이 저장되는지 확인.
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - 실제 v3 서버를 `http://127.0.0.1:7863`에 재시작하고 `/health`, `/static/app.js?v=20260605-v3-51`, `/api/video-templates`, `/api/video-template-blocks` 응답 확인.
+- 백업: `backups/before-template-format-v1-20260605-154500`

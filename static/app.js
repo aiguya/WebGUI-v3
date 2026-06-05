@@ -5,6 +5,8 @@ const projectPrefsKey = "webgork.currentProject.v1";
 const libraryPrefsKey = "webgork.libraryPrefs.v1";
 const templateRunSessionsKey = "webgork.templateRunSessions.v1";
 const maxTemplateRunSessions = 80;
+const templateFormatVersion = 1;
+const templateBlockFormatVersion = 1;
 
 function loadLibraryPrefs() {
   try {
@@ -222,8 +224,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-50";
-const appShellCacheName = "webgui-shell-v3-50";
+const appStaticVersion = "20260605-v3-51";
+const appShellCacheName = "webgui-shell-v3-51";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1128,6 +1130,7 @@ function formTemplateBlockPayload(form) {
   const isImageMethod = config.method === "image" || config.method === "edit";
   const isVideoMethod = !isImageMethod;
   return {
+    format_version: templateBlockFormatVersion,
     id: "",
     title,
     method: config.method,
@@ -3778,6 +3781,7 @@ function videoTemplateForm() {
 
 function templateDefaultItem(seed = {}) {
   return {
+    format_version: seed.format_version || templateFormatVersion,
     id: seed.id || "",
     title: seed.title || "",
     description: seed.description || "",
@@ -4155,6 +4159,7 @@ function templatePayloadFromEditor() {
     run_mode: runMode,
   };
   return {
+    format_version: templateFormatVersion,
     id: form?.elements.id?.value || "",
     title: form?.elements.title?.value || "",
     description: form?.elements.description?.value || "",
@@ -4846,6 +4851,7 @@ function templateShotBlockPayload(shot, index) {
   const tags = [...(payload.tags || [])];
   if (payload.genre) tags.push(payload.genre);
   return {
+    format_version: templateBlockFormatVersion,
     id: "",
     title: shot.title || `컷 ${index + 1}`,
     method: shot.method || payload.settings.default_method || "i2v",

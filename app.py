@@ -618,6 +618,8 @@ VIDEO_TEMPLATE_METHODS = {
     "edit": "이미지 편집",
 }
 VIDEO_TEMPLATE_TRANSITIONS = {"cut", "fade", "crossfade", "fade_in", "fade_out"}
+VIDEO_TEMPLATE_FORMAT_VERSION = 1
+TEMPLATE_BLOCK_FORMAT_VERSION = 1
 
 
 def clean_template_key(value, fallback="var"):
@@ -646,6 +648,33 @@ def normalize_template_reference_slots(item, limit=3):
         if len(slots) >= limit:
             break
     return slots
+
+
+def parse_template_format_version(value, default=1):
+    try:
+        version = int(value)
+    except (TypeError, ValueError):
+        version = default
+    return max(1, version)
+
+
+def migrate_video_template_format(item):
+    migrated = dict(item or {})
+    source_version = parse_template_format_version(migrated.get("format_version"), default=1)
+    migrated["_source_format_version"] = source_version
+    # Version 1 is the first persisted format. Future upgrades should add
+    # sequential transforms here, e.g. if source_version < 2: ...
+    migrated["format_version"] = min(source_version, VIDEO_TEMPLATE_FORMAT_VERSION)
+    return migrated
+
+
+def migrate_template_block_format(item):
+    migrated = dict(item or {})
+    source_version = parse_template_format_version(migrated.get("format_version"), default=1)
+    migrated["_source_format_version"] = source_version
+    # Version 1 is the first persisted reusable block format.
+    migrated["format_version"] = min(source_version, TEMPLATE_BLOCK_FORMAT_VERSION)
+    return migrated
 
 
 def clean_template_model(value):
@@ -862,7 +891,7 @@ def normalize_template_shots(value):
 
 
 def normalize_video_template(item):
-    item = dict(item or {})
+    item = migrate_video_template_format(item)
     now = datetime.now(timezone.utc).isoformat()
     settings = item.get("settings") if isinstance(item.get("settings"), dict) else {}
     title = str(item.get("title") or "").strip()[:160]
@@ -892,6 +921,7 @@ def normalize_video_template(item):
     except (TypeError, ValueError):
         default_shot_duration = 6
     return {
+        "format_version": VIDEO_TEMPLATE_FORMAT_VERSION,
         "id": str(item.get("id") or uuid.uuid4().hex),
         "title": title,
         "description": str(item.get("description") or "").strip()[:3000],
@@ -945,7 +975,7 @@ def video_template_response(item):
 
 
 def normalize_template_block(item):
-    item = dict(item or {})
+    item = migrate_template_block_format(item)
     now = datetime.now(timezone.utc).isoformat()
     source_shot_id = str(item.get("source_shot_id") or item.get("shot_id") or "").strip()
     shot_items = normalize_template_shots([{
@@ -973,6 +1003,7 @@ def normalize_template_block(item):
     source_template_id = str(item.get("source_template_id") or "").strip()[:120]
     source_template_title = str(item.get("source_template_title") or "").strip()[:160]
     return {
+        "format_version": TEMPLATE_BLOCK_FORMAT_VERSION,
         "id": block_id,
         "title": shot.get("title") or "컷 블록",
         "method": shot.get("method") or "i2v",
