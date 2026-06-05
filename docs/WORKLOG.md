@@ -739,3 +739,19 @@
   - `/static/app.js?v=20260605-v3-48`에서 슬롯 업로드 버튼, 붙여넣기 이벤트, `/api/template-slot-upload` 호출 포함 확인.
   - `/static/styles.css?v=20260605-v3-48`에서 슬롯 드롭 상태 스타일 포함 확인.
 - 백업: `backups/before-template-slot-upload-20260605-132202`
+
+### 템플릿 이미지 편집 입력 모드 선택
+- 목표: 템플릿의 이미지 편집 블록에서 여러 참조 이미지를 API에 그대로 전달할지, 먼저 붙여 1장으로 만든 뒤 편집할지 블록별로 선택하게 한다.
+- 변경:
+  - `static/app.js`: 이미지 편집 블록에 `다중 이미지 처리` 선택 UI를 추가하고 기본값을 기존 템플릿 동작과 같은 `여러 장 그대로 API 전달`로 유지했다.
+  - `static/app.js`: 템플릿 저장, 블록 저장, 블록 불러오기, 검색, 실행 요청에 `edit_input_mode` 값을 포함하도록 연결했다.
+  - `static/app.js`: 템플릿 실행 시 `/api/i2i` 요청에 저장된 `edit_input_mode`를 전달하도록 하여 `multi`/`stitch`가 실제 요청에 반영되게 했다.
+  - `app.py`: 템플릿/블록 정규화에서 `image_resolution`과 `edit_input_mode`를 보존하도록 보강했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260605-v3-49` / `webgui-shell-v3-49`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - Flask test client로 템플릿/블록 저장 시 `edit_input_mode=stitch`와 `image_resolution=2k` 보존 확인.
+  - `http://127.0.0.1:7863/?v=20260605-v3-49` 및 `/static/app.js?v=20260605-v3-49`에서 v49 HTML/JS와 새 선택 UI 코드 확인.
+- 백업: `backups/before-template-edit-input-mode-20260605-133907`

@@ -218,8 +218,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-48";
-const appShellCacheName = "webgui-shell-v3-48";
+const appStaticVersion = "20260605-v3-49";
+const appShellCacheName = "webgui-shell-v3-49";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -1040,6 +1040,7 @@ function formTemplateBlockPayload(form) {
     method: config.method,
     image_model: isImageMethod ? form.querySelector("[name='image_model']")?.value || "" : "",
     image_resolution: isImageMethod ? form.querySelector("[name='image_resolution']")?.value || "auto" : "auto",
+    edit_input_mode: config.method === "edit" ? form.querySelector("[name='edit_input_mode']")?.value || "stitch" : "multi",
     video_model: isVideoMethod ? form.querySelector("[name='video_model']")?.value || "" : "",
     duration: isVideoMethod ? numericFormValue(form, "duration", 6, 1, 15) : 6,
     reference_slot: "",
@@ -1439,6 +1440,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
   const aspectRatio = payload.settings.aspect_ratio || "9:16";
   const resolution = payload.settings.resolution || "720p";
   const imageResolution = ["auto", "1k", "2k"].includes(shot.image_resolution) ? shot.image_resolution : "auto";
+  const editInputMode = shot.edit_input_mode === "stitch" ? "stitch" : "multi";
   if (shot.method === "image") {
     const body = appendTemplateRequestMetadata({
       prompt,
@@ -1463,7 +1465,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     body.set("aspect_ratio", aspectRatio);
     body.set("image_resolution", imageResolution);
     if (shot.image_model) body.set("image_model", shot.image_model);
-    body.set("edit_input_mode", "multi");
+    body.set("edit_input_mode", editInputMode);
     appendTemplateImageReferences(body, templateImageSourcePaths(shot, previous, slotState, 3));
     appendTemplateRequestMetadata(body, payload, shot, index);
     return { endpoint: "/api/i2i", prompt, options: { method: "POST", body } };
@@ -3610,7 +3612,7 @@ const templateMethodUi = {
     referencePlaceholder: "main_actor",
   },
   edit: {
-    fields: new Set(["image_model", "image_resolution", "references", "output_slot", "prompt", "retry", "notes"]),
+    fields: new Set(["image_model", "image_resolution", "edit_input_mode", "references", "output_slot", "prompt", "retry", "notes"]),
     hint: "이미지 슬롯을 1~3개 참조해 편집합니다. 첫 번째 슬롯이 메인 이미지가 됩니다.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
@@ -3647,6 +3649,11 @@ const templateImageResolutionLabels = {
   auto: "auto",
   "1k": "1k",
   "2k": "2k",
+};
+
+const templateEditInputModeLabels = {
+  multi: "여러 장 그대로 API 전달",
+  stitch: "붙여서 1장으로 편집",
 };
 
 const templateVideoModelLabels = {
@@ -3914,6 +3921,10 @@ function renderTemplateShots(items = []) {
           <label>이미지 해상도</label>
           <select data-shot-image-resolution>${templateOptionList(templateImageResolutionLabels, item.image_resolution || "auto")}</select>
         </div>
+        <div data-shot-field="edit_input_mode">
+          <label>다중 이미지 처리</label>
+          <select data-shot-edit-input-mode>${templateOptionList(templateEditInputModeLabels, item.edit_input_mode || "multi")}</select>
+        </div>
         <div data-shot-field="video_model">
           <label>영상 모델</label>
           <select data-shot-video-model>${templateModelOptionList((item.method || "i2v") === "official" ? templateOfficialVideoModelLabels : templateVideoModelLabels, item.video_model || "grok-imagine-video", "grok-imagine-video")}</select>
@@ -4017,6 +4028,7 @@ function collectTemplateShots() {
       method,
       image_model: row.querySelector("[data-shot-image-model]")?.value || "",
       image_resolution: row.querySelector("[data-shot-image-resolution]")?.value || "auto",
+      edit_input_mode: row.querySelector("[data-shot-edit-input-mode]")?.value || "multi",
       video_model: videoModel,
       output_slot: row.querySelector("[data-shot-output-slot]")?.value || "",
       duration: Number.parseFloat(row.querySelector("[data-shot-duration]")?.value || "6") || 6,
@@ -4587,6 +4599,7 @@ function templateBlockToShot(block = {}) {
     method: block.method || "i2v",
     image_model: block.image_model || "",
     image_resolution: block.image_resolution || "auto",
+    edit_input_mode: block.edit_input_mode || "multi",
     video_model: block.video_model || "",
     duration: block.duration || 6,
     reference_slot: block.reference_slot || referenceSlots[0] || "",
@@ -4610,6 +4623,7 @@ function filteredTemplateBlocks() {
         item.title,
         item.method_label,
         item.image_model,
+        item.edit_input_mode,
         item.video_model,
         item.output_slot,
         item.reference_slot,
@@ -4738,6 +4752,7 @@ function templateShotBlockPayload(shot, index) {
     method: shot.method || payload.settings.default_method || "i2v",
     image_model: shot.image_model || "",
     image_resolution: shot.image_resolution || "auto",
+    edit_input_mode: shot.edit_input_mode || "multi",
     video_model: shot.video_model || "",
     duration: shot.duration || payload.settings.default_shot_duration || 6,
     reference_slot: shot.reference_slot || "",
