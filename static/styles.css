@@ -7953,3 +7953,117 @@ html body .queue-job.is-review .queue-actions {
   opacity: 1 !important;
   pointer-events: auto !important;
 }
+
+/* Project workspace phase 1 */
+.project-switcher {
+  min-width: 220px;
+  display: inline-grid;
+  grid-template-columns: auto minmax(130px, 240px);
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.project-switcher select,
+#libraryProjectFilter {
+  min-height: 32px;
+  border-color: rgba(255, 255, 255, .14);
+  background: rgba(255, 255, 255, .045);
+  color: var(--text);
+}
+
+.project-current {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 14px;
+  color: var(--muted);
+}
+
+.project-current strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.project-settings-card textarea {
+  min-height: 92px;
+}
+
+.project-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.project-list-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.project-list-item.active {
+  border-color: rgba(255, 214, 102, .5);
+  background: rgba(255, 214, 102, .08);
+}
+
+.project-list-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.project-list-main:hover {
+  background: transparent;
+}
+
+.project-list-main strong,
+.project-list-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-list-main small {
+  color: var(--muted);
+}
+
+.project-badge {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #ffd666;
+  background: rgba(255, 214, 102, .09);
+  border: 1px solid rgba(255, 214, 102, .24);
+}
+
+@media (max-width: 820px) {
+  .project-switcher {
+    width: 100%;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .project-current,
+  .project-list-item {
+    grid-template-columns: 1fr;
+  }
+}

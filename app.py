@@ -117,6 +117,7 @@ def ensure_media_dirs_for(root):
         (root / folder).mkdir(parents=True, exist_ok=True)
     meta = root / "metadata.json"
     prompts = root / "prompts.json"
+    projects = root / "projects.json"
     video_templates = root / "video-templates.json"
     video_template_blocks = root / "video-template-blocks.json"
     usage = root / "usage.json"
@@ -124,6 +125,8 @@ def ensure_media_dirs_for(root):
         meta.write_text("[]", encoding="utf-8")
     if not prompts.exists():
         prompts.write_text("[]", encoding="utf-8")
+    if not projects.exists():
+        projects.write_text("[]", encoding="utf-8")
     if not video_templates.exists():
         video_templates.write_text("[]", encoding="utf-8")
     if not video_template_blocks.exists():
@@ -172,6 +175,10 @@ def usage_path():
 
 def prompts_path():
     return media_path("prompts.json")
+
+
+def projects_path():
+    return media_path("projects.json")
 
 
 def video_templates_path():
@@ -545,6 +552,52 @@ def write_metadata(items):
     temp = target.with_name(f"{target.name}.tmp")
     temp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(target)
+
+
+def normalize_project(item):
+    item = dict(item or {})
+    now = datetime.now(timezone.utc).isoformat()
+    title = str(item.get("title") or "").strip()[:160]
+    if not title:
+        title = "새 프로젝트"
+    return {
+        "id": str(item.get("id") or uuid.uuid4().hex),
+        "title": title,
+        "description": str(item.get("description") or "").strip()[:3000],
+        "tags": normalize_prompt_tags(item.get("tags")),
+        "favorite": bool(item.get("favorite")),
+        "created_at": item.get("created_at") or now,
+        "updated_at": item.get("updated_at") or item.get("created_at") or now,
+    }
+
+
+def read_projects():
+    try:
+        data = json.loads(projects_path().read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, FileNotFoundError):
+        data = []
+    if not isinstance(data, list):
+        data = []
+    return [normalize_project(item) for item in data if isinstance(item, dict)]
+
+
+def write_projects(items):
+    target = projects_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    normalized = [normalize_project(item) for item in items if isinstance(item, dict)]
+    temp = target.with_name(f"{target.name}.tmp")
+    temp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(target)
+
+
+def find_project(project_id):
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        return None
+    for item in read_projects():
+        if item.get("id") == project_id:
+            return item
+    return None
 
 
 PROMPT_TASKS = {
@@ -3292,6 +3345,23 @@ def template_request_metadata(source):
     }
 
 
+def project_request_metadata(source):
+    getter = source.get if isinstance(source, dict) else source.get
+    project_id = (getter("project_id") or "").strip()
+    project_title = (getter("project_title") or "").strip()
+    if not project_id and not project_title:
+        return {}
+    if project_id:
+        project = find_project(project_id)
+        if project:
+            project_title = project_title or project.get("title") or ""
+    return {
+        "project_result": True,
+        "project_id": project_id[:160],
+        "project_title": project_title[:240],
+    }
+
+
 def prompt_planner_base_and_headers():
     cfg = config()
     hermes_base = (cfg.get("hermes_base_url") or "").strip().rstrip("/")
@@ -4075,6 +4145,69 @@ def prompt_plan():
         return safe_error("프롬프트 플래너 실행에 실패했습니다.", exc, 502)
 
 
+@app.get("/api/projects")
+def project_library():
+    items = read_projects()
+    items.sort(key=lambda item: (bool(item.get("favorite")), item.get("updated_at") or ""), reverse=True)
+    return jsonify({"ok": True, "items": items})
+
+
+@app.post("/api/projects")
+def save_project_item():
+    payload = request.get_json(silent=True) or {}
+    project_id = str(payload.get("id") or "").strip()
+    now = datetime.now(timezone.utc).isoformat()
+    incoming = normalize_project({
+        "id": project_id or uuid.uuid4().hex,
+        "title": payload.get("title"),
+        "description": payload.get("description"),
+        "tags": payload.get("tags"),
+        "favorite": parse_request_bool(payload.get("favorite")),
+        "created_at": now,
+        "updated_at": now,
+    })
+    items = read_projects()
+    for index, item in enumerate(items):
+        if item.get("id") != project_id:
+            continue
+        previous = normalize_project(item)
+        incoming["created_at"] = previous.get("created_at") or now
+        incoming["updated_at"] = now
+        items[index] = incoming
+        write_projects(items)
+        return jsonify({"ok": True, "item": incoming, "created": False})
+    items.insert(0, incoming)
+    write_projects(items)
+    return jsonify({"ok": True, "item": incoming, "created": True})
+
+
+@app.post("/api/projects/favorite")
+def favorite_project_item():
+    payload = request.get_json(silent=True) or {}
+    project_id = str(payload.get("id") or "").strip()
+    favorite = parse_request_bool(payload.get("favorite"))
+    items = read_projects()
+    for item in items:
+        if item.get("id") == project_id:
+            item["favorite"] = favorite
+            item["updated_at"] = datetime.now(timezone.utc).isoformat()
+            write_projects(items)
+            return jsonify({"ok": True, "id": project_id, "favorite": favorite})
+    return safe_error("프로젝트를 찾을 수 없습니다.", status=404)
+
+
+@app.post("/api/projects/delete")
+def delete_project_items():
+    payload = request.get_json(silent=True) or {}
+    ids = set(str(item) for item in (payload.get("ids") or []) if item)
+    if not ids:
+        return safe_error("삭제할 프로젝트를 선택해 주세요.")
+    items = read_projects()
+    keep = [item for item in items if item.get("id") not in ids]
+    write_projects(keep)
+    return jsonify({"ok": True, "deleted": len(items) - len(keep)})
+
+
 @app.get("/api/prompts")
 def prompt_library():
     items = [prompt_item_response(item) for item in read_prompts()]
@@ -4405,6 +4538,7 @@ def t2i():
             path, extra = mock_svg(media_path("image"), "Text to Image", prompt), {"aspect_ratio": aspect_ratio, "image_resolution": image_resolution, "image_model": image_model, "image_provider": image_provider}
         extra.update(prompt_planner_request_metadata(payload, prompt))
         extra.update(template_request_metadata(payload))
+        extra.update(project_request_metadata(payload))
         item = add_metadata("image", prompt, image_model, path, extra=extra)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:
@@ -4476,6 +4610,7 @@ def i2i():
         })
         extra.update(prompt_planner_request_metadata(request.form, prompt))
         extra.update(template_request_metadata(request.form))
+        extra.update(project_request_metadata(request.form))
         item = add_metadata("edit", prompt, image_model, path, source_path=sources[0], extra=extra)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:
@@ -4836,6 +4971,7 @@ def run_manga_batch_job(job_id):
         auth_header = dict(job.get("auth_header") or {})
         prompt = job["prompt"]
         prompt_planner_metadata = dict(job.get("prompt_planner") or {})
+        project_metadata = dict(job.get("project_metadata") or {})
         aspect_ratio = job["aspect_ratio"]
         image_resolution = job.get("image_resolution") or "auto"
         parallel = job["parallel"]
@@ -4891,6 +5027,7 @@ def run_manga_batch_job(job_id):
                             "reference_paths": [public_path(path) for path in reference_paths[:MANGA_PANEL_REFERENCE_LIMIT]],
                         })
                         extra.update(prompt_planner_metadata)
+                        extra.update(project_metadata)
                         item = add_metadata("edit", prompt, cfg["image_model"], path, source_path=source["path"], extra=extra)
                         with MANGA_BATCH_LOCK:
                             MANGA_BATCH_JOBS[job_id]["items"].append(item)
@@ -4939,6 +5076,7 @@ def run_manga_batch_job(job_id):
                             "source_image_path": public_path(source["path"]),
                         })
                         extra.update(prompt_planner_metadata)
+                        extra.update(project_metadata)
                         item = add_metadata("edit", prompt, cfg["image_model"], path, source_path=source["path"], extra=extra)
                         with MANGA_BATCH_LOCK:
                             MANGA_BATCH_JOBS[job_id]["items"].append(item)
@@ -4983,6 +5121,7 @@ def run_manga_batch_job(job_id):
                     "reference_paths": [public_path(path) for path in reference_paths[:MANGA_PANEL_REFERENCE_LIMIT]] if mode == "panel_realize" else [],
                 }
                 extra.update(prompt_planner_metadata)
+                extra.update(project_metadata)
                 item = add_metadata("edit", prompt, cfg["image_model"], path, source_path=source["path"], extra=extra)
                 with MANGA_BATCH_LOCK:
                     MANGA_BATCH_JOBS[job_id]["items"].append(item)
@@ -5066,6 +5205,7 @@ def manga_batch():
                 "failures": [],
                 "prompt": prompt,
                 "prompt_planner": prompt_planner_request_metadata(request.form, prompt),
+                "project_metadata": project_request_metadata(request.form),
                 "mode": mode,
                 "target_language": target_language,
                 "use_builtin_prompt": use_builtin_prompt,
@@ -5166,6 +5306,7 @@ def i2v():
         })
         extra.update(prompt_planner_request_metadata(request.form, prompt))
         extra.update(template_request_metadata(request.form))
+        extra.update(project_request_metadata(request.form))
         item = add_metadata("video", prompt, video_model, path, source_path=source, extra=extra)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:
@@ -5214,6 +5355,7 @@ def video_edit():
         )
         extra["source_video_ids"] = [item.get("id") if item else None for item in source_items]
         extra.update(template_request_metadata(request.form))
+        extra.update(project_request_metadata(request.form))
         item = add_metadata("video", title, "ffmpeg-video-editor", path, source_path=sources[0], extra=extra)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:
@@ -5336,6 +5478,7 @@ def handle_v2v_extend(strategy):
         })
         extra.update(prompt_planner_request_metadata(request.form, prompt))
         extra.update(template_request_metadata(request.form))
+        extra.update(project_request_metadata(request.form))
         item = add_metadata("video", prompt, video_model, path, source_path=prepared_frame, extra=extra)
         return jsonify({"ok": True, "item": item, "frame_path": public_path(prepared_frame) if prepared_frame else None, "upscaled": upscaled})
     except ValueError as exc:

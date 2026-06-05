@@ -1,6 +1,7 @@
 const tabs = document.querySelectorAll(".tab");
 const panels = document.querySelectorAll(".panel");
 const toast = document.querySelector("#toast");
+const projectPrefsKey = "webgork.currentProject.v1";
 const libraryPrefsKey = "webgork.libraryPrefs.v1";
 const templateRunSessionsKey = "webgork.templateRunSessions.v1";
 const maxTemplateRunSessions = 80;
@@ -49,6 +50,7 @@ let pickerDateFilter = "all";
 let pickerDateValue = "";
 let pickerThumbSize = "medium";
 let libraryFilter = "all";
+let libraryProjectFilter = "all";
 let libraryOperationFilter = "all";
 let librarySearch = "";
 let librarySort = "newest";
@@ -60,6 +62,8 @@ let libraryCachedItems = [];
 let libraryPageSize = pageSizeFromValue(libraryPrefs.pageSize, 80);
 let libraryVisibleCount = libraryPageSize;
 let promptItems = [];
+let projectItems = [];
+let currentProjectId = localStorage.getItem(projectPrefsKey) || "";
 let promptSelectedId = "";
 let promptSearch = "";
 let promptTaskFilter = "all";
@@ -218,8 +222,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-49";
-const appShellCacheName = "webgui-shell-v3-49";
+const appStaticVersion = "20260605-v3-50";
+const appShellCacheName = "webgui-shell-v3-50";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -987,6 +991,95 @@ function installFormTemplateBlockControl(form) {
   submitButton.insertAdjacentElement("beforebegin", button);
 }
 
+function currentProject() {
+  return projectItems.find(item => item.id === currentProjectId) || null;
+}
+
+function setCurrentProject(id) {
+  currentProjectId = id || "";
+  try {
+    if (currentProjectId) localStorage.setItem(projectPrefsKey, currentProjectId);
+    else localStorage.removeItem(projectPrefsKey);
+  } catch {
+    // Keep the in-memory selection if localStorage is unavailable.
+  }
+  renderProjectControls();
+}
+
+function appendCurrentProjectFields(target) {
+  const project = currentProject();
+  if (!project) return target;
+  if (target instanceof FormData) {
+    target.set("project_id", project.id);
+    target.set("project_title", project.title || "");
+    return target;
+  }
+  target.project_id = project.id;
+  target.project_title = project.title || "";
+  return target;
+}
+
+function projectTagText(item) {
+  const tags = item.tags || [];
+  return tags.length ? tags.join(", ") : "";
+}
+
+function renderProjectControls() {
+  const selector = document.querySelector("#projectSelector");
+  const form = document.querySelector("#projectForm");
+  const list = document.querySelector("#projectList");
+  const active = currentProject();
+  if (selector) {
+    selector.innerHTML = `<option value="">프로젝트 없음</option>${projectItems.map(item => `<option value="${escapeHtml(item.id)}">${item.favorite ? "★ " : ""}${escapeHtml(item.title || "프로젝트")}</option>`).join("")}`;
+    selector.value = active?.id || "";
+    selector.title = active ? `현재 프로젝트: ${active.title}` : "프로젝트 없음";
+  }
+  const title = document.querySelector("#currentProjectTitle");
+  if (title) title.textContent = active ? active.title : "프로젝트 없음";
+  if (form && active && !form.dataset.dirty) {
+    form.elements.id.value = active.id || "";
+    form.elements.title.value = active.title || "";
+    form.elements.description.value = active.description || "";
+    form.elements.tags.value = projectTagText(active);
+    form.elements.favorite.checked = Boolean(active.favorite);
+  }
+  if (list) {
+    list.innerHTML = projectItems.length ? projectItems.map(item => `
+      <article class="project-list-item${item.id === currentProjectId ? " active" : ""}" data-project-id="${escapeHtml(item.id)}">
+        <button type="button" class="favorite-button${item.favorite ? " active" : ""}" data-project-favorite aria-label="프로젝트 즐겨찾기" aria-pressed="${item.favorite ? "true" : "false"}"></button>
+        <button type="button" class="project-list-main" data-project-select>
+          <strong>${escapeHtml(item.title || "프로젝트")}</strong>
+          <small>${escapeHtml([projectTagText(item), item.description].filter(Boolean).join(" · "))}</small>
+        </button>
+        <button type="button" class="secondary compact-btn" data-project-edit>편집</button>
+      </article>`).join("") : `<p class="prompt-empty">저장된 프로젝트가 없습니다.</p>`;
+  }
+  populateLibraryProjectFilter(libraryCachedItems);
+}
+
+function resetProjectForm(seed = {}) {
+  const form = document.querySelector("#projectForm");
+  if (!form) return;
+  form.dataset.dirty = "";
+  form.elements.id.value = seed.id || "";
+  form.elements.title.value = seed.title || "";
+  form.elements.description.value = seed.description || "";
+  form.elements.tags.value = projectTagText(seed);
+  form.elements.favorite.checked = Boolean(seed.favorite);
+}
+
+async function loadProjects() {
+  const response = await fetch("/api/projects");
+  const data = await response.json();
+  if (!data.ok) throw new Error(data.error || "프로젝트 목록을 불러오지 못했습니다.");
+  projectItems = data.items || [];
+  if (currentProjectId && !projectItems.some(item => item.id === currentProjectId)) {
+    currentProjectId = "";
+    try { localStorage.removeItem(projectPrefsKey); } catch {}
+  }
+  renderProjectControls();
+}
+
 function formPromptValue(form) {
   return (form.querySelector("[name='prompt']")?.value || "").trim();
 }
@@ -1118,13 +1211,13 @@ async function buildJobRequest(form) {
   const plan = await maybePlanPrompt(form, originalPrompt);
   const prompt = plan.prompt || originalPrompt;
   if (form.dataset.kind === "json") {
-    body = JSON.stringify({
+    body = JSON.stringify(appendCurrentProjectFields({
       prompt,
       aspect_ratio: form.querySelector("[name='aspect_ratio']").value,
       image_model: form.querySelector("[name='image_model']")?.value || "",
       image_resolution: form.querySelector("[name='image_resolution']")?.value || "auto",
       ...plannerFields(plan),
-    });
+    }));
     options.headers = { "Content-Type": "application/json" };
   } else {
     if (isMultiImageVideoForm(form)) enforceI2vReferenceLimit(form);
@@ -1186,6 +1279,7 @@ async function buildJobRequest(form) {
       if (frame) body.set("last_frame", frame);
     }
   }
+  if (body instanceof FormData) appendCurrentProjectFields(body);
   if (body instanceof FormData) body.delete("queue_count");
   options.body = body;
   return { options, prompt, referenceUrl };
@@ -1426,6 +1520,11 @@ function templateRequestMetadata(payload, shot = {}, index = -1) {
 
 function appendTemplateRequestMetadata(target, payload, shot = {}, index = -1) {
   const metadata = templateRequestMetadata(payload, shot, index);
+  const project = currentProject();
+  if (project) {
+    metadata.project_id = project.id;
+    metadata.project_title = project.title || "";
+  }
   if (target instanceof FormData) {
     Object.entries(metadata).forEach(([key, value]) => target.set(key, value));
     return target;
@@ -5374,6 +5473,7 @@ async function loadLibrary(resetVisible = true, useCache = false) {
     }
     libraryCachedItems = data.items || [];
     populateLibraryOperationFilter(libraryCachedItems);
+    populateLibraryProjectFilter(libraryCachedItems);
   }
   if (resetVisible) libraryVisibleCount = libraryPageSize;
   selectedItems.clear();
@@ -5443,6 +5543,38 @@ function populateLibraryOperationFilter(items) {
   libraryOperationFilter = select.value;
 }
 
+function projectTitleForId(id, fallback = "") {
+  const project = projectItems.find(item => item.id === id);
+  return project?.title || fallback || id || "";
+}
+
+function itemProjectId(item) {
+  return String(item.extra?.project_id || "");
+}
+
+function itemProjectTitle(item) {
+  return String(item.extra?.project_title || projectTitleForId(itemProjectId(item)) || "");
+}
+
+function populateLibraryProjectFilter(items) {
+  const select = document.querySelector("#libraryProjectFilter");
+  if (!select) return;
+  const current = select.value || libraryProjectFilter || "all";
+  const ids = new Set(projectItems.map(item => item.id));
+  (items || []).forEach(item => {
+    const id = itemProjectId(item);
+    if (id) ids.add(id);
+  });
+  const options = [...ids]
+    .filter(Boolean)
+    .sort((a, b) => projectTitleForId(a).localeCompare(projectTitleForId(b), "ko"))
+    .map(id => `<option value="${escapeHtml(id)}">${escapeHtml(projectTitleForId(id, "이름 없는 프로젝트"))}</option>`)
+    .join("");
+  select.innerHTML = `<option value="all">모든 프로젝트</option><option value="none">프로젝트 없음</option>${options}`;
+  select.value = current === "none" || ids.has(current) ? current : "all";
+  libraryProjectFilter = select.value;
+}
+
 function itemSearchText(item) {
   const extra = item.extra || {};
   return [
@@ -5455,6 +5587,8 @@ function itemSearchText(item) {
     extra.template_title,
     extra.template_shot_title,
     extra.template_shot_method,
+    extra.project_title,
+    extra.project_id,
     extra.batch_mode,
     extra.source_original_name,
     extra.source_page_name,
@@ -5503,12 +5637,16 @@ function applyLibraryFilters(items) {
     const operation = libraryOperation(item);
     const mangaItem = isMangaOperation(operation);
     const templateItem = isTemplateLibraryItem(item);
+    const projectFilterActive = libraryProjectFilter !== "all";
     if (libraryFilter === "manga" && !mangaItem) return false;
     if (libraryFilter === "template" && !templateItem) return false;
-    if (!["manga", "template"].includes(libraryFilter) && libraryOperationFilter === "all" && (mangaItem || templateItem)) return false;
+    if (!projectFilterActive && !["manga", "template"].includes(libraryFilter) && libraryOperationFilter === "all" && (mangaItem || templateItem)) return false;
     if (libraryFilter === "image" && item.kind === "video") return false;
     if (libraryFilter === "video" && item.kind !== "video") return false;
     if (libraryFilter === "favorite" && !item.favorite) return false;
+    const projectId = itemProjectId(item);
+    if (libraryProjectFilter === "none" && projectId) return false;
+    if (!["all", "none"].includes(libraryProjectFilter) && projectId !== libraryProjectFilter) return false;
     if (libraryOperationFilter !== "all" && operation !== libraryOperationFilter) return false;
     if (!passesDateFilter(item)) return false;
     if (query && !query.split(/\s+/).every(token => itemSearchText(item).includes(token))) return false;
@@ -5580,6 +5718,7 @@ function renderLibraryGrid(grid, allItems, items) {
     node.dataset.kind = item.kind;
     node.dataset.isFavorite = item.favorite ? "true" : "false";
     const resolution = item.kind === "video" ? (item.extra?.resolution || item.extra?.requested_resolution || "") : "";
+    const projectTitle = itemProjectTitle(item);
     const favoriteClass = item.favorite ? " active" : "";
     const favoritePressed = item.favorite ? "true" : "false";
     node.innerHTML = `
@@ -5590,6 +5729,7 @@ function renderLibraryGrid(grid, allItems, items) {
       <div class="meta">
         <strong>${item.kind} · ${item.model}</strong>
         <div>${new Date(item.created_at).toLocaleString()}</div>
+        ${projectTitle ? `<small class="project-badge">Project · ${escapeHtml(projectTitle)}</small>` : ""}
         <button type="button" class="prompt-text" data-view-prompt>${escapeHtml(item.prompt)}</button>
         <div class="item-actions">
           <button type="button" class="danger-btn" data-delete>삭제</button>
@@ -5626,6 +5766,7 @@ function createLibraryItemNode(item) {
   node.dataset.kind = item.kind;
   node.dataset.isFavorite = item.favorite ? "true" : "false";
   const resolution = item.kind === "video" ? (item.extra?.resolution || item.extra?.requested_resolution || "") : "";
+  const projectTitle = itemProjectTitle(item);
   const favoriteClass = item.favorite ? " active" : "";
   const favoritePressed = item.favorite ? "true" : "false";
   node.innerHTML = `
@@ -5636,6 +5777,7 @@ function createLibraryItemNode(item) {
     <div class="meta">
       <strong>${escapeHtml(item.kind)} · ${escapeHtml(item.model || "")}</strong>
       <div>${new Date(item.created_at).toLocaleString()}</div>
+      ${projectTitle ? `<small class="project-badge">Project · ${escapeHtml(projectTitle)}</small>` : ""}
       <small>${escapeHtml(libraryOperationLabel(libraryOperation(item)))}</small>
       <button type="button" class="prompt-text" data-view-prompt>${escapeHtml(item.prompt || "")}</button>
       <div class="item-actions">
@@ -6065,6 +6207,10 @@ document.querySelector("#librarySearch")?.addEventListener("input", event => {
 });
 document.querySelector("#libraryOperationFilter")?.addEventListener("change", event => {
   libraryOperationFilter = event.target.value;
+  rerenderLibrary();
+});
+document.querySelector("#libraryProjectFilter")?.addEventListener("change", event => {
+  libraryProjectFilter = event.target.value;
   rerenderLibrary();
 });
 document.querySelector("#libraryDateFilter")?.addEventListener("change", event => {
@@ -6614,6 +6760,85 @@ renderStatus = function renderStatus(data) {
     }
   }
 };
+
+document.querySelector("#projectSelector")?.addEventListener("change", event => {
+  setCurrentProject(event.target.value);
+  rerenderLibrary(false);
+});
+
+document.querySelector("#newProject")?.addEventListener("click", () => {
+  currentProjectId = "";
+  try { localStorage.removeItem(projectPrefsKey); } catch {}
+  resetProjectForm();
+  renderProjectControls();
+});
+
+document.querySelector("#projectForm")?.addEventListener("input", event => {
+  event.currentTarget.dataset.dirty = "true";
+});
+
+document.querySelector("#projectForm")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = Object.fromEntries(new FormData(form).entries());
+  payload.favorite = form.elements.favorite.checked;
+  try {
+    const data = await postJson("/api/projects", payload);
+    form.dataset.dirty = "";
+    await loadProjects();
+    setCurrentProject(data.item.id);
+    showToast(data.created ? "프로젝트를 만들었습니다." : "프로젝트를 저장했습니다.");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
+
+document.querySelector("#deleteProject")?.addEventListener("click", async () => {
+  const id = document.querySelector("#projectForm")?.elements.id.value || currentProjectId;
+  if (!id) {
+    showToast("삭제할 프로젝트를 선택해 주세요.", true);
+    return;
+  }
+  try {
+    await postJson("/api/projects/delete", { ids: [id] });
+    if (currentProjectId === id) setCurrentProject("");
+    resetProjectForm();
+    await loadProjects();
+    await rerenderLibrary(false);
+    showToast("프로젝트를 삭제했습니다.");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
+
+document.querySelector("#projectList")?.addEventListener("click", async event => {
+  const card = event.target.closest("[data-project-id]");
+  if (!card) return;
+  const id = card.dataset.projectId;
+  const item = projectItems.find(project => project.id === id);
+  if (!item) return;
+  if (event.target.closest("[data-project-favorite]")) {
+    event.preventDefault();
+    event.stopPropagation();
+    const next = !item.favorite;
+    try {
+      await postJson("/api/projects/favorite", { id, favorite: next });
+      await loadProjects();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+    return;
+  }
+  if (event.target.closest("[data-project-edit]")) {
+    resetProjectForm(item);
+    return;
+  }
+  if (event.target.closest("[data-project-select]")) {
+    setCurrentProject(id);
+    resetProjectForm(item);
+    await rerenderLibrary(false);
+  }
+});
 
 document.querySelector("#providerForm")?.addEventListener("submit", async event => {
   event.preventDefault();
@@ -7238,4 +7463,5 @@ installQuotaPanel();
 syncLibraryPreferenceControls();
 renderQueue();
 loadHealth();
+loadProjects().catch(error => showToast(error.message, true));
 loadLibrary();

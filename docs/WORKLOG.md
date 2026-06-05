@@ -755,3 +755,24 @@
   - Flask test client로 템플릿/블록 저장 시 `edit_input_mode=stitch`와 `image_resolution=2k` 보존 확인.
   - `http://127.0.0.1:7863/?v=20260605-v3-49` 및 `/static/app.js?v=20260605-v3-49`에서 v49 HTML/JS와 새 선택 UI 코드 확인.
 - 백업: `backups/before-template-edit-input-mode-20260605-133907`
+
+### 프로젝트 작업공간 1차
+- 목표: 특정 테마/작업 묶음을 프로젝트로 선택하고, 이후 생성되는 결과물을 프로젝트별로 추적할 수 있게 한다.
+- 결정:
+  - 프로젝트는 저장 경로의 `projects.json`에 별도로 저장한다.
+  - 현재 프로젝트 선택은 브라우저 `localStorage`에 유지한다.
+  - 결과물 파일 자체는 기존 저장 구조를 유지하고, 라이브러리 메타데이터 `extra.project_*` 값으로 프로젝트 연결을 기록한다.
+- 변경:
+  - `app.py`: 프로젝트 저장소 초기화, 프로젝트 CRUD API, 즐겨찾기 토글, 생성/편집/영상화/연장/영상편집/망가 배치 결과의 프로젝트 메타데이터 저장 추가.
+  - `templates/index.html`: 상단 프로젝트 선택기, 라이브러리 프로젝트 필터, 설정 탭 프로젝트 관리 카드 추가.
+  - `static/app.js`: 프로젝트 로드/선택/저장/삭제/즐겨찾기, 요청 payload 자동 태깅, 라이브러리 프로젝트 필터와 프로젝트 배지 표시 추가.
+  - `static/styles.css`: 프로젝트 선택기, 설정 카드, 목록, 배지 스타일 추가.
+  - `README.md`: 프로젝트 작업공간과 라이브러리 프로젝트 필터 설명 추가.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260605-v3-50` / `webgui-shell-v3-50`으로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - 임시 app 복사본의 Flask test client로 `/api/projects` 생성/목록/즐겨찾기/삭제와 mock `/api/t2i` 결과 `extra.project_id`, `extra.project_title`, `extra.project_result` 저장 확인.
+  - 실제 v3 서버를 `http://127.0.0.1:7863`에 재시작하고 `/health`, `/api/projects`, `/static/app.js?v=20260605-v3-50`, `/?v=20260605-v3-50` 응답 확인.
+- 백업: `backups/before-projects-phase1-20260605-142200`

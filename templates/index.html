@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260605-v3-49">
+  <link rel="stylesheet" href="/static/styles.css?v=20260605-v3-50">
 </head>
 <body>
   <header class="topbar">
@@ -20,6 +20,12 @@
         <div class="brand-line">
           <h1>WebGUI.v3</h1>
         </div>
+      </div>
+      <div class="project-switcher" aria-label="현재 프로젝트">
+        <span>Project</span>
+        <select id="projectSelector" aria-label="프로젝트 선택">
+          <option value="">프로젝트 없음</option>
+        </select>
       </div>
       <div class="header-status">
         <div class="status-pill compact-status" id="statusPill">상태 확인 중</div>
@@ -919,6 +925,10 @@
           <select id="libraryOperationFilter" aria-label="작업 필터">
             <option value="all">모든 작업</option>
           </select>
+          <select id="libraryProjectFilter" aria-label="프로젝트 필터">
+            <option value="all">모든 프로젝트</option>
+            <option value="none">프로젝트 없음</option>
+          </select>
           <select id="libraryDateFilter" aria-label="날짜 필터">
             <option value="all">전체 날짜</option>
             <option value="today">오늘</option>
@@ -962,6 +972,33 @@
 
     <section class="panel" id="settings">
       <div class="settings-grid">
+        <div class="settings-card project-settings-card">
+          <h2>Project</h2>
+          <p class="note">현재 선택한 프로젝트는 이후 생성되는 이미지, 영상, 템플릿 결과물에 자동으로 기록됩니다.</p>
+          <div class="project-current">
+            <span>현재</span>
+            <strong id="currentProjectTitle">프로젝트 없음</strong>
+            <button type="button" class="secondary compact-btn" id="newProject">새 프로젝트</button>
+          </div>
+          <form id="projectForm" class="inline-form">
+            <input type="hidden" name="id">
+            <label>프로젝트 이름</label>
+            <input type="text" name="title" autocomplete="off" placeholder="예: 여름 바닷가 시리즈">
+            <label>설명</label>
+            <textarea name="description" placeholder="테마, 캐릭터, 톤, 참고할 방향을 적어둡니다."></textarea>
+            <label>태그</label>
+            <input type="text" name="tags" autocomplete="off" placeholder="쉼표로 구분">
+            <label class="check-row">
+              <input type="checkbox" name="favorite" value="true">
+              <span>즐겨찾기</span>
+            </label>
+            <div class="button-row">
+              <button type="submit">프로젝트 저장</button>
+              <button type="button" id="deleteProject" class="danger-btn">삭제</button>
+            </div>
+          </form>
+          <div class="project-list" id="projectList"></div>
+        </div>
         <div class="settings-card">
           <h2>Provider</h2>
           <form id="providerForm" class="inline-form">
@@ -1124,6 +1161,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260605-v3-49"></script>
+  <script src="/static/app.js?v=20260605-v3-50"></script>
 </body>
 </html>
