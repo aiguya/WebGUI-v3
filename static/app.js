@@ -218,8 +218,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260604-v3-47";
-const appShellCacheName = "webgui-shell-v3-47";
+const appStaticVersion = "20260605-v3-48";
+const appShellCacheName = "webgui-shell-v3-48";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -4189,6 +4189,56 @@ function templateRuntimePayload() {
   return { ...payload, variables, slots, run_mode: templateRunState.mode === "manual" ? "manual" : "auto" };
 }
 
+function templateSlotFileAccept(kind) {
+  return kind === "video" ? "video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" : "image/png,image/jpeg,image/webp";
+}
+
+function templateSlotFileMatchesKind(file, kind) {
+  const name = String(file?.name || "").toLowerCase();
+  const type = String(file?.type || "").toLowerCase();
+  if (kind === "video") {
+    return type.startsWith("video/") || [".mp4", ".webm", ".mov"].some(ext => name.endsWith(ext));
+  }
+  return type.startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp"].some(ext => name.endsWith(ext));
+}
+
+function templateRunSlotFromEvent(event) {
+  return event.target.closest("[data-template-run-slot]");
+}
+
+async function uploadTemplateSlotFile(row, file) {
+  const key = row?.dataset.templateRunSlot || "";
+  const kind = row?.dataset.templateSlotKind === "video" ? "video" : "image";
+  if (!key || !file) return;
+  if (!templateSlotFileMatchesKind(file, kind)) {
+    throw new Error(kind === "video" ? "영상 슬롯에는 mp4, webm, mov 파일만 넣을 수 있습니다." : "이미지 슬롯에는 jpg, png, webp 파일만 넣을 수 있습니다.");
+  }
+  row.classList.add("is-uploading");
+  const body = new FormData();
+  body.set("slot_key", key);
+  body.set("kind", kind);
+  body.set("file", file, file.name || `template-slot.${kind === "video" ? "mp4" : "png"}`);
+  try {
+    const response = await fetch("/api/template-slot-upload", { method: "POST", body });
+    const data = await response.json();
+    if (!data.ok) rememberApiError(data);
+    if (!data.ok) throw new Error(data.error || data.detail || "템플릿 슬롯 파일 업로드에 실패했습니다.");
+    const item = data.item;
+    templateRunState.slots[key] = {
+      path: item.file_path,
+      label: item.extra?.original_name || item.prompt || item.file_path,
+      kind: item.kind === "video" ? "video" : "image",
+      source: "upload",
+    };
+    renderTemplateRunPanel();
+    renderTemplatePreview();
+    loadLibrary();
+    showToast("템플릿 슬롯에 파일을 연결했습니다.");
+  } finally {
+    row.classList.remove("is-uploading");
+  }
+}
+
 function renderTemplateRunPanel() {
   const payload = templatePayloadFromEditor();
   syncTemplateRunDefaults(payload);
@@ -4217,15 +4267,17 @@ function renderTemplateRunPanel() {
             : `<img src="${selected.path}" alt="">`)
           : `<span class="template-slot-empty">${kind === "video" ? "영상 미선택" : "이미지 미선택"}</span>`;
         return `
-          <article class="template-run-slot" data-template-run-slot="${escapeHtml(slot.key)}">
+          <article class="template-run-slot" data-template-run-slot="${escapeHtml(slot.key)}" data-template-slot-kind="${kind}" tabindex="0">
             <button type="button" class="template-slot-preview" data-template-slot-preview ${selected ? "" : "disabled"}>${preview}</button>
             <div>
               <strong>${escapeHtml(slot.label || slot.key)}</strong>
-              <small>${escapeHtml(slot.key)} · ${kind}${slot.note ? ` · ${escapeHtml(slot.note)}` : ""} · Ctrl+클릭 삽입</small>
+              <small>${escapeHtml(slot.key)} · ${kind}${slot.note ? ` · ${escapeHtml(slot.note)}` : ""} · 드롭/붙여넣기 가능 · Ctrl+클릭 삽입</small>
               <div class="template-slot-actions">
                 <button type="button" class="secondary" data-template-slot-pick data-template-slot-kind="${kind}">라이브러리</button>
+                <button type="button" class="secondary" data-template-slot-upload>파일</button>
                 <button type="button" class="secondary" data-template-slot-clear ${selected ? "" : "disabled"}>해제</button>
               </div>
+              <input type="file" data-template-slot-upload-input accept="${templateSlotFileAccept(kind)}" hidden>
             </div>
           </article>`;
       }).join("")
@@ -4989,9 +5041,9 @@ document.querySelector("#templateRunSlots")?.addEventListener("click", event => 
   const row = event.target.closest("[data-template-run-slot]");
   if (!row) return;
   const key = row.dataset.templateRunSlot;
-  if (event.ctrlKey || event.metaKey) {
-    event.preventDefault();
-    insertTemplateSlotReference(key);
+  row.focus({ preventScroll: true });
+  if (event.target.closest("[data-template-slot-upload]")) {
+    row.querySelector("[data-template-slot-upload-input]")?.click();
     return;
   }
   if (event.target.closest("[data-template-slot-pick]")) {
@@ -5008,7 +5060,53 @@ document.querySelector("#templateRunSlots")?.addEventListener("click", event => 
   if (event.target.closest("[data-template-slot-preview]")) {
     const slot = templateRunState.slots[key];
     if (slot?.path) openMediaViewer(slot.path, slot.kind === "video" ? "video" : "image");
+    return;
   }
+  if (event.ctrlKey || event.metaKey) {
+    event.preventDefault();
+    insertTemplateSlotReference(key);
+  }
+});
+
+document.querySelector("#templateRunSlots")?.addEventListener("change", event => {
+  const input = event.target.closest("[data-template-slot-upload-input]");
+  if (!input) return;
+  const row = input.closest("[data-template-run-slot]");
+  const file = input.files?.[0];
+  uploadTemplateSlotFile(row, file).catch(error => showToast(error.message, true)).finally(() => {
+    input.value = "";
+  });
+});
+
+document.querySelector("#templateRunSlots")?.addEventListener("dragover", event => {
+  const row = templateRunSlotFromEvent(event);
+  if (!row) return;
+  event.preventDefault();
+  row.classList.add("is-drop-target");
+});
+
+document.querySelector("#templateRunSlots")?.addEventListener("dragleave", event => {
+  const row = templateRunSlotFromEvent(event);
+  if (!row || row.contains(event.relatedTarget)) return;
+  row.classList.remove("is-drop-target");
+});
+
+document.querySelector("#templateRunSlots")?.addEventListener("drop", event => {
+  const row = templateRunSlotFromEvent(event);
+  if (!row) return;
+  event.preventDefault();
+  row.classList.remove("is-drop-target");
+  const file = Array.from(event.dataTransfer?.files || [])[0];
+  uploadTemplateSlotFile(row, file).catch(error => showToast(error.message, true));
+});
+
+document.querySelector("#templateRunSlots")?.addEventListener("paste", event => {
+  const row = templateRunSlotFromEvent(event);
+  if (!row) return;
+  const file = Array.from(event.clipboardData?.files || [])[0];
+  if (!file) return;
+  event.preventDefault();
+  uploadTemplateSlotFile(row, file).catch(error => showToast(error.message, true));
 });
 
 document.querySelector("#templateRunConsole")?.addEventListener("click", event => {

@@ -4319,6 +4319,62 @@ def delete_video_template_blocks():
     return jsonify({"ok": True, "deleted": len(items) - len(keep)})
 
 
+@app.post("/api/template-slot-upload")
+def template_slot_upload():
+    uploaded = request.files.get("file")
+    if not uploaded or not uploaded.filename:
+        return safe_error("슬롯에 넣을 파일을 선택해 주세요.")
+    slot_key = (request.form.get("slot_key") or "").strip()
+    kind = (request.form.get("kind") or "image").strip().lower()
+    filename = secure_filename(uploaded.filename) or "upload"
+    suffix = Path(filename).suffix.lower()
+    try:
+        if kind == "video":
+            if suffix not in {".mp4", ".webm", ".mov"}:
+                return safe_error("영상 슬롯에는 mp4, webm, mov 파일만 넣을 수 있습니다.", status=400)
+            ensure_media_dirs()
+            dest = media_path("uploads", f"{now_stamp()}-{uuid.uuid4().hex}-template-slot{suffix}")
+            uploaded.save(dest)
+            item = add_metadata(
+                "video",
+                f"Template slot video: {uploaded.filename}",
+                "upload",
+                dest,
+                extra={
+                    "origin": "upload",
+                    "used_for": "template-slot",
+                    "slot_key": slot_key,
+                    "original_name": uploaded.filename,
+                },
+            )
+        else:
+            if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+                return safe_error("이미지 슬롯에는 jpg, png, webp 파일만 넣을 수 있습니다.", status=400)
+            ensure_media_dirs()
+            blob = read_uploaded_bytes(uploaded)
+            existing, existing_item = find_existing_image_by_bytes(blob)
+            if existing:
+                item = existing_item or register_uploaded_image_source(existing, "template-slot", original_name=uploaded.filename)
+            else:
+                dest = media_path("image", f"{now_stamp()}-{uuid.uuid4().hex}-template-slot{suffix}")
+                dest.write_bytes(blob)
+                item = add_metadata(
+                    "image",
+                    f"Template slot image: {uploaded.filename}",
+                    "upload",
+                    dest,
+                    extra={
+                        "origin": "upload",
+                        "used_for": "template-slot",
+                        "slot_key": slot_key,
+                        "original_name": uploaded.filename,
+                    },
+                )
+        return jsonify({"ok": True, "item": item})
+    except Exception as exc:
+        return safe_error("템플릿 슬롯 파일 업로드에 실패했습니다.", exc, 502)
+
+
 @app.post("/api/t2i")
 def t2i():
     payload = request.get_json(silent=True) or {}

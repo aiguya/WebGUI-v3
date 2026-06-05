@@ -721,3 +721,21 @@
   - `http://127.0.0.1:7863/?v=20260604-v3-47`에서 새 HTML 정적 버전 서빙 확인.
   - `/static/app.js?v=20260604-v3-47`에서 `data-shot-image-resolution`, `templateImageResolutionLabels`, `/api/t2i` JSON 요청의 `image_resolution`, `/api/i2i` FormData 요청의 `image_resolution` 포함 확인.
 - 백업: `backups/before-template-image-resolution-20260604-193456`
+
+### 템플릿 실행 슬롯 파일 입력
+- 목표: 템플릿 실행 준비의 배우/레퍼런스 슬롯에 라이브러리 선택뿐 아니라 파일 선택, 드래그앤드랍, 클립보드 붙여넣기로 이미지를 바로 넣을 수 있게 한다.
+- 변경:
+  - `app.py`: `/api/template-slot-upload`를 추가해 이미지/영상 슬롯 파일을 저장하고 라이브러리 메타데이터로 등록하도록 했다.
+  - `static/app.js`: 템플릿 실행 슬롯 카드에 `파일` 버튼과 숨김 파일 입력을 추가했다.
+  - `static/app.js`: 슬롯 카드에 드래그앤드랍, 붙여넣기, 파일 선택 업로드 이벤트를 연결하고 업로드 결과를 `templateRunState.slots`에 즉시 반영하도록 했다.
+  - `static/styles.css`: 슬롯 드롭/업로드 진행 상태와 3개 액션 버튼 레이아웃을 추가했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260605-v3-48` / `webgui-shell-v3-48`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과.
+  - Flask test client로 `/api/template-slot-upload` 이미지 슬롯 업로드, 메타데이터 등록, 테스트 파일 정리 확인.
+  - `http://127.0.0.1:7863/?v=20260605-v3-48`에서 새 HTML 정적 버전 서빙 확인.
+  - `/static/app.js?v=20260605-v3-48`에서 슬롯 업로드 버튼, 붙여넣기 이벤트, `/api/template-slot-upload` 호출 포함 확인.
+  - `/static/styles.css?v=20260605-v3-48`에서 슬롯 드롭 상태 스타일 포함 확인.
+- 백업: `backups/before-template-slot-upload-20260605-132202`

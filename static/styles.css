@@ -7317,6 +7317,13 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   background: rgba(94, 234, 212, .035);
 }
 
+.template-run-slot.is-drop-target,
+.template-run-slot.is-uploading {
+  border-color: rgba(94, 234, 212, .72);
+  background: rgba(94, 234, 212, .08);
+  box-shadow: inset 0 0 0 1px rgba(94, 234, 212, .18);
+}
+
 .template-slot-preview {
   width: 58px;
   height: 58px;
@@ -7366,7 +7373,7 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
 .template-slot-actions,
 .template-run-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
   gap: 7px;
   margin-top: 7px;
 }
