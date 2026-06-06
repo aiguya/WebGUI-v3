@@ -76,6 +76,9 @@ GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES = [
     "official:imagine-x-1",
     "official:imagine_h_1",
 ]
+GROK_OFFICIAL_VIDEO_MODEL_CANDIDATES = [
+    "grok-imagine-video",
+]
 GROK_OFFICIAL_IMAGE_MODEL_NAMES = {
     "official:imagine-x-1": "imagine-x-1",
     "official:imagine_h_1": "imagine_h_1",
@@ -6309,6 +6312,7 @@ def health():
             "hermes_image_candidates": unique_model_ids(HERMES_IMAGE_MODEL_CANDIDATES + cfg.get("hermes_discovered_image_models", [])),
             "hermes_video_candidates": unique_model_ids(HERMES_VIDEO_MODEL_CANDIDATES + cfg.get("hermes_discovered_video_models", [])),
             "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),
+            "grok_official_video_candidates": unique_model_ids(GROK_OFFICIAL_VIDEO_MODEL_CANDIDATES),
             "hermes_discovered_image": cfg.get("hermes_discovered_image_models", []),
             "hermes_discovered_video": cfg.get("hermes_discovered_video_models", []),
         },
@@ -6452,6 +6456,7 @@ def auth_status_payload(include_balance=False):
             "hermes_image_candidates": unique_model_ids(HERMES_IMAGE_MODEL_CANDIDATES + cfg.get("hermes_discovered_image_models", [])),
             "hermes_video_candidates": unique_model_ids(HERMES_VIDEO_MODEL_CANDIDATES + cfg.get("hermes_discovered_video_models", [])),
             "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),
+            "grok_official_video_candidates": unique_model_ids(GROK_OFFICIAL_VIDEO_MODEL_CANDIDATES),
             "hermes_discovered_image": cfg.get("hermes_discovered_image_models", []),
             "hermes_discovered_video": cfg.get("hermes_discovered_video_models", []),
         },

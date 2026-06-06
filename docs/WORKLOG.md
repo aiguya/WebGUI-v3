@@ -940,3 +940,24 @@
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
   - WebGUI 서버를 재시작하고 `/health` 200, Grok 공식홈 세션 쿠키 연결, Codex proxy 실행 상태를 확인했다.
 - 백업: `backups/after-grok-official-moderation-ws-message-20260606-234830`
+
+### 요청 경로별 모델 선택지 분리
+- 목표: 이미지 생성, 이미지 편집, 이미지→영상, 영상 연장, 프레임 연장, 템플릿 블록에서 요청 경로를 선택하면 해당 경로에서 사용할 수 있는 모델만 보이도록 한다.
+- 확인:
+  - 기존 UI는 `applyHermesModelCandidates()`가 모든 `video_model` select에 Hermes 후보를 주입하고, 공식홈 경로 선택 시 이를 다시 숨기지 않아 공식홈 영상 생성 모델에 Hermes 후보가 함께 보였다.
+  - 이미지 모델은 공식 모델 숨김 처리만 일부 있었고, Hermes 경로에서는 Codex/공식 모델까지 남을 수 있었다.
+  - 영상 연장/프레임 연장 폼에는 `request_provider` select가 없어 경로별 모델 필터를 적용할 기준이 부족했다.
+- 변경:
+  - `app.py`: `/health`, `/api/auth/status` 모델 응답에 `grok_official_video_candidates`를 추가했다. 현재 공식홈 영상 pipeline 후보는 `grok-imagine-video`만 노출한다.
+  - `templates/index.html`: 영상 연장과 프레임 연장 폼에 요청 경로 select를 추가했다.
+  - `static/app.js`: 모델 후보 상태를 Hermes 이미지/영상, Grok 공식홈 이미지/영상으로 분리하고, 각 폼의 `request_provider` 값에 따라 모델 option을 숨김/비활성화하도록 변경했다.
+  - `static/app.js`: 템플릿 shot 카드에 요청 경로 select를 노출하고, 이미지/편집/i2v/공식 연장/프레임 연장 블록의 모델 목록도 경로별로 다시 그리도록 보강했다.
+  - `templates/index.html`, `static/app.js`, `static/service-worker.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260605-v3-61` / `webgui-shell-v3-61`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - Flask test client `/health`에서 `grok_official_video_candidates == ["grok-imagine-video"]` 확인.
+  - Flask test client `/`와 `/static/app.js?v=20260605-v3-61`에서 v61 HTML/JS 서빙 확인.
+  - 실제 실행 서버를 재시작하고 `http://127.0.0.1:7863/health` 200, Grok 공식홈 세션 쿠키 연결, Codex proxy 실행 상태, v61 HTML/JS 서빙을 확인했다.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+- 백업: `backups/after-route-scoped-model-selects-20260606-235828`

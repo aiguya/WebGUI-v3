@@ -177,6 +177,17 @@ function requestProviderLabel(provider) {
   })[provider] || "";
 }
 
+const modelRouteState = {
+  hermesImage: new Set(),
+  hermesVideo: new Set(),
+  officialImage: new Set(["official:imagine-x-1", "official:imagine_h_1"]),
+  officialVideo: new Set(["grok-imagine-video"]),
+};
+
+const officialVideoModelLabels = {
+  "grok-imagine-video": "Grok Official · Media Pipeline",
+};
+
 const iconSvg = paths => `
   <svg class="tab-svg" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
     ${paths}
@@ -256,8 +267,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-60";
-const appShellCacheName = "webgui-shell-v3-60";
+const appStaticVersion = "20260605-v3-61";
+const appShellCacheName = "webgui-shell-v3-61";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -2719,9 +2730,7 @@ document.querySelectorAll("form[data-endpoint]").forEach(form => {
   form.querySelector("[name='image_model']")?.addEventListener("change", () => updateGrokResolutionControls(form));
   form.querySelector("[name='video_model']")?.addEventListener("change", () => enforceI2vReferenceLimit(form, true));
   form.querySelector("[name='request_provider']")?.addEventListener("change", () => {
-    syncOfficialImageModelOptions(form);
-    updateI2vReferenceHelp(form);
-    enforceI2vReferenceLimit(form, true);
+    syncFormModelOptions(form);
   });
   form.querySelector("[data-save-form-template-block]")?.addEventListener("click", event => {
     saveFormTemplateBlock(form, event.currentTarget).catch(error => showToast(error.message, true));
@@ -3831,31 +3840,31 @@ const templateMethodLabels = {
 
 const templateMethodUi = {
   image: {
-    fields: new Set(["image_model", "image_resolution", "output_slot", "prompt", "retry", "notes"]),
+    fields: new Set(["request_provider", "image_model", "image_resolution", "output_slot", "prompt", "retry", "notes"]),
     hint: "텍스트 프롬프트만 사용해 이미지를 생성합니다. 이미지 참조가 필요하면 이미지 편집 블록을 사용하세요.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
   },
   edit: {
-    fields: new Set(["image_model", "image_resolution", "edit_input_mode", "references", "output_slot", "prompt", "retry", "notes"]),
+    fields: new Set(["request_provider", "image_model", "image_resolution", "edit_input_mode", "references", "output_slot", "prompt", "retry", "notes"]),
     hint: "이미지 슬롯을 1~3개 참조해 편집합니다. 첫 번째 슬롯이 메인 이미지가 됩니다.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
   },
   i2v: {
-    fields: new Set(["video_model", "duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
+    fields: new Set(["request_provider", "video_model", "duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
     hint: "이미지 슬롯 또는 직전 이미지 결과를 바탕으로 영상을 생성합니다.",
     referenceLabel: "이미지 슬롯",
     referencePlaceholder: "main_actor",
   },
   official: {
-    fields: new Set(["video_model", "duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
+    fields: new Set(["request_provider", "video_model", "duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
     hint: "영상 슬롯 또는 직전 영상 결과를 공식 연장으로 이어갑니다.",
     referenceLabel: "영상 슬롯",
     referencePlaceholder: "source_video",
   },
   frame: {
-    fields: new Set(["video_model", "duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
+    fields: new Set(["request_provider", "video_model", "duration", "reference", "transition", "prompt", "camera", "retry", "notes"]),
     hint: "영상 슬롯 또는 직전 영상 결과의 마지막 프레임을 기준으로 새 구간을 생성합니다.",
     referenceLabel: "영상 슬롯",
     referencePlaceholder: "source_video",
@@ -3895,7 +3904,12 @@ const templateVideoModelLabels = {
 };
 
 const templateOfficialVideoModelLabels = {
-  "grok-imagine-video": "Grok 영상",
+  ...officialVideoModelLabels,
+};
+
+const templateRequestProviderLabels = {
+  hermes_proxy: "Hermes Proxy",
+  grok_official: "Grok 공식홈 Quota",
 };
 
 const templateTransitionLabels = {
@@ -4024,20 +4038,60 @@ function templateReferenceLimitedShot(shot, limit = 3) {
   };
 }
 
+function defaultTemplateRequestProvider(method, imageModel = "") {
+  if (String(imageModel || "").startsWith("official:")) return "grok_official";
+  return method === "official" || method === "frame" ? "grok_official" : "hermes_proxy";
+}
+
+function templateRouteModelLabels(kind, provider) {
+  const labels = kind === "image"
+    ? (provider === "grok_official" ? officialImageModelLabels : templateImageModelLabels)
+    : (provider === "grok_official" ? templateOfficialVideoModelLabels : templateVideoModelLabels);
+  const allowed = allowedModelSet(kind, provider);
+  if (!allowed.size) return labels;
+  const routed = Object.fromEntries(Object.entries(labels).filter(([model]) => allowed.has(model)));
+  allowed.forEach(model => {
+    if (!routed[model]) {
+      routed[model] = provider === "grok_official"
+        ? `Grok Official · ${String(model).replace(/^official:/, "")}`
+        : `Hermes · ${model}`;
+    }
+  });
+  return routed;
+}
+
+function syncTemplateShotModelOptions(row, method) {
+  const providerSelect = row.querySelector("[data-shot-request-provider]");
+  const provider = providerSelect?.value || defaultTemplateRequestProvider(method, row.querySelector("[data-shot-image-model]")?.value || "");
+  const imageModel = row.querySelector("[data-shot-image-model]");
+  if (imageModel) {
+    const labels = templateRouteModelLabels("image", provider);
+    const fallback = Object.keys(labels)[0] || (provider === "grok_official" ? "official:imagine-x-1" : "grok-imagine-image-quality");
+    const current = labels[imageModel.value] ? imageModel.value : fallback;
+    imageModel.innerHTML = templateModelOptionList(labels, current, fallback);
+  }
+  const videoModel = row.querySelector("[data-shot-video-model]");
+  if (videoModel) {
+    const labels = templateRouteModelLabels("video", provider);
+    const fallback = Object.keys(labels)[0] || "grok-imagine-video";
+    const current = labels[videoModel.value] ? videoModel.value : fallback;
+    videoModel.innerHTML = templateModelOptionList(labels, current, fallback);
+  }
+}
+
 function applyTemplateShotMethodUi(row) {
   if (!row) return;
   const method = row.querySelector("[data-shot-method]")?.value || "i2v";
   const config = templateMethodConfig(method);
   row.dataset.templateMethod = method;
+  const providerSelect = row.querySelector("[data-shot-request-provider]");
+  if (providerSelect && !providerSelect.value) {
+    providerSelect.value = defaultTemplateRequestProvider(method, row.querySelector("[data-shot-image-model]")?.value || "");
+  }
+  syncTemplateShotModelOptions(row, method);
   const imageModel = row.querySelector("[data-shot-image-model]");
-  if (imageModel && !templateImageModelLabels[imageModel.value]) imageModel.value = "grok-imagine-image-quality";
   updateTemplateShotImageResolutionControls(row);
   const videoModel = row.querySelector("[data-shot-video-model]");
-  if (videoModel) {
-    const labels = method === "official" ? templateOfficialVideoModelLabels : templateVideoModelLabels;
-    const current = labels[videoModel.value] ? videoModel.value : "grok-imagine-video";
-    videoModel.innerHTML = templateModelOptionList(labels, current, "grok-imagine-video");
-  }
   const singleReference = row.querySelector("[data-shot-reference]");
   const referenceSlots = Array.from(row.querySelectorAll("[data-shot-reference-slot]"));
   const useMultiI2vReferences = method === "i2v" && !isSingleReferenceVideoModel(videoModel?.value);
@@ -4132,7 +4186,6 @@ function renderTemplateShots(items = []) {
     return `
     <article class="template-shot-card" data-template-shot>
       <input type="hidden" data-shot-id value="${escapeHtml(item.id || "")}">
-      <input type="hidden" data-shot-request-provider value="${escapeHtml(item.request_provider || "")}">
       <div class="template-shot-head">
         <span>${String(index + 1).padStart(2, "0")}</span>
         <input type="text" data-shot-title placeholder="컷 이름" value="${escapeHtml(item.title || `컷 ${index + 1}`)}">
@@ -4147,6 +4200,10 @@ function renderTemplateShots(items = []) {
         <div>
           <label>방식</label>
           <select data-shot-method>${templateOptionList(templateMethodLabels, item.method || "i2v")}</select>
+        </div>
+        <div data-shot-field="request_provider">
+          <label>요청 경로</label>
+          <select data-shot-request-provider>${templateOptionList(templateRequestProviderLabels, item.request_provider || defaultTemplateRequestProvider(item.method || "i2v", item.image_model || ""))}</select>
         </div>
         <div data-shot-field="image_model">
           <label>이미지 모델</label>
@@ -5214,7 +5271,7 @@ document.querySelector("#templateBlockList")?.addEventListener("click", event =>
 
 videoTemplateForm()?.addEventListener("input", renderTemplatePreview);
 videoTemplateForm()?.addEventListener("change", event => {
-  if (event.target.matches("[data-shot-method], [data-shot-video-model], [data-shot-image-model]")) {
+  if (event.target.matches("[data-shot-method], [data-shot-request-provider], [data-shot-video-model], [data-shot-image-model]")) {
     applyTemplateShotMethodUi(event.target.closest("[data-template-shot]"));
   }
   renderTemplatePreview();
@@ -6852,44 +6909,102 @@ function ensureModelOption(select, value, labelPrefix = "Hermes", label = "", da
   });
 }
 
-function syncOfficialImageModelOptions(form) {
-  const select = form?.querySelector("select[name='image_model']");
-  if (!select) return;
-  const official = requestProviderForForm(form) === "grok_official";
-  [...select.options].forEach(option => {
-    if (option.dataset.officialModel !== "1") return;
-    option.disabled = !official;
-    option.hidden = !official;
+function markExistingModelOptions() {
+  document.querySelectorAll("select[name='image_model'] option").forEach(option => {
+    if (option.value.startsWith("official:")) option.dataset.officialImageModel = "1";
+    if (option.value.startsWith("grok-imagine-image") || option.value.startsWith("imagine")) option.dataset.hermesImageModel = "1";
   });
-  if (!official && select.selectedOptions[0]?.dataset.officialModel === "1") {
-    select.value = "grok-imagine-image-quality";
+  document.querySelectorAll("select[name='video_model'] option").forEach(option => {
+    if (modelRouteState.officialVideo.has(option.value)) option.dataset.officialVideoModel = "1";
+    if (option.value.startsWith("grok-imagine-video") || option.value.startsWith("imagine-video") || option.value === "video-gen") {
+      option.dataset.hermesVideoModel = "1";
+    }
+  });
+}
+
+function allowedModelSet(kind, provider) {
+  if (kind === "image") return provider === "grok_official" ? modelRouteState.officialImage : modelRouteState.hermesImage;
+  if (kind === "video") return provider === "grok_official" ? modelRouteState.officialVideo : modelRouteState.hermesVideo;
+  return new Set();
+}
+
+function optionAllowedForRoute(option, kind, provider) {
+  const allowed = allowedModelSet(kind, provider);
+  if (!allowed.size) return true;
+  return allowed.has(option.value);
+}
+
+function firstVisibleOption(select) {
+  return [...select.options].find(option => !option.hidden && !option.disabled);
+}
+
+function syncModelSelectForRoute(select, kind, provider) {
+  if (!select) return;
+  [...select.options].forEach(option => {
+    const allowed = optionAllowedForRoute(option, kind, provider);
+    option.disabled = !allowed;
+    option.hidden = !allowed;
+  });
+  if (select.selectedOptions[0]?.hidden || select.selectedOptions[0]?.disabled) {
+    const fallback = firstVisibleOption(select);
+    if (fallback) select.value = fallback.value;
   }
 }
 
-function applyOfficialImageModelCandidates(models = {}) {
+function syncFormModelOptions(form) {
+  if (!form) return;
+  const provider = requestProviderForForm(form) || "hermes_proxy";
+  syncModelSelectForRoute(form.querySelector("select[name='image_model']"), "image", provider);
+  syncModelSelectForRoute(form.querySelector("select[name='video_model']"), "video", provider);
+  updateGrokResolutionControls(form);
+  updateI2vReferenceHelp(form);
+  enforceI2vReferenceLimit(form, false);
+}
+
+function syncAllRouteModelOptions() {
+  markExistingModelOptions();
+  document.querySelectorAll("form[data-endpoint]").forEach(syncFormModelOptions);
+  syncTemplateShotMethodUi();
+}
+
+function applyOfficialModelCandidates(models = {}) {
   const imageModels = models.grok_official_image_candidates || Object.keys(officialImageModelLabels);
+  const videoModels = models.grok_official_video_candidates || Object.keys(officialVideoModelLabels);
+  modelRouteState.officialImage = new Set(imageModels);
+  modelRouteState.officialVideo = new Set(videoModels);
   document.querySelectorAll("select[name='image_model']").forEach(select => {
     imageModels.forEach(model => ensureModelOption(
       select,
       model,
       "Grok Official",
       officialImageModelLabels[model] || `Grok Official · ${model.replace(/^official:/, "")}`,
-      { officialModel: "1" },
+      { officialImageModel: "1" },
     ));
   });
-  document.querySelectorAll("form[data-endpoint]").forEach(form => syncOfficialImageModelOptions(form));
+  document.querySelectorAll("select[name='video_model']").forEach(select => {
+    videoModels.forEach(model => ensureModelOption(
+      select,
+      model,
+      "Grok Official",
+      officialVideoModelLabels[model] || `Grok Official · ${model}`,
+      { officialVideoModel: "1" },
+    ));
+  });
+  syncAllRouteModelOptions();
 }
 
 function applyHermesModelCandidates(models = {}) {
   const imageModels = models.hermes_image_candidates || [];
   const videoModels = models.hermes_video_candidates || [];
+  modelRouteState.hermesImage = new Set(imageModels);
+  modelRouteState.hermesVideo = new Set(videoModels);
   document.querySelectorAll("select[name='image_model']").forEach(select => {
-    imageModels.forEach(model => ensureModelOption(select, model));
+    imageModels.forEach(model => ensureModelOption(select, model, "Hermes", "", { hermesImageModel: "1" }));
   });
   document.querySelectorAll("select[name='video_model']").forEach(select => {
-    videoModels.forEach(model => ensureModelOption(select, model));
+    videoModels.forEach(model => ensureModelOption(select, model, "Hermes", "", { hermesVideoModel: "1" }));
   });
-  applyOfficialImageModelCandidates(models);
+  applyOfficialModelCandidates(models);
 }
 
 function renderStatus(data) {

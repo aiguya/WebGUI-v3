@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260605-v3-60">
+  <link rel="stylesheet" href="/static/styles.css?v=20260605-v3-61">
 </head>
 <body>
   <header class="topbar">
@@ -297,6 +297,11 @@
             <h2>공식 영상 연장</h2>
             <span>Official Extension API</span>
           </div>
+          <label>요청 경로</label>
+          <select name="request_provider" data-request-provider>
+            <option value="grok_official">Grok 공식홈 Quota</option>
+            <option value="hermes_proxy">Hermes Proxy</option>
+          </select>
           <label>이어붙일 원본 영상</label>
           <div class="source-picker">
             <div class="drop-zone" data-file-drop data-media-type="video">
@@ -354,6 +359,11 @@
             <h2>프레임 기반 연장</h2>
             <span>Last Frame + Local Concat</span>
           </div>
+          <label>요청 경로</label>
+          <select name="request_provider" data-request-provider>
+            <option value="grok_official">Grok 공식홈 Quota</option>
+            <option value="hermes_proxy">Hermes Proxy</option>
+          </select>
           <label>이어붙일 원본 영상</label>
           <div class="source-picker">
             <div class="drop-zone" data-file-drop data-media-type="video">
@@ -1182,6 +1192,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260605-v3-60"></script>
+  <script src="/static/app.js?v=20260605-v3-61"></script>
 </body>
 </html>
