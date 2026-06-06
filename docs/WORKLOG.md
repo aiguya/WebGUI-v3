@@ -854,3 +854,18 @@
   - `/health` 200 응답 확인.
   - `run_webgork_app.bat`의 실행 URL이 `20260605-v3-59`로 변경됐는지 확인.
 - 백업: `backups/after-launch-state-check-20260606-230420`
+
+### 런처 health-check 타임아웃 수정
+- 목표: 서버가 실제로 200 응답을 반환하는데도 `run_webgork_app.bat`가 `Server did not start.`로 종료되는 문제를 해결한다.
+- 확인:
+  - `/health`는 Grok 공식홈 상태 확인까지 포함해 약 2.5초가 걸렸다.
+  - 기존 배치 파일은 시작 대기 중 `/health`를 `TimeoutSec 1`로 호출해서, Flask 로그에는 200이 찍혀도 PowerShell 쪽은 타임아웃으로 실패 처리했다.
+  - 실패 시 앱 창 로딩 요청인 `GET /?v=...`가 찍히지 않았다.
+- 변경:
+  - `run_webgork_app.bat`: 서버 준비 확인 URL을 무거운 `/health`에서 가벼운 `/`로 바꿨다.
+  - `run_webgork_app.bat`: 준비 확인 timeout을 5초로 늘리고, 성공 시 `exit 0`을 명시하도록 유지했다.
+- 검증:
+  - `cmd /c run_webgork_app.bat` 실제 실행 시 `Server did not start.` 메시지가 사라짐을 확인.
+  - 로그에서 `GET /?v=20260605-v3-59`, `/static/app.js?v=20260605-v3-59`, `/api/projects`, `/api/grok-official/status` 요청 확인.
+  - 현재 `127.0.0.1:7863` 리스너는 1개이며 `/health` 200 응답 확인.
+- 백업: `backups/after-launch-health-timeout-fix-20260606-231339`

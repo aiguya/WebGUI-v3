@@ -42,7 +42,7 @@ if not %errorlevel%==0 (
   )
 )
 
-powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }" >nul 2>nul
+powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/ -TimeoutSec 5 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>nul
 if not %errorlevel%==0 (
   echo Starting WebGUI.v3 server...
   if exist "%~dp0work\run_server.py" (
@@ -50,7 +50,7 @@ if not %errorlevel%==0 (
   ) else (
     start "WebGUI.v3 Server" /min cmd /c "set WEBGORK_OPEN_BROWSER=0&& set WEBGORK_PORT=7863&& %PYTHON_CMD% app.py"
   )
-  powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){ try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 1 > $null; $ok=$true; break } catch { Start-Sleep -Milliseconds 500 } }; if(-not $ok){ exit 1 }"
+  powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){ try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/ -TimeoutSec 5 | Out-Null; $ok=$true; break } catch { Start-Sleep -Milliseconds 500 } }; if($ok){ exit 0 } else { exit 1 }"
   if not %errorlevel%==0 (
     echo Server did not start.
     echo Check the server log:
