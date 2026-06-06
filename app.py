@@ -2868,6 +2868,30 @@ def grok_official_ws_error_message(event):
     return f"Grok 공식홈 WebSocket 오류: {detail or json.dumps(event, ensure_ascii=False)[:500]}"
 
 
+def grok_official_image_blocked_message(blocked_reason):
+    reason = str(blocked_reason or "moderated=true").strip()
+    return (
+        "Grok 공식홈에서 요청이 검열/차단되어 이미지를 저장하지 않았습니다. "
+        f"{reason}. 프롬프트를 완화하거나 다른 표현으로 다시 시도해 주세요."
+    )
+
+
+def grok_official_ws_closed_message(json_events, blobs, account_id, completed=False, blocked_reason="", image_urls=None):
+    image_urls = image_urls or []
+    detail = (
+        f"events={len(json_events)}, blobs={len(blobs)}, "
+        f"completed={bool(completed)}, account_id={bool(account_id)}"
+    )
+    if blocked_reason and not (blobs or image_urls):
+        return f"{grok_official_image_blocked_message(blocked_reason)} ({detail})"
+    if completed and not (blobs or image_urls):
+        return (
+            "Grok 공식홈이 완료 상태를 보냈지만 이미지 blob/URL을 반환하지 않았습니다. "
+            f"{detail}"
+        )
+    return f"Grok 공식홈 WebSocket이 완료 이미지 응답 전에 닫혔습니다. {detail}"
+
+
 def grok_official_json_error(response):
     try:
         return json.dumps(response.json(), ensure_ascii=False)[:1200]
@@ -4217,26 +4241,31 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
                     break
                 continue
             except RuntimeError as exc:
+                closed_error = ws_error_message or grok_official_ws_closed_message(
+                    json_events,
+                    blobs,
+                    account_id,
+                    completed=completed,
+                    blocked_reason=blocked_reason,
+                    image_urls=[*image_urls, image_url] if image_url else image_urls,
+                )
                 update_grok_official_progress(
-                    status="failed" if not (completed and (blobs or image_url)) else "running",
+                    status="failed" if not (completed and (blobs or image_url or image_urls)) else "running",
                     stage="closed",
                     message="Grok official WebSocket closed",
-                    error=ws_error_message or str(exc),
+                    error=closed_error,
                     event_count=len(json_events),
                     blob_count=len(blobs),
-                    image_url_found=bool(image_url),
+                    image_url_found=bool(image_url or image_urls),
                     completed=completed,
                     blocked_reason=blocked_reason,
                     ws_error=ws_error_message,
                 )
-                if completed and (blobs or image_url):
+                if completed and (blobs or image_url or image_urls):
                     break
                 if ws_error_message:
                     raise RuntimeError(ws_error_message) from exc
-                raise RuntimeError(
-                    "Grok 공식홈 WebSocket이 완료 이미지 응답 전에 닫혔습니다. "
-                    f"events={len(json_events)}, blobs={len(blobs)}, account_id={bool(account_id)}"
-                ) from exc
+                raise RuntimeError(closed_error) from exc
             if kind == "binary":
                 if len(data) > 1024:
                     blobs.append(data)
@@ -4338,17 +4367,18 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
         )
         raise RuntimeError(ws_error_message)
     if blocked_reason and not (blobs or image_url or image_urls):
+        blocked_message = grok_official_image_blocked_message(blocked_reason)
         update_grok_official_progress(
             status="failed",
             stage="blocked",
             message="Grok official request was blocked or moderated",
-            error=blocked_reason,
+            error=blocked_message,
             event_count=len(json_events),
             blob_count=len(blobs),
-            image_url_found=bool(image_url),
+            image_url_found=bool(image_url or image_urls),
             completed=completed,
         )
-        raise RuntimeError(f"Grok 공식홈에서 요청이 검열/차단되어 이미지를 저장하지 않았습니다. {blocked_reason}")
+        raise RuntimeError(blocked_message)
     if not completed:
         update_grok_official_progress(
             status="failed",
@@ -4361,8 +4391,14 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
             completed=completed,
         )
         raise RuntimeError(
-            "Grok 공식홈 WebSocket이 완료 이벤트 전에 닫혀 이미지를 저장하지 않았습니다. "
-            f"events={len(json_events)}, blobs={len(blobs)}, account_id={bool(account_id)}"
+            grok_official_ws_closed_message(
+                json_events,
+                blobs,
+                account_id,
+                completed=completed,
+                blocked_reason=blocked_reason,
+                image_urls=[*image_urls, image_url] if image_url else image_urls,
+            )
         )
     path = None
     output_paths = []

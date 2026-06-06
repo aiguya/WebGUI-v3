@@ -923,3 +923,20 @@
   - Flask test client `/health`에서 `grok-imagine-video-latest`가 `models.hermes_video_candidates`에 포함되지 않는지 확인.
   - WebGUI 서버를 재시작하고 실제 `/health` 응답에서도 latest 후보 제거와 7863/3333 리스너 정상 상태를 확인했다.
 - 백업: `backups/after-video-model-latest-fallback-20260606-233652`
+
+### Grok 공식홈 이미지 생성 moderation 완료 응답 진단 보강
+- 목표: `official:imagine_h_1` 이미지 생성이 `completed=true`, `moderated=true`, `blobs=0`으로 끝나는 경우를 단순 WebSocket 종료 오류로 오진하지 않도록 한다.
+- 확인:
+  - `/api/grok-official/progress`에서 실패 요청은 `event_count=8`, `blob_count=0`, `completed=true`, `blocked_reason=moderated=true`, `last_event_status=completed` 상태였다.
+  - 이 케이스는 연결 실패가 아니라 공식홈이 검열/모더레이션으로 결과 blob/URL을 보내지 않은 완료 응답이다.
+- 변경:
+  - `app.py`: `grok_official_image_blocked_message()`와 `grok_official_ws_closed_message()`를 추가해 차단, 완료 후 결과 없음, 일반 WebSocket 종료를 분리했다.
+  - `app.py`: WebSocket 수신 중 `RuntimeError`가 발생해도 이미 받은 이벤트에 `blocked_reason`이 있으면 “검열/차단되어 이미지를 저장하지 않았습니다” 안내를 반환하도록 변경했다.
+  - `app.py`: 완료 상태에서 URL 목록만 있는 경우도 성공 후보로 판단하도록 close 처리 조건을 보강했다.
+  - `app.py`: post-loop 차단 처리의 progress `error`에도 사용자 안내 문구를 남기도록 정리했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `grok_official_ws_closed_message()` 단위 확인으로 `moderated=true` 메시지가 차단 안내문에 포함되는지 확인.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - WebGUI 서버를 재시작하고 `/health` 200, Grok 공식홈 세션 쿠키 연결, Codex proxy 실행 상태를 확인했다.
+- 백업: `backups/after-grok-official-moderation-ws-message-20260606-234830`
