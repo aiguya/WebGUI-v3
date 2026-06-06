@@ -2569,6 +2569,27 @@ class CdpWebSocket:
         raise TimeoutError(f"CDP call timed out: {method}")
 
 
+def grok_official_is_cloudflare_challenge(text):
+    lowered = (text or "").lower()
+    return (
+        "just a moment" in lowered
+        or "challenges.cloudflare.com" in lowered
+        or "cf-chl" in lowered
+        or ("<!doctype html" in lowered and "cloudflare" in lowered)
+        or ("<html" in lowered and "cloudflare" in lowered)
+    )
+
+
+def grok_official_cloudflare_upload_message(status, detail=""):
+    hint = (
+        "Grok 공식홈 업로드가 Cloudflare 검증 페이지로 차단되었습니다. "
+        "Grok 공식홈 Chrome에서 grok.com/imagine을 열어 검증/로그인 상태를 확인한 뒤 다시 시도해 주세요. "
+        "계속 반복되면 공식홈 업로드 API가 현재 세션에서 차단된 상태이므로 Grok Agent 탭의 참조 asset 명령 경로를 사용해 주세요."
+    )
+    preview = " ".join((detail or "").split())[:240]
+    return f"{hint} HTTP {status}" + (f" / {preview}" if preview else "")
+
+
 def grok_official_browser_fetch(url, body=None, method="POST", timeout=360):
     tab = grok_imagine_tab()
     body_json = json.dumps(body or {}, ensure_ascii=False, separators=(",", ":"))
@@ -3035,6 +3056,240 @@ def grok_official_download(url, dest_dir, kind="image", return_url=False):
         detail = grok_official_json_error(last_response)
         raise RuntimeError(f"Grok 공식홈 미디어 다운로드 실패: {last_response.status_code}. attempts={attempts}. tried={tried}. {detail}")
     raise RuntimeError("Grok 공식홈 미디어 다운로드 응답이 없습니다.")
+
+
+def grok_agent_parse_json_lines(text):
+    events = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        if not line or line == "[DONE]":
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return events
+
+
+def grok_agent_extract_card_json(value):
+    cards = []
+
+    def parse_card(raw):
+        if isinstance(raw, dict):
+            cards.append(raw)
+            return
+        if not isinstance(raw, str) or not raw.strip():
+            return
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return
+        if isinstance(parsed, dict):
+            cards.append(parsed)
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "jsonData" in node:
+                parse_card(node.get("jsonData"))
+            for key, item in node.items():
+                if key == "cardAttachmentsJson" and isinstance(item, list):
+                    for raw in item:
+                        parse_card(raw)
+                else:
+                    walk(item)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(value)
+    return cards
+
+
+def grok_agent_media_candidates_from_event(event):
+    candidates = []
+
+    def add(url, kind="", meta=None):
+        if not isinstance(url, str) or not url.strip():
+            return
+        url = url.strip()
+        if not kind:
+            lowered = url.lower()
+            kind = "video" if lowered.endswith((".mp4", ".webm", ".mov")) or "generated_video" in lowered else "image"
+        if any(item.get("url") == url for item in candidates):
+            return
+        candidates.append({"url": url, "kind": kind, "meta": meta or {}})
+
+    for card in grok_agent_extract_card_json(event):
+        card_type = str(card.get("type") or card.get("cardType") or "")
+        video_chunk = card.get("video_chunk") if isinstance(card.get("video_chunk"), dict) else {}
+        image_chunk = card.get("image_chunk") if isinstance(card.get("image_chunk"), dict) else {}
+        if video_chunk.get("videoUrl"):
+            add(video_chunk.get("videoUrl"), "video", {"card": card})
+        if image_chunk.get("imageUrl"):
+            add(image_chunk.get("imageUrl"), "image", {"card": card})
+        for key in ("url", "mediaUrl", "imageUrl", "videoUrl"):
+            if card.get(key):
+                kind = "video" if "video" in card_type.lower() or str(card.get("mime_type") or "").startswith("video/") else ""
+                add(card.get(key), kind, {"card": card})
+    for url in grok_official_extract_urls(event, kind="video"):
+        add(url, "video", {"source": "extract_urls"})
+    for url in grok_official_extract_urls(event, kind="image"):
+        add(url, "image", {"source": "extract_urls"})
+    for url in recursive_find_values(
+        event,
+        lambda item: isinstance(item, str)
+        and len(item) < 1500
+        and (
+            item.startswith(("http://", "https://", "users/", "/"))
+            or "imagine-public.x.ai/" in item
+            or "assets.grok.com/" in item
+        )
+        and (
+            "/generated/" in item
+            or "imagine-public.x.ai/" in item
+            or "assets.grok.com/" in item
+        )
+        and not item.startswith("data:"),
+        limit=40,
+    ):
+        add(url, "", {"source": "recursive"})
+    return candidates
+
+
+def grok_agent_parse_stream(text):
+    events = grok_agent_parse_json_lines(text)
+    media_candidates = []
+    messages = []
+    tool_calls = []
+    conversation_id = ""
+    response_ids = []
+    progress = 0
+    moderated = []
+    for event in events:
+        result = event.get("result") if isinstance(event, dict) else None
+        if not isinstance(result, dict):
+            continue
+        conversation = result.get("conversation")
+        if isinstance(conversation, dict) and conversation.get("conversationId"):
+            conversation_id = conversation.get("conversationId")
+        for response_key in ("response", "userResponse", "modelResponse"):
+            response_value = result.get(response_key)
+            if isinstance(response_value, dict) and response_value.get("responseId") and response_value.get("responseId") not in response_ids:
+                response_ids.append(response_value.get("responseId"))
+        if result.get("responseId") and result.get("responseId") not in response_ids:
+            response_ids.append(result.get("responseId"))
+        for card in grok_agent_extract_card_json(event):
+            for chunk_name in ("video_chunk", "image_chunk"):
+                chunk = card.get(chunk_name) if isinstance(card.get(chunk_name), dict) else {}
+                chunk_progress = chunk.get("progress")
+                if isinstance(chunk_progress, (int, float)):
+                    progress = max(progress, int(chunk_progress))
+                if "moderated" in chunk:
+                    moderated.append(bool(chunk.get("moderated")))
+        for candidate in grok_agent_media_candidates_from_event(event):
+            if not any(item["url"] == candidate["url"] for item in media_candidates):
+                media_candidates.append(candidate)
+        token = result.get("token")
+        if isinstance(token, str) and token:
+            messages.append(token)
+        response_value = result.get("response")
+        if isinstance(response_value, dict) and isinstance(response_value.get("token"), str) and response_value.get("token"):
+            messages.append(response_value.get("token"))
+        model_response = result.get("modelResponse") or (response_value.get("modelResponse") if isinstance(response_value, dict) else None)
+        if isinstance(model_response, dict) and model_response.get("message"):
+            messages.append(model_response.get("message"))
+        for tool in recursive_find_values(
+            event,
+            lambda item: isinstance(item, str) and item.startswith("{") and ("asset_id" in item or "resolution_name" in item or "prompt" in item),
+            limit=20,
+        ):
+            if tool not in tool_calls:
+                tool_calls.append(tool)
+    return {
+        "events": events,
+        "event_count": len(events),
+        "media_candidates": media_candidates,
+        "messages": messages[-40:],
+        "tool_calls": tool_calls[-20:],
+        "conversation_id": conversation_id,
+        "response_ids": response_ids[-20:],
+        "progress": progress,
+        "moderated": moderated[-20:],
+    }
+
+
+def grok_agent_request_body(message, parent_response_id=""):
+    body = {
+        "message": message,
+        "disableSearch": False,
+        "enableImageGeneration": True,
+        "imageAttachments": [],
+        "fileAttachments": [],
+        "enableImageStreaming": True,
+        "enableSideBySide": False,
+        "sendFinalMetadata": True,
+        "disableTextFollowUps": True,
+        "disableMemory": False,
+        "skipCancelCurrentInflightRequests": True,
+        "modeId": "imagine-agent-mode",
+    }
+    if parent_response_id:
+        body["parentResponseId"] = parent_response_id
+    return body
+
+
+def grok_agent_run(message, conversation_id="", parent_response_id="", timeout=420):
+    conversation_id = (conversation_id or "").strip()
+    endpoint = (
+        f"https://grok.com/rest/app-chat/conversations/{conversation_id}/responses"
+        if conversation_id
+        else "https://grok.com/rest/app-chat/conversations/new"
+    )
+    body = grok_agent_request_body(message, parent_response_id=parent_response_id)
+    reset_grok_official_progress(
+        status="running",
+        stage="agent",
+        message="Grok Agent request sent",
+        prompt_preview=message[:160],
+        agent_conversation_id=conversation_id,
+    )
+    browser_response = grok_official_browser_fetch(endpoint, body=body, timeout=timeout)
+    status = int(browser_response.get("status") or 0)
+    text = browser_response.get("text") or ""
+    if status >= 400:
+        raise RuntimeError(f"Grok Agent request failed: {status} {text[:1200]}")
+    parsed = grok_agent_parse_stream(text)
+    parsed["request_body"] = body
+    parsed["request_url"] = endpoint
+    parsed["http_status"] = status
+    update_grok_official_progress(
+        status="done" if parsed.get("media_candidates") else "failed",
+        stage="agent",
+        message="Grok Agent response parsed",
+        event_count=parsed.get("event_count"),
+        progress=parsed.get("progress"),
+        media_candidate_count=len(parsed.get("media_candidates") or []),
+        agent_conversation_id=parsed.get("conversation_id") or conversation_id,
+    )
+    return parsed
+
+
+def grok_agent_download_result(parsed):
+    errors = []
+    candidates = sorted(parsed.get("media_candidates") or [], key=lambda item: 0 if item.get("kind") == "video" else 1)
+    for candidate in candidates:
+        url = candidate.get("url")
+        kind = candidate.get("kind") or "image"
+        try:
+            path, used_url = grok_official_download(url, media_path("video" if kind == "video" else "image"), kind=kind, return_url=True)
+            return path, used_url, kind, candidate
+        except Exception as exc:
+            errors.append(f"{url}: {str(exc)[:500]}")
+    if parsed.get("moderated") and all(parsed.get("moderated")):
+        raise RuntimeError("Grok Agent result was moderated and no downloadable media was returned.")
+    raise RuntimeError("Grok Agent 응답에서 다운로드 가능한 이미지/영상 URL을 찾지 못했습니다. " + "; ".join(errors[-5:]))
 
 
 def grok_official_browser_generated_urls():
@@ -3662,10 +3917,7 @@ def grok_official_upload_file(path, account_id=None):
             response.status_code == 403
             and (
                 "anti-bot" in lowered_detail
-                or "just a moment" in lowered_detail
-                or "challenges.cloudflare.com" in lowered_detail
-                or "<!doctype html" in lowered_detail
-                or "<html" in lowered_detail
+                or grok_official_is_cloudflare_challenge(detail)
             )
         )
         if should_try_browser_upload:
@@ -3675,12 +3927,17 @@ def grok_official_upload_file(path, account_id=None):
                 timeout=240,
             )
             if int(browser_response.get("status") or 0) >= 400:
-                raise RuntimeError(f"Grok official browser upload failed: {browser_response.get('status')} {(browser_response.get('text') or '')[:1200]}")
+                browser_text = browser_response.get("text") or ""
+                if grok_official_is_cloudflare_challenge(browser_text):
+                    raise RuntimeError(grok_official_cloudflare_upload_message(browser_response.get("status"), browser_text))
+                raise RuntimeError(f"Grok official browser upload failed: {browser_response.get('status')} {browser_text[:1200]}")
             try:
                 payload = json.loads(browser_response.get("text") or "{}") or {}
             except json.JSONDecodeError as exc:
                 raise RuntimeError(f"Grok official browser upload returned non-JSON response: {(browser_response.get('text') or '')[:1200]}") from exc
         else:
+            if grok_official_is_cloudflare_challenge(detail):
+                raise RuntimeError(grok_official_cloudflare_upload_message(response.status_code, detail))
             raise RuntimeError(f"Grok official upload failed: {response.status_code} {detail}")
     else:
         payload = response.json() or {}
@@ -7771,6 +8028,60 @@ def grok_official_i2v():
         return safe_error(str(exc))
     except Exception as exc:
         return safe_error("Grok 공식홈 이미지→영상 생성에 실패했습니다.", exc, 502)
+
+
+@app.post("/api/grok-agent")
+def grok_agent():
+    prompt = (request.form.get("prompt") or "").strip()
+    agent_task = (request.form.get("agent_task") or "auto").strip().lower()
+    conversation_id = (request.form.get("conversation_id") or "").strip()
+    parent_response_id = (request.form.get("parent_response_id") or "").strip()
+    if not prompt:
+        return safe_error("Grok Agent 명령을 입력해 주세요.")
+    task_prefix = {
+        "auto": "",
+        "image": "이미지를 생성해줘. ",
+        "image_edit": "이미지를 편집해줘. ",
+        "i2v": "이미지 또는 참조 asset을 영상으로 만들어줘. ",
+        "video": "영상을 생성해줘. ",
+    }.get(agent_task, "")
+    message = (task_prefix + prompt).strip()
+    try:
+        parsed = grok_agent_run(
+            message,
+            conversation_id=conversation_id,
+            parent_response_id=parent_response_id,
+        )
+        path, used_url, result_kind, candidate = grok_agent_download_result(parsed)
+        model = "grok-agent-imagine"
+        extra = {
+            "source": "grok_official_web",
+            "request_provider": "grok_agent",
+            "official_transport": "app_chat_agent",
+            "agent_task": agent_task,
+            "agent_message": message,
+            "agent_conversation_id": parsed.get("conversation_id") or conversation_id,
+            "agent_response_ids": parsed.get("response_ids"),
+            "agent_progress": parsed.get("progress"),
+            "agent_media_url": used_url,
+            "agent_media_candidate": candidate,
+            "agent_media_candidates": parsed.get("media_candidates"),
+            "agent_tool_calls": parsed.get("tool_calls"),
+            "agent_messages": parsed.get("messages"),
+            "agent_event_count": parsed.get("event_count"),
+            "agent_request_url": parsed.get("request_url"),
+            "agent_request_body": parsed.get("request_body"),
+            "agent_moderated_flags": parsed.get("moderated"),
+            "grok_account_id": active_grok_account_id(),
+        }
+        extra.update(prompt_planner_request_metadata(request.form, prompt))
+        extra.update(template_request_metadata(request.form))
+        extra.update(project_request_metadata(request.form))
+        item_kind = "video" if result_kind == "video" else ("edit" if agent_task == "image_edit" else "image")
+        item = add_metadata(item_kind, prompt, model, path, extra=extra)
+        return jsonify({"ok": True, "item": item, "agent": json_safe(extra)})
+    except Exception as exc:
+        return safe_error("Grok Agent 요청에 실패했습니다.", exc, 502)
 
 
 @app.post("/api/t2i")

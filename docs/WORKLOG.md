@@ -1007,3 +1007,25 @@
 - 검증:
   - `python -m py_compile app.py` 통과.
 - 백업: `backups/after-grok-upload-cloudflare-fallback-20260607-021123`
+
+### Grok Agent provider 탭 추가 및 공식홈 업로드 Cloudflare 차단 메시지 정리
+- 목표: 기존 Hermes Proxy/Grok 공식홈 pipeline 알고리즘을 건드리지 않고, Grok Imagine Agent 호출을 별도 provider 탭으로 추가한다.
+- 확인:
+  - Agent 명령은 `https://grok.com/rest/app-chat/conversations/new` 또는 기존 conversation의 `/responses`를 Chrome 세션 fetch로 호출한다.
+  - 응답은 단일 JSON이 아니라 newline-delimited JSON 스트림이며, `cardAttachment.jsonData`, `cardAttachmentsJson`, `video_chunk.videoUrl`, `render_imagine_media.url` 등에서 결과 미디어 URL을 찾는다.
+  - 이미지→영상 공식홈 업로드 오류는 브라우저 fetch fallback까지 진입한 뒤에도 Cloudflare `Just a moment...` HTML 403을 받을 수 있다.
+- 변경:
+  - `app.py`: `grok_agent_*` helper와 `/api/grok-agent` route를 추가해 Agent 자동/이미지 생성/이미지 편집/이미지→영상/영상 생성 명령을 별도 경로로 실행하도록 했다.
+  - `app.py`: Agent 스트림 파서가 큰 JSON 문자열 자체를 미디어 URL로 오인하지 않도록 URL 후보 조건을 좁혔다.
+  - `app.py`: Grok 공식홈 업로드가 Cloudflare 검증 페이지로 차단될 때 긴 HTML 대신 원인과 조치 안내를 반환하도록 정리했다.
+  - `templates/index.html`: Grok Agent 탭과 독립 패널을 추가했다.
+  - `static/app.js`: `/api/grok-agent` 큐 라벨과 결과 탭 매핑을 추가했다.
+  - `templates/index.html`, `static/app.js`, `static/service-worker.js`, `run_webgork_app.bat`: 정적 버전/캐시를 `20260605-v3-62` / `webgui-shell-v3-62`로 갱신했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `node --check static/app.js` 통과.
+  - Flask test client `/health` 200 확인.
+  - Flask test client `/`에서 `grokAgent`, `/api/grok-agent`, `20260605-v3-62` 포함 확인.
+  - Cloudflare challenge 문자열 판별 함수가 `True`를 반환하는지 확인.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+- 백업: `backups/after-grok-agent-provider-cloudflare-upload-message-20260607-000000`

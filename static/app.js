@@ -267,8 +267,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-61";
-const appShellCacheName = "webgui-shell-v3-61";
+const appStaticVersion = "20260605-v3-62";
+const appShellCacheName = "webgui-shell-v3-62";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -926,6 +926,7 @@ function endpointLabel(endpoint, provider = "") {
     "/api/v2v-extend": "공식 연장",
     "/api/v2v-frame-extend": "프레임 연장",
     "/api/video-edit": "영상 편집",
+    "/api/grok-agent": "Grok Agent",
     "/api/manga-batch": "망가 실사화·역식",
     "/api/reverse-prompt": "그림 → 프롬프트",
   })[endpoint] || "작업";
@@ -946,6 +947,7 @@ function tabIdForEndpoint(endpoint) {
     "/api/v2v-extend": "v2v",
     "/api/v2v-frame-extend": "v2vFrame",
     "/api/video-edit": "videoEdit",
+    "/api/grok-agent": "grokAgent",
     "/api/manga-batch": "mangaBatch",
     "/api/reverse-prompt": "reverse",
   })[endpoint] || null;
