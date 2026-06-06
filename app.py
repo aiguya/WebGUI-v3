@@ -3573,6 +3573,75 @@ def grok_official_pipeline_event_summary(event):
     return json_safe(summary)
 
 
+def grok_official_pipeline_state(event):
+    state = {
+        "pipeline_status": "",
+        "step_name": "",
+        "step_status": "",
+        "progress": None,
+        "running": False,
+        "completed": False,
+        "failed": False,
+        "blocked_reason": "",
+        "message": "",
+    }
+
+    result = event.get("result") if isinstance(event, dict) else None
+    if isinstance(result, dict):
+        state["pipeline_status"] = str(result.get("pipelineStatus") or result.get("status") or "")
+        progress = result.get("overallProgressPct")
+        if isinstance(progress, (int, float)):
+            state["progress"] = progress
+        steps = result.get("steps") if isinstance(result.get("steps"), list) else []
+        if steps:
+            step = steps[-1] if isinstance(steps[-1], dict) else {}
+            state["step_name"] = str(step.get("stepName") or "")
+            state["step_status"] = str(step.get("status") or "")
+            step_progress = step.get("progressPct")
+            if isinstance(step_progress, (int, float)):
+                state["progress"] = step_progress
+
+    status_text = " ".join(
+        str(value or "") for value in (
+            state["pipeline_status"],
+            state["step_status"],
+            event.get("status") if isinstance(event, dict) else "",
+            event.get("current_status") if isinstance(event, dict) else "",
+            event.get("message") if isinstance(event, dict) else "",
+            event.get("error") if isinstance(event, dict) else "",
+        )
+    ).lower()
+    state["running"] = any(token in status_text for token in ("running", "draft_started", "in_progress", "processing"))
+    state["completed"] = any(token in status_text for token in ("completed", "complete", "succeeded", "success", "finished", "ready", "posted"))
+    state["failed"] = any(token in status_text for token in ("failed", "failure", "error", "rejected", "blocked", "cancelled", "canceled"))
+    if state["failed"]:
+        state["message"] = str((event.get("message") or event.get("error") or "") if isinstance(event, dict) else "")
+    block_reason = grok_official_event_block_reason(event)
+    if block_reason:
+        state["blocked_reason"] = block_reason
+        state["failed"] = True
+    return state
+
+
+def grok_official_pipeline_incomplete_message(kind, events, post_id, last_state):
+    progress = last_state.get("progress")
+    progress_text = f", progress={progress}" if progress is not None else ""
+    status_text = ", ".join(
+        part for part in (
+            f"pipeline={last_state.get('pipeline_status')}" if last_state.get("pipeline_status") else "",
+            f"step={last_state.get('step_name')}" if last_state.get("step_name") else "",
+            f"step_status={last_state.get('step_status')}" if last_state.get("step_status") else "",
+        ) if part
+    )
+    if status_text:
+        status_text = f", {status_text}"
+    return (
+        "Grok 공식홈 pipeline 스트림이 완료 이벤트 전에 종료되었습니다. "
+        "공식홈 작업이 아직 실행 중이거나 스트리밍 연결이 중간에 닫힌 상태입니다. "
+        f"kind={kind}, events={len(events)}, post_id={post_id or '-'}{progress_text}{status_text}"
+    )
+
+
 def grok_official_upload_file(path, account_id=None):
     source = Path(path)
     if not source.exists():
@@ -3661,6 +3730,8 @@ def grok_official_pipeline_run(spec, kind="video", account_id=None):
     media_refs = []
     image_ids = []
     completed = False
+    pipeline_failed = ""
+    last_state = {}
     for raw_line in response.iter_lines(decode_unicode=True):
         if not raw_line:
             continue
@@ -3677,6 +3748,28 @@ def grok_official_pipeline_run(spec, kind="video", account_id=None):
             continue
         events.append(event)
         post_id = post_id or grok_official_extract_post_id(event)
+        last_state = grok_official_pipeline_state(event)
+        if last_state.get("progress") is not None or last_state.get("pipeline_status") or last_state.get("step_status"):
+            update_grok_official_progress(
+                stage="pipeline",
+                message="Grok official pipeline running",
+                event_count=len(events),
+                post_id=post_id,
+                pipeline_status=last_state.get("pipeline_status"),
+                pipeline_step=last_state.get("step_name"),
+                pipeline_step_status=last_state.get("step_status"),
+                progress=last_state.get("progress"),
+            )
+        if last_state.get("failed"):
+            pipeline_failed = (
+                last_state.get("blocked_reason")
+                or last_state.get("message")
+                or last_state.get("step_status")
+                or last_state.get("pipeline_status")
+                or "pipeline failed"
+            )
+        if last_state.get("completed"):
+            completed = True
         media_urls.extend(url for url in grok_official_extract_urls(event, kind=kind) if url not in media_urls)
         result_payload = event.get("result") if isinstance(event, dict) and "result" in event else None
         for media_ref in grok_official_extract_media_refs(result_payload):
@@ -3699,6 +3792,31 @@ def grok_official_pipeline_run(spec, kind="video", account_id=None):
         if status_values:
             completed = True
     detail_payload = None
+    if pipeline_failed and not (media_urls or media_blobs):
+        update_grok_official_progress(
+            status="failed",
+            stage="pipeline-failed",
+            message="Grok official pipeline failed",
+            error=pipeline_failed,
+            event_count=len(events),
+            post_id=post_id,
+            completed=completed,
+            pipeline_state=last_state,
+        )
+        raise RuntimeError(f"Grok 공식홈 pipeline이 실패 상태로 종료되었습니다: {pipeline_failed}")
+    if not completed and not (media_urls or media_blobs):
+        message = grok_official_pipeline_incomplete_message(kind, events, post_id, last_state)
+        update_grok_official_progress(
+            status="failed",
+            stage="pipeline-incomplete",
+            message="Grok official pipeline stream ended before completion",
+            error=message,
+            event_count=len(events),
+            post_id=post_id,
+            completed=completed,
+            pipeline_state=last_state,
+        )
+        raise RuntimeError(message)
     if post_id and not media_urls:
         detail_payload = grok_official_post_detail(post_id, account_id=account_id)
         media_urls.extend(grok_official_extract_urls(detail_payload, kind=kind))

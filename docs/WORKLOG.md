@@ -978,3 +978,21 @@
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
   - WebGUI 서버를 재시작하고 `/health` 200, Grok 공식홈 세션 쿠키 연결, Codex proxy 실행 상태를 확인했다.
 - 백업: `backups/after-skip-grok-censor-placeholders-20260607-000520`
+
+### Grok 공식홈 pipeline 조기 종료 상태 진단 보강
+- 목표: 이미지 편집 pipeline 스트림이 `PIPELINE_STEP_STATUS_RUNNING` 상태에서 닫힌 경우를 “결과 URL/blob 없음”으로 오진하지 않도록 한다.
+- 확인:
+  - 오류 payload의 마지막 이벤트는 `MEDIA_POST_MEDIA_STATUS_DRAFT_STARTED`, `PIPELINE_STEP_STATUS_RUNNING`, `progressPct=5~10` 상태였다.
+  - 기존 코드는 스트림이 닫히면 완료 여부와 무관하게 post detail 후보 URL들을 조회했고, draft 상태라 404가 반복된 뒤 “결과 미디어 URL/blob을 찾지 못했습니다”로 실패했다.
+- 변경:
+  - `app.py`: `grok_official_pipeline_state()`를 추가해 pipeline status, step status, progress, failed/completed/running 상태를 파싱한다.
+  - `app.py`: pipeline 이벤트 수신 중 progress를 `/api/grok-official/progress`에 남기도록 했다.
+  - `app.py`: 완료 이벤트 없이 스트림이 닫히고 결과 미디어도 없으면 post detail 404 조회를 건너뛰고 `pipeline-incomplete` 오류로 반환한다.
+  - `app.py`: 실패/차단 상태가 감지되면 `pipeline-failed`로 명확히 분리한다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - 사용자가 붙여준 형태의 synthetic 이벤트에서 `running=True`, `completed=False`, `progress=10`으로 파싱되는지 확인.
+  - incomplete 메시지가 `kind=image`, `events`, `post_id`, `progress`, `pipeline`, `step_status`를 포함하는지 확인.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - WebGUI 서버를 재시작하고 `/health` 200, Grok 공식홈 세션 쿠키 연결, Codex proxy 실행 상태를 확인했다.
+- 백업: `backups/after-grok-pipeline-incomplete-status-20260607-001030`
