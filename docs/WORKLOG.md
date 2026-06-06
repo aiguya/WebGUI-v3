@@ -996,3 +996,14 @@
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
   - WebGUI 서버를 재시작하고 `/health` 200, Grok 공식홈 세션 쿠키 연결, Codex proxy 실행 상태를 확인했다.
 - 백업: `backups/after-grok-pipeline-incomplete-status-20260607-001030`
+### Grok 공식홈 업로드 Cloudflare 403 fallback 보강
+- 목표: 이미지→영상 공식홈 경로에서 `/rest/app-chat/upload-file` 직접 호출이 Cloudflare `Just a moment...` HTML 403을 반환할 때 브라우저 세션 fetch fallback을 타도록 한다.
+- 확인:
+  - 오류 detail은 JSON/anti-bot 응답이 아니라 Cloudflare challenge HTML이었다.
+  - 기존 `grok_official_upload_file()`은 403 본문에 `anti-bot` 문자열이 있을 때만 `grok_official_browser_fetch()`로 우회했다.
+- 변경:
+  - `app.py`: 업로드 403 detail에 `Just a moment`, `challenges.cloudflare.com`, `<!doctype html`, `<html`이 포함된 경우도 브라우저 세션 업로드 fallback 대상으로 분류한다.
+  - 기존 pipeline/video/image 알고리즘과 payload는 변경하지 않았다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+- 백업: `backups/after-grok-upload-cloudflare-fallback-20260607-021123`

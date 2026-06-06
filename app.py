@@ -3657,7 +3657,18 @@ def grok_official_upload_file(path, account_id=None):
     response = requests.post("https://grok.com/rest/app-chat/upload-file", headers=headers, json=body, timeout=240)
     if response.status_code >= 400:
         detail = grok_official_json_error(response)
-        if response.status_code == 403 and "anti-bot" in detail.lower():
+        lowered_detail = detail.lower()
+        should_try_browser_upload = (
+            response.status_code == 403
+            and (
+                "anti-bot" in lowered_detail
+                or "just a moment" in lowered_detail
+                or "challenges.cloudflare.com" in lowered_detail
+                or "<!doctype html" in lowered_detail
+                or "<html" in lowered_detail
+            )
+        )
+        if should_try_browser_upload:
             browser_response = grok_official_browser_fetch(
                 "https://grok.com/rest/app-chat/upload-file",
                 body=body,
