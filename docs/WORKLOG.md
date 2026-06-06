@@ -869,3 +869,25 @@
   - 로그에서 `GET /?v=20260605-v3-59`, `/static/app.js?v=20260605-v3-59`, `/api/projects`, `/api/grok-official/status` 요청 확인.
   - 현재 `127.0.0.1:7863` 리스너는 1개이며 `/health` 200 응답 확인.
 - 백업: `backups/after-launch-health-timeout-fix-20260606-231339`
+
+### Codex OAuth Proxy 연결 복구
+- 목표: Codex/ChatGPT OAuth Local Proxy가 연결되지 않고 `127.0.0.1:3333` 연결 거부로 표시되는 문제를 확인하고 복구한다.
+- 확인:
+  - 앱 상태에서 `codex_proxy_configured=true`, `codex_proxy_running=false`, `codex_proxy_base_url=http://127.0.0.1:3333`으로 확인됐다.
+  - `127.0.0.1:3333/api/health`는 연결 거부 상태였다.
+  - 앱이 선택한 `C:\Users\aiguy\AppData\Roaming\npm\ima2.cmd serve` shim은 존재했지만, 실제 대상인 `node_modules\ima2-gen\bin\ima2.js`가 없어 `MODULE_NOT_FOUND`로 즉시 종료됐다.
+  - `npx -y ima2-gen serve` fallback은 서버를 띄우지 못한 채 조용히 종료되어 로그가 필요했다.
+- 변경:
+  - `app.py`: 깨진 `ima2`/`ima2-gen` npm shim을 실행 후보에서 제외하고, 정상 패키지 파일이 있을 때만 직접 shim을 사용하도록 보강했다.
+  - `app.py`: Codex proxy 시작 stdout/stderr를 `.webgork-private\codex-proxy.log`에 남기도록 변경했다.
+  - `app.py`: Codex proxy 시작 프로세스가 바로 종료되면 502와 로그 tail을 반환하도록 빠른 실패 감지를 추가했다.
+  - `app.py`: Codex proxy 상태 API에 `log_path`, `log_tail`을 포함했다.
+  - 시스템 전역 npm 패키지 `ima2-gen@2.0.1`을 재설치해 깨진 shim을 복구했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `resolve_codex_proxy_command()`가 깨진 상태에서는 `npx.cmd -y ima2-gen serve`로 fallback하는지 확인.
+  - 전역 `ima2-gen@2.0.1` 재설치 후 `ima2.cmd --version`이 `2.0.1`을 반환하고, 앱이 `ima2.cmd serve`를 선택하는지 확인.
+  - `/api/codex-proxy/start` 호출 후 `127.0.0.1:3333/api/health` 200 확인.
+  - `/api/codex-proxy/status`에서 `running=true`, `oauth_status=ready`, `oauth_url=http://127.0.0.1:10532`, `version=2.0.1` 확인.
+  - `/health`에서 `codex_proxy_running=true` 확인.
+- 백업: `backups/after-codex-oauth-proxy-fix-20260606-232502`

@@ -4526,13 +4526,13 @@ def b64_image(path):
     return base64.b64encode(Path(path).read_bytes()).decode("ascii")
 
 
-def codex_proxy_running(cfg=None):
+def codex_proxy_running(cfg=None, timeout=3):
     cfg = cfg or config()
     base = (cfg.get("codex_proxy_base_url") or "").rstrip("/")
     if not base:
         return False
     try:
-        response = requests.get(base + "/api/health", timeout=3)
+        response = requests.get(base + "/api/health", timeout=timeout)
         return response.status_code < 500
     except requests.RequestException:
         return False
@@ -4549,7 +4549,14 @@ def codex_proxy_status_payload():
         "oauth_status": None,
         "version": None,
         "detail": "",
+        "log_path": str(codex_proxy_log_path()),
+        "log_tail": "",
     }
+    try:
+        log_text = codex_proxy_log_path().read_text(encoding="utf-8", errors="replace")
+        payload["log_tail"] = log_text[-2000:]
+    except OSError:
+        pass
     if not base:
         return payload
     try:
@@ -4587,11 +4594,11 @@ def resolve_codex_proxy_command():
     ]
     for name in ("ima2.cmd", "ima2", "ima2-gen.cmd", "ima2-gen"):
         found = shutil.which(name)
-        if found:
+        if found and codex_proxy_command_usable(found):
             return [found, "serve"]
         for folder in known_dirs:
             candidate = folder / name if folder else None
-            if candidate and candidate.exists():
+            if candidate and candidate.exists() and codex_proxy_command_usable(candidate):
                 return [str(candidate), "serve"]
     for name in ("npx.cmd", "npx"):
         found = shutil.which(name)
@@ -4602,6 +4609,21 @@ def resolve_codex_proxy_command():
             if candidate and candidate.exists():
                 return [str(candidate), "-y", "ima2-gen", "serve"]
     return None
+
+
+def codex_proxy_command_usable(command_path):
+    path = Path(command_path)
+    name = path.name.lower()
+    if name not in {"ima2", "ima2.cmd", "ima2-gen", "ima2-gen.cmd"}:
+        return True
+    package = path.parent / "node_modules" / "ima2-gen" / "bin" / "ima2.js"
+    return package.exists()
+
+
+def codex_proxy_log_path():
+    path = PRIVATE_STATE_DIR / "codex-proxy.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def codex_proxy_error(response):
@@ -6586,7 +6608,7 @@ def codex_proxy_start():
 def start_codex_proxy_background():
     global CODEX_PROXY_PROCESS
     cfg = config()
-    if codex_proxy_running(cfg):
+    if codex_proxy_running(cfg, timeout=1):
         return {"ok": True, "message": "Codex OAuth 프록시가 이미 실행 중입니다.", "proxy_running": True, "url": cfg["codex_proxy_base_url"]}
     if CODEX_PROXY_PROCESS and CODEX_PROXY_PROCESS.poll() is None:
         return {"ok": True, "message": "Codex OAuth 프록시 시작 대기 중입니다.", "proxy_running": False, "url": cfg["codex_proxy_base_url"]}
@@ -6606,27 +6628,49 @@ def start_codex_proxy_background():
         env["IMA2_ADVERTISE_FILE"] = str(ima2_config_dir / "server.json")
         node_dir = str(Path(os.getenv("ProgramFiles", r"C:\Program Files")) / "nodejs")
         env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
+        log_path = codex_proxy_log_path()
+        log_file = open(log_path, "a", encoding="utf-8", buffering=1)
+        print(f"\n[{datetime.now(timezone.utc).isoformat()}] starting codex proxy: {json.dumps(command, ensure_ascii=False)}", file=log_file, flush=True)
         CODEX_PROXY_PROCESS = subprocess.Popen(
             command,
             cwd=str(ROOT),
             env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=log_file,
             stdin=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
     except Exception as exc:
         return {"ok": False, "error": "Codex OAuth 프록시를 시작하지 못했습니다.", "detail": error_detail_text(exc), "status": 500}
-    for _ in range(20):
+    for _ in range(12):
         time.sleep(0.5)
+        if CODEX_PROXY_PROCESS.poll() is not None:
+            detail = ""
+            try:
+                detail = codex_proxy_log_path().read_text(encoding="utf-8", errors="replace")[-2000:]
+            except OSError:
+                pass
+            return {
+                "ok": False,
+                "error": "Codex OAuth 프록시 프로세스가 바로 종료되었습니다.",
+                "detail": detail or f"exit_code={CODEX_PROXY_PROCESS.returncode}",
+                "status": 502,
+                "log_path": str(codex_proxy_log_path()),
+            }
         refreshed = {**cfg, "codex_proxy_base_url": discover_codex_proxy_url() or cfg["codex_proxy_base_url"]}
-        if codex_proxy_running(refreshed):
+        if codex_proxy_running(refreshed, timeout=1):
             settings = read_settings()
             if refreshed["codex_proxy_base_url"]:
                 settings["codex_proxy_base_url"] = refreshed["codex_proxy_base_url"]
                 write_settings(settings)
             return {"ok": True, "message": "Codex OAuth 프록시가 실행되었습니다.", "proxy_running": True, "url": refreshed["codex_proxy_base_url"]}
-    return {"ok": True, "message": "Codex OAuth 프록시를 백그라운드에서 시작했습니다. Codex 로그인이 필요하면 npx @openai/codex login을 먼저 진행해 주세요.", "proxy_running": False, "url": cfg["codex_proxy_base_url"]}
+    return {
+        "ok": True,
+        "message": "Codex OAuth 프록시를 백그라운드에서 시작했습니다. 설치/로그인이 진행 중이면 잠시 뒤 다시 확인해 주세요.",
+        "proxy_running": False,
+        "url": cfg["codex_proxy_base_url"],
+        "log_path": str(codex_proxy_log_path()),
+    }
 
 
 @app.get("/api/codex-proxy/status")
