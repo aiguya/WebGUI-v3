@@ -837,3 +837,20 @@
   - `grok_official_image_resolution_name("2k") == "2mp"` 및 `grok_official_image_resolution_name("1k") == ""` 확인.
   - 새 `run_webgork_app.bat` 서버 시작 경로로 `/health` 200 응답 확인.
 - 백업: `backups/after-grok-official-routes-launcher-20260606-230007`
+
+### 앱 실행 상태 점검과 런처 중복 실행 방지
+- 목표: `run_webgork_app.bat` 실행 후 앱이 열리지 않는 것처럼 보이는 상태를 확인하고, 런처가 최신 앱 URL을 열도록 정리한다.
+- 확인:
+  - 현재 Flask 서버는 `http://127.0.0.1:7863/health`에서 200으로 응답했다.
+  - 루트 HTML, `/static/app.js?v=20260605-v3-59`, `/static/styles.css?v=20260605-v3-59`도 200으로 정상 서빙됐다.
+  - `netstat`에서 7863 리스너가 2개 잡혀 중복 실행 흔적이 확인됐다.
+  - `run_webgork_app.bat`의 Chrome 앱 실행 URL만 아직 `20260605-v3-52`로 남아 있었다.
+- 변경:
+  - `run_webgork_app.bat`: Chrome 앱 실행 URL과 기본 브라우저 fallback URL을 `20260605-v3-59`로 맞췄다.
+  - `work/run_server.py`: 이미 `127.0.0.1:7863` 서버가 떠 있으면 새 Flask 서버를 띄우지 않고 로그에 상태만 남긴 뒤 정상 종료하도록 포트 체크를 추가했다.
+- 검증:
+  - `python -m py_compile work\run_server.py app.py` 통과.
+  - 서버가 실행 중인 상태에서 `work\run_server.py`를 직접 호출했을 때 `webgork server already running on 127.0.0.1:7863` 로그를 남기고 종료 확인.
+  - `/health` 200 응답 확인.
+  - `run_webgork_app.bat`의 실행 URL이 `20260605-v3-59`로 변경됐는지 확인.
+- 백업: `backups/after-launch-state-check-20260606-230420`
