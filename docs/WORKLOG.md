@@ -906,3 +906,20 @@
   - `/static/app.js?v=20260605-v3-60`에서 `official:imagine_h_1` 해상도 활성화 판정 포함 확인.
   - WebGUI 서버를 재시작해 현재 실행 중인 앱도 v60 HTML/JS를 서빙하도록 반영했다.
 - 백업: `backups/after-official-imagine-h1-resolution-ui-20260606-233110`
+
+### 영상 latest 모델 404 fallback 처리
+- 목표: `grok-imagine-video-latest` 선택 시 xAI/Hermes에서 모델 미존재 404가 발생하는 문제를 줄인다.
+- 확인:
+  - 오류 응답은 `The model grok-imagine-video-latest does not exist or your team ... does not have access to it` 형태였다.
+  - 기본 영상 후보 목록에 `grok-imagine-video-latest`, `grok-imagine-video-1.5-latest`가 포함되어 있어 UI에 접근 불가 모델이 노출될 수 있었다.
+- 변경:
+  - `app.py`: 기본 Hermes 영상 후보 목록에서 `grok-imagine-video-latest`, `grok-imagine-video-1.5-latest`를 제거했다.
+  - `app.py`: 영상 생성, 참조 이미지 기반 영상 생성, 영상 연장 요청에서 모델 미존재 404가 오면 fallback 모델로 재시도하도록 추가했다.
+  - `app.py`: `grok-imagine-video-latest`는 `grok-imagine-video`로, `grok-imagine-video-1.5-latest`는 `grok-imagine-video-1.5-preview`, `grok-imagine-video-1.5`, `grok-imagine-video` 순서로 재시도한다.
+  - `app.py`: fallback이 사용되면 결과 메타데이터에 `requested_video_model`, `video_model_fallback_attempts`를 남긴다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `video_model_retry_candidates("grok-imagine-video-latest")`가 `["grok-imagine-video-latest", "grok-imagine-video"]` 순서로 반환되는지 확인.
+  - Flask test client `/health`에서 `grok-imagine-video-latest`가 `models.hermes_video_candidates`에 포함되지 않는지 확인.
+  - WebGUI 서버를 재시작하고 실제 `/health` 응답에서도 latest 후보 제거와 7863/3333 리스너 정상 상태를 확인했다.
+- 백업: `backups/after-video-model-latest-fallback-20260606-233652`

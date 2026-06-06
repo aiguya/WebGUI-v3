@@ -64,11 +64,9 @@ HERMES_IMAGE_MODEL_CANDIDATES = [
 ]
 HERMES_VIDEO_MODEL_CANDIDATES = [
     "grok-imagine-video",
-    "grok-imagine-video-latest",
     "grok-imagine-video-fast",
     "grok-imagine-video-1.5-preview",
     "grok-imagine-video-1.5",
-    "grok-imagine-video-1.5-latest",
     "grok-imagine-video-v2",
     "grok-imagine-video-v3",
     "imagine-video",
@@ -509,6 +507,50 @@ def valid_video_model(value, cfg=None):
 
 def video_model_single_reference_only(model):
     return "1.5" in (model or "")
+
+
+def video_model_retry_candidates(model, cfg=None):
+    cfg = cfg or config()
+    requested = valid_video_model(model, cfg)
+    fallbacks = {
+        "grok-imagine-video-latest": ["grok-imagine-video"],
+        "grok-imagine-video-1.5-latest": ["grok-imagine-video-1.5-preview", "grok-imagine-video-1.5", "grok-imagine-video"],
+    }
+    candidates = [requested, *fallbacks.get(requested, [])]
+    if requested.endswith("-latest"):
+        candidates.append(requested[:-7])
+    candidates.extend([cfg.get("video_model"), "grok-imagine-video"])
+    return unique_model_ids(candidates)
+
+
+def video_model_not_found_response(response):
+    if response.status_code != 404:
+        return False
+    detail = response_error_detail(response).lower()
+    return (
+        "model" in detail
+        and (
+            "does not exist" in detail
+            or "does not have access" in detail
+            or "requested entity was not found" in detail
+            or "not found" in detail
+        )
+    )
+
+
+def post_video_with_model_fallback(url, headers, payload, requested_model, timeout=120):
+    last_response = None
+    attempts = []
+    for model in video_model_retry_candidates(requested_model):
+        body = {**payload, "model": model}
+        response = requests.post(url, headers=headers, json=body, timeout=timeout)
+        attempts.append({"model": model, "status": response.status_code})
+        if response.status_code < 400:
+            return response, model, attempts
+        last_response = response
+        if not video_model_not_found_response(response):
+            return response, model, attempts
+    return last_response, attempts[-1]["model"] if attempts else requested_model, attempts
 
 
 def valid_duration(value):
@@ -5761,10 +5803,11 @@ def live_video(prompt, image_path, duration, aspect_ratio="source", resolution="
     }
     if aspect_ratio not in {"auto", "source"}:
         payload["aspect_ratio"] = aspect_ratio
-    start = requests.post(
+    start, used_model, model_attempts = post_video_with_model_fallback(
         (cfg["hermes_base_url"] if provider == "hermes_proxy" and cfg.get("hermes_base_url") else cfg["api_base"]) + "/videos/generations",
-        headers=xai_headers(provider=provider),
-        json=payload,
+        xai_headers(provider=provider),
+        payload,
+        model,
         timeout=120,
     )
     if start.status_code >= 400:
@@ -5773,7 +5816,10 @@ def live_video(prompt, image_path, duration, aspect_ratio="source", resolution="
     if not request_id:
         raise RuntimeError("영상 생성 요청 ID를 받지 못했습니다.")
     path, extra = poll_video_request(request_id, provider=provider)
-    extra["video_model"] = model
+    extra["video_model"] = used_model
+    if used_model != model:
+        extra["requested_video_model"] = model
+        extra["video_model_fallback_attempts"] = model_attempts
     extra["input_image_remote_url"] = image_payload["url"] if used_remote else None
     extra["input_image_mode"] = "remote_url" if used_remote else "data_uri"
     return path, extra
@@ -5808,10 +5854,11 @@ def live_video_from_reference_images(prompt, reference_paths, duration, aspect_r
     }
     if aspect_ratio not in {"auto", "source"}:
         payload["aspect_ratio"] = aspect_ratio
-    start = requests.post(
+    start, used_model, model_attempts = post_video_with_model_fallback(
         (cfg["hermes_base_url"] if provider == "hermes_proxy" and cfg.get("hermes_base_url") else cfg["api_base"]) + "/videos/generations",
-        headers=xai_headers(provider=provider),
-        json=payload,
+        xai_headers(provider=provider),
+        payload,
+        model,
         timeout=120,
     )
     if start.status_code >= 400:
@@ -5820,7 +5867,10 @@ def live_video_from_reference_images(prompt, reference_paths, duration, aspect_r
     if not request_id:
         raise RuntimeError("참조 이미지 기반 영상 생성 요청 ID를 받지 못했습니다.")
     path, extra = poll_video_request(request_id, provider=provider)
-    extra["video_model"] = model
+    extra["video_model"] = used_model
+    if used_model != model:
+        extra["requested_video_model"] = model
+        extra["video_model_fallback_attempts"] = model_attempts
     extra["reference_image_count"] = len(references[:7])
     extra["input_reference_remote_urls"] = input_reference_remote_urls[:7]
     extra["used_remote_reference_images"] = bool(input_reference_remote_urls[:7])
@@ -6028,10 +6078,11 @@ def live_video_extension(prompt, video_path, duration, video_url=None, video_mod
         "video": {"file_id": file_id},
         "duration": min(10, duration),
     }
-    start = requests.post(
+    start, used_model, model_attempts = post_video_with_model_fallback(
         cfg["api_base"] + "/videos/extensions",
-        headers=xai_headers(),
-        json=payload,
+        xai_headers(),
+        payload,
+        model,
         timeout=120,
     )
     if start.status_code >= 400:
@@ -6040,7 +6091,10 @@ def live_video_extension(prompt, video_path, duration, video_url=None, video_mod
     if not request_id:
         raise RuntimeError("영상 연장 요청 ID를 받지 못했습니다.")
     path, extra = poll_video_request(request_id)
-    extra["video_model"] = model
+    extra["video_model"] = used_model
+    if used_model != model:
+        extra["requested_video_model"] = model
+        extra["video_model_fallback_attempts"] = model_attempts
     extra["extension_api"] = True
     extra["input_video_url"] = video_url
     extra["input_mode"] = "file_id"
