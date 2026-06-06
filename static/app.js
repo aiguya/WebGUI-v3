@@ -256,8 +256,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-59";
-const appShellCacheName = "webgui-shell-v3-59";
+const appStaticVersion = "20260605-v3-60";
+const appShellCacheName = "webgui-shell-v3-60";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -362,7 +362,8 @@ function activateTab(id) {
 tabs.forEach(tab => tab.addEventListener("click", () => activateTab(tab.dataset.tab)));
 
 function isGrokImageModel(model) {
-  return String(model || "").startsWith("grok-imagine-image");
+  const value = String(model || "");
+  return value.startsWith("grok-imagine-image") || value === "official:imagine_h_1";
 }
 
 function updateGrokResolutionControls(form) {

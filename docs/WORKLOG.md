@@ -891,3 +891,18 @@
   - `/api/codex-proxy/status`에서 `running=true`, `oauth_status=ready`, `oauth_url=http://127.0.0.1:10532`, `version=2.0.1` 확인.
   - `/health`에서 `codex_proxy_running=true` 확인.
 - 백업: `backups/after-codex-oauth-proxy-fix-20260606-232502`
+
+### official:imagine_h_1 2k 해상도 선택 활성화
+- 목표: Grok 공식홈 `official:imagine_h_1` 모델 선택 시 이미지 해상도 `2k` 옵션을 UI에서 선택할 수 있게 한다.
+- 확인:
+  - 공식 payload 기준 `official:imagine_h_1`의 고해상도 요청은 UI의 `2k`를 내부에서 `resolution_name: "2mp"`로 매핑한다.
+  - 기존 UI 활성화 판정은 `grok-imagine-image...` 모델만 true로 보고 있어 `official:imagine_h_1`에서 해상도 select가 비활성화됐다.
+- 변경:
+  - `static/app.js`: `isGrokImageModel()`이 `official:imagine_h_1`도 해상도 선택 가능 모델로 판단하도록 보강했다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260605-v3-60` / `webgui-shell-v3-60`으로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `/?v=20260605-v3-60`에서 v60 HTML 서빙 확인.
+  - `/static/app.js?v=20260605-v3-60`에서 `official:imagine_h_1` 해상도 활성화 판정 포함 확인.
+  - WebGUI 서버를 재시작해 현재 실행 중인 앱도 v60 HTML/JS를 서빙하도록 반영했다.
+- 백업: `backups/after-official-imagine-h1-resolution-ui-20260606-233110`
