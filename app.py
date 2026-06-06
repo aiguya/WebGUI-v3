@@ -2,6 +2,7 @@ import base64
 import hashlib
 import html
 import json
+import math
 import mimetypes
 import os
 import re
@@ -2776,6 +2777,47 @@ def save_response_bytes(blob, dest_dir, suffix=".jpg", filename_prefix="grok-off
     dest = dest_dir / f"{filename_prefix}{now_stamp()}-{uuid.uuid4().hex}{suffix}"
     dest.write_bytes(blob)
     return dest
+
+
+def likely_grok_official_censor_placeholder(path):
+    try:
+        from PIL import Image, ImageFilter, ImageStat
+
+        with Image.open(path) as source:
+            image = source.convert("RGB")
+            image.thumbnail((128, 128))
+            gray = image.convert("L")
+            edges = gray.filter(ImageFilter.FIND_EDGES)
+            hist = gray.histogram()
+            total = sum(hist) or 1
+            entropy = -sum((count / total) * math.log2(count / total) for count in hist if count)
+            edge_mean = ImageStat.Stat(edges).mean[0]
+            gray_std = ImageStat.Stat(gray).stddev[0]
+        # Grok's moderation placeholder is a blurred, multicolor noise field: many
+        # small edges but comparatively low luminance entropy after downsampling.
+        is_placeholder = edge_mean >= 40 and entropy <= 7.05 and gray_std <= 35
+        return {
+            "is_placeholder": bool(is_placeholder),
+            "edge_mean": round(edge_mean, 3),
+            "entropy": round(entropy, 3),
+            "gray_std": round(gray_std, 3),
+        }
+    except Exception as exc:
+        return {"is_placeholder": False, "error": str(exc)[:300]}
+
+
+def raise_if_grok_official_placeholder(path, extra=None):
+    extra = extra if isinstance(extra, dict) else {}
+    if extra.get("source") != "grok_official_web":
+        return None
+    check = likely_grok_official_censor_placeholder(path)
+    if check.get("is_placeholder"):
+        extra["official_skipped_censor_placeholder"] = {
+            "path": public_path(path),
+            "check": check,
+        }
+        raise RuntimeError("Grok 공식홈 이미지 생성 결과가 검열 placeholder로 감지되어 라이브러리에 등록하지 않았습니다.")
+    return check
 
 
 def response_suffix_from_bytes(blob, fallback=".jpg"):
@@ -7468,9 +7510,28 @@ def grok_official_t2i():
         output_file_paths = [item for item in output_file_paths if item.exists()]
         if not output_file_paths:
             output_file_paths = [Path(path)]
-        output_total = len(output_file_paths)
+        original_output_total = len(output_file_paths)
         common_extra = dict(extra)
         common_extra.pop("official_output_file_paths", None)
+        skipped_placeholders = []
+        filtered_output_paths = []
+        for output_path in output_file_paths:
+            placeholder_check = likely_grok_official_censor_placeholder(output_path)
+            if placeholder_check.get("is_placeholder"):
+                skipped_placeholders.append({
+                    "path": public_path(output_path),
+                    "check": placeholder_check,
+                })
+                continue
+            filtered_output_paths.append(output_path)
+        output_file_paths = filtered_output_paths
+        if skipped_placeholders:
+            common_extra["official_skipped_censor_placeholders"] = skipped_placeholders
+            common_extra["official_skipped_censor_placeholder_count"] = len(skipped_placeholders)
+            common_extra["official_original_output_total"] = original_output_total
+        if not output_file_paths:
+            raise RuntimeError("Grok 공식홈 이미지 생성 결과가 검열 placeholder로 감지되어 라이브러리에 등록하지 않았습니다.")
+        output_total = len(output_file_paths)
         created = []
         for index, output_path in reversed(list(enumerate(output_file_paths, start=1))):
             item_extra = dict(common_extra)
@@ -7610,6 +7671,7 @@ def t2i():
         extra.update(prompt_planner_request_metadata(payload, prompt))
         extra.update(template_request_metadata(payload))
         extra.update(project_request_metadata(payload))
+        raise_if_grok_official_placeholder(path, extra)
         item = add_metadata("image", prompt, image_model, path, extra=extra)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:
@@ -7684,6 +7746,7 @@ def i2i():
         extra.update(prompt_planner_request_metadata(request.form, prompt))
         extra.update(template_request_metadata(request.form))
         extra.update(project_request_metadata(request.form))
+        raise_if_grok_official_placeholder(path, extra)
         item = add_metadata("edit", prompt, image_model, path, source_path=sources[0], extra=extra)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:

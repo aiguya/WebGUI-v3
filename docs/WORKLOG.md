@@ -961,3 +961,20 @@
   - 실제 실행 서버를 재시작하고 `http://127.0.0.1:7863/health` 200, Grok 공식홈 세션 쿠키 연결, Codex proxy 실행 상태, v61 HTML/JS 서빙을 확인했다.
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
 - 백업: `backups/after-route-scoped-model-selects-20260606-235828`
+
+### Grok 공식홈 검열 placeholder 라이브러리 등록 제외
+- 목표: Grok 공식홈 이미지 생성에서 검열/모더레이션 placeholder처럼 보이는 노이즈 이미지가 라이브러리에 쌓이지 않도록 한다.
+- 확인:
+  - 사용자가 보여준 라이브러리 항목은 같은 공식 request에서 나온 5장 중 4장이 흐릿한 다색 노이즈 placeholder였다.
+  - 샘플 5장을 분석해 정상 이미지 1장은 유지하고 노이즈 placeholder 4장만 감지되는 픽셀 기준을 확인했다.
+- 변경:
+  - `app.py`: `likely_grok_official_censor_placeholder()`를 추가해 공식홈 placeholder 특유의 edge/entropy/gray_std 패턴을 감지한다.
+  - `app.py`: `/api/grok-official-t2i`가 여러 결과를 받으면 placeholder로 감지된 파일은 메타데이터 등록에서 제외하고, 정상 결과만 라이브러리에 추가한다.
+  - `app.py`: 템플릿 실행처럼 `/api/t2i`에 `request_provider=grok_official`로 들어오는 경로와 공식홈 이미지 편집 경로도 메타데이터 등록 전에 같은 필터를 통과하도록 보강했다.
+  - `app.py`: placeholder가 제외된 경우 정상 결과 metadata extra에 `official_skipped_censor_placeholder_count`와 판정값을 남긴다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - 기존 공식홈 샘플 5장에서 placeholder 4장만 `is_placeholder=True`, 정상 이미지 1장은 `False`로 판정되는지 확인.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - WebGUI 서버를 재시작하고 `/health` 200, Grok 공식홈 세션 쿠키 연결, Codex proxy 실행 상태를 확인했다.
+- 백업: `backups/after-skip-grok-censor-placeholders-20260607-000520`
