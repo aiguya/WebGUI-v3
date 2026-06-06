@@ -36,8 +36,12 @@ server*.log
 v2-server*.log
 launch-test.txt
 artifacts/
+tmp-grok-browser-fetch-test/
+work/*
+!work/run_server.py
 .chrome-v3-preview-profile/
 .chrome-v3-preview-profile-visible/
+.chrome-grok-official-profile/
 
 # OS/editor noise
 .DS_Store

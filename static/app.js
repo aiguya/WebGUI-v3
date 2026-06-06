@@ -144,6 +144,38 @@ const promptTaskTarget = {
   manga: "mangaBatch",
   general: "t2i",
 };
+const grokOfficialEndpointByBase = {
+  "/api/t2i": "/api/grok-official-t2i",
+  "/api/i2i": "/api/grok-official-i2i",
+  "/api/i2v": "/api/grok-official-i2v",
+};
+
+function requestProviderForForm(form) {
+  const value = form?.querySelector("[name='request_provider'], [name='request_route']")?.value || "";
+  return ["hermes_proxy", "grok_official", "direct"].includes(value) ? value : "";
+}
+
+function effectiveRequestProviderForForm(form) {
+  const imageModel = form?.querySelector("[name='image_model']")?.value || "";
+  if (imageModel.startsWith("gpt-5.")) return "";
+  if (imageModel.startsWith("official:")) return "grok_official";
+  return requestProviderForForm(form);
+}
+
+function effectiveEndpointForForm(form) {
+  const base = form?.dataset.endpoint || "";
+  return effectiveRequestProviderForForm(form) === "grok_official" && grokOfficialEndpointByBase[base]
+    ? grokOfficialEndpointByBase[base]
+    : base;
+}
+
+function requestProviderLabel(provider) {
+  return ({
+    hermes_proxy: "Hermes Proxy",
+    grok_official: "Grok 공식홈",
+    direct: "직접 OAuth",
+  })[provider] || "";
+}
 
 const iconSvg = paths => `
   <svg class="tab-svg" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -224,8 +256,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-52";
-const appShellCacheName = "webgui-shell-v3-52";
+const appStaticVersion = "20260605-v3-59";
+const appShellCacheName = "webgui-shell-v3-59";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -286,6 +318,33 @@ function friendlyFetchError(error, endpoint = "") {
     return wrapped;
   }
   return error instanceof Error ? error : new Error(message || "요청 연결에 실패했습니다.");
+}
+
+async function readJsonResponse(response, fallback = "요청 실패") {
+  const text = await response.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    const snippet = String(text || "").replace(/\s+/g, " ").trim().slice(0, 700);
+    const message = `${fallback}: JSON 응답이 아닙니다. HTTP ${response.status} ${response.statusText || ""}`.trim();
+    pendingErrorLog = {
+      time: new Date().toISOString(),
+      message,
+      detail: `URL: ${response.url || "unknown"}\n${snippet || "(빈 응답)"}`,
+    };
+    throw new Error(message);
+  }
+  if (!response.ok && data.ok !== false) {
+    const message = data.error || data.detail || `${fallback}: HTTP ${response.status} ${response.statusText || ""}`.trim();
+    pendingErrorLog = {
+      time: new Date().toISOString(),
+      message,
+      detail: data.detail || data.next || `URL: ${response.url || "unknown"}`,
+    };
+    throw new Error(message);
+  }
+  return data;
 }
 
 function activateTab(id) {
@@ -391,8 +450,9 @@ function plannerContextForForm(form) {
     || form.querySelectorAll("[name='library_image_paths'], [name='library_video_paths']").length
     || "";
   return {
-    endpoint: form.dataset.endpoint,
-    task: endpointLabel(form.dataset.endpoint),
+    endpoint: effectiveEndpointForForm(form),
+    task: endpointLabel(effectiveEndpointForForm(form), effectiveRequestProviderForForm(form)),
+    request_provider: effectiveRequestProviderForForm(form),
     target_model: form.querySelector("[name='image_model']")?.value || form.querySelector("[name='video_model']")?.value || "",
     aspect_ratio: form.querySelector("[name='aspect_ratio']")?.value || "",
     resolution: form.querySelector("[name='image_resolution']")?.value || form.querySelector("[name='resolution']")?.value || "",
@@ -425,7 +485,7 @@ async function maybePlanPrompt(form, prompt, force = false) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt, ...context }),
   });
-  const data = await response.json();
+  const data = await readJsonResponse(response, "요청 실패");
   if (!data.ok) rememberApiError(data, "프롬프트 플래너 실행 실패");
   const planned = (data.planned_prompt || "").trim();
   if (!planned) throw new Error("프롬프트 플래너가 빈 프롬프트를 반환했습니다.");
@@ -788,16 +848,25 @@ async function submitForm(form) {
   try {
     let body;
     let options = { method: "POST" };
+    const endpoint = effectiveEndpointForForm(form);
+    const requestProvider = effectiveRequestProviderForForm(form);
     if (form.dataset.kind === "json") {
       body = JSON.stringify({
         prompt: form.querySelector("[name='prompt']").value,
         aspect_ratio: form.querySelector("[name='aspect_ratio']").value,
         image_model: form.querySelector("[name='image_model']")?.value || "",
         image_resolution: form.querySelector("[name='image_resolution']")?.value || "auto",
+        request_provider: requestProvider,
       });
       options.headers = { "Content-Type": "application/json" };
     } else {
       body = new FormData(form);
+      if (requestProvider) {
+        body.set("request_provider", requestProvider);
+      } else {
+        body.delete("request_provider");
+        body.delete("request_route");
+      }
       if (form.dataset.endpoint === "/api/v2v-frame-extend") {
         body.set("upscale_frame", form.querySelector("[name='upscale_frame']")?.checked ? "true" : "false");
         const { frame } = await captureLastFramePreview(form);
@@ -805,12 +874,15 @@ async function submitForm(form) {
       }
     }
     options.body = body;
-    const response = await fetch(form.dataset.endpoint, options);
-    const data = await response.json();
+    const response = await fetch(endpoint, options);
+    const data = await readJsonResponse(response, "생성 요청 실패");
     if (!data.ok) rememberApiError(data);
     if (!data.ok) throw new Error(data.error || "요청 실패");
     progress.set(100);
-    if (data.item) {
+    if (data.items?.length) {
+      previewBatchItems(form.dataset.preview, data.items);
+      loadLibrary();
+    } else if (data.item) {
       previewItem(form.dataset.preview, data.item);
       loadLibrary();
     }
@@ -830,17 +902,24 @@ async function submitForm(form) {
   }
 }
 
-function endpointLabel(endpoint) {
-  return ({
+function endpointLabel(endpoint, provider = "") {
+  const label = ({
     "/api/t2i": "이미지 생성",
     "/api/i2i": "이미지 편집",
     "/api/i2v": "이미지 → 영상",
+    "/api/grok-official-t2i": "이미지 생성 · Grok 공식홈",
+    "/api/grok-official-i2i": "이미지 편집 · Grok 공식홈",
+    "/api/grok-official-i2v": "이미지 → 영상 · Grok 공식홈",
+    "/api/grok-official-t2v": "텍스트 → 영상 · Grok 공식홈",
     "/api/v2v-extend": "공식 연장",
     "/api/v2v-frame-extend": "프레임 연장",
     "/api/video-edit": "영상 편집",
     "/api/manga-batch": "망가 실사화·역식",
     "/api/reverse-prompt": "그림 → 프롬프트",
   })[endpoint] || "작업";
+  return provider && provider !== "grok_official" && ["/api/t2i", "/api/i2i", "/api/i2v"].includes(endpoint)
+    ? `${label} · ${requestProviderLabel(provider)}`
+    : label;
 }
 
 function tabIdForEndpoint(endpoint) {
@@ -848,6 +927,10 @@ function tabIdForEndpoint(endpoint) {
     "/api/t2i": "t2i",
     "/api/i2i": "i2i",
     "/api/i2v": "i2v",
+    "/api/grok-official-t2i": "t2i",
+    "/api/grok-official-i2i": "i2i",
+    "/api/grok-official-i2v": "i2v",
+    "/api/grok-official-t2v": "i2v",
     "/api/v2v-extend": "v2v",
     "/api/v2v-frame-extend": "v2vFrame",
     "/api/video-edit": "videoEdit",
@@ -1072,7 +1155,7 @@ function resetProjectForm(seed = {}) {
 
 async function loadProjects() {
   const response = await fetch("/api/projects");
-  const data = await response.json();
+  const data = await readJsonResponse(response, "프롬프트 플래너 실행 실패");
   if (!data.ok) throw new Error(data.error || "프로젝트 목록을 불러오지 못했습니다.");
   projectItems = data.items || [];
   if (currentProjectId && !projectItems.some(item => item.id === currentProjectId)) {
@@ -1107,6 +1190,8 @@ function formTemplateBlockNotes(form) {
   const imageResolution = form.querySelector("[name='image_resolution']")?.value || "";
   const videoResolution = form.querySelector("[name='resolution']")?.value || "";
   const editInputMode = form.querySelector("[name='edit_input_mode']")?.value || "";
+  const requestProvider = effectiveRequestProviderForForm(form);
+  if (requestProvider) notes.push(`요청 경로: ${requestProviderLabel(requestProvider)}`);
   if (aspect) notes.push(`결과 비율: ${aspect}`);
   if (imageResolution) notes.push(`이미지 해상도: ${imageResolution}`);
   if (videoResolution) notes.push(`영상 해상도: ${videoResolution}`);
@@ -1138,6 +1223,7 @@ function formTemplateBlockPayload(form) {
     image_resolution: isImageMethod ? form.querySelector("[name='image_resolution']")?.value || "auto" : "auto",
     edit_input_mode: config.method === "edit" ? form.querySelector("[name='edit_input_mode']")?.value || "stitch" : "multi",
     video_model: isVideoMethod ? form.querySelector("[name='video_model']")?.value || "" : "",
+    request_provider: effectiveRequestProviderForForm(form) || "",
     duration: isVideoMethod ? numericFormValue(form, "duration", 6, 1, 15) : 6,
     reference_slot: "",
     reference_slots: [],
@@ -1209,6 +1295,8 @@ function cloneJobOptions(options) {
 async function buildJobRequest(form) {
   let body;
   let referenceUrl = null;
+  const endpoint = effectiveEndpointForForm(form);
+  const requestProvider = effectiveRequestProviderForForm(form);
   const options = { method: "POST" };
   const originalPrompt = form.querySelector("[name='prompt']")?.value || form.querySelector("[name='title']")?.value || "";
   const plan = await maybePlanPrompt(form, originalPrompt);
@@ -1219,6 +1307,7 @@ async function buildJobRequest(form) {
       aspect_ratio: form.querySelector("[name='aspect_ratio']").value,
       image_model: form.querySelector("[name='image_model']")?.value || "",
       image_resolution: form.querySelector("[name='image_resolution']")?.value || "auto",
+      request_provider: requestProvider,
       ...plannerFields(plan),
     }));
     options.headers = { "Content-Type": "application/json" };
@@ -1282,10 +1371,16 @@ async function buildJobRequest(form) {
       if (frame) body.set("last_frame", frame);
     }
   }
+  if (body instanceof FormData && requestProvider) {
+    body.set("request_provider", requestProvider);
+  } else if (body instanceof FormData) {
+    body.delete("request_provider");
+    body.delete("request_route");
+  }
   if (body instanceof FormData) appendCurrentProjectFields(body);
   if (body instanceof FormData) body.delete("queue_count");
   options.body = body;
-  return { options, prompt, referenceUrl };
+  return { endpoint, options, prompt, referenceUrl, requestProvider };
 }
 
 async function enqueueForm(form) {
@@ -1296,7 +1391,7 @@ async function enqueueForm(form) {
   try {
     const count = queueCopyCount(form);
     const request = await buildJobRequest(form);
-    const type = endpointLabel(form.dataset.endpoint);
+    const type = endpointLabel(request.endpoint, request.requestProvider);
     for (let index = 1; index <= count; index += 1) {
       const jobType = count > 1 ? `${type} ${index}/${count}` : type;
       const job = {
@@ -1304,7 +1399,7 @@ async function enqueueForm(form) {
         type: jobType,
         shortType: type.split(" ")[0],
         status: "queued",
-        endpoint: form.dataset.endpoint,
+        endpoint: request.endpoint,
         previewSelector: form.dataset.preview,
         referenceUrl: request.referenceUrl,
         options: cloneJobOptions(request.options),
@@ -1347,7 +1442,7 @@ async function runJob(job) {
     job.abortController = new AbortController();
     const response = await fetch(job.endpoint, { ...job.options, signal: job.abortController.signal });
     if (job.status === "cancelled") throw new Error("작업이 중단되었습니다.");
-    const data = await response.json();
+    const data = await readJsonResponse(response, `${job.type || "작업"} 요청 실패`);
     if (job.status === "cancelled") throw new Error("작업이 중단되었습니다.");
     if (!data.ok) rememberApiError(data);
     if (!data.ok) throw new Error(data.error || "요청 실패");
@@ -1401,7 +1496,7 @@ async function pollMangaBatch(job, batchId, progress) {
   while (true) {
     if (job.status === "cancelled") throw new Error("작업이 중단되었습니다.");
     const response = await fetch(`/api/manga-batch/${batchId}`);
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     if (!data.ok) throw new Error(data.error || "배치 상태 조회 실패");
     latest = data;
     const done = (data.completed || 0) + (data.failed || 0);
@@ -1543,12 +1638,15 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
   const resolution = payload.settings.resolution || "720p";
   const imageResolution = ["auto", "1k", "2k"].includes(shot.image_resolution) ? shot.image_resolution : "auto";
   const editInputMode = shot.edit_input_mode === "stitch" ? "stitch" : "multi";
+  let requestProvider = ["hermes_proxy", "grok_official", "direct"].includes(shot.request_provider) ? shot.request_provider : "";
+  if (!requestProvider && String(shot.image_model || "").startsWith("official:")) requestProvider = "grok_official";
   if (shot.method === "image") {
     const body = appendTemplateRequestMetadata({
       prompt,
       aspect_ratio: aspectRatio,
       image_model: shot.image_model || "",
       image_resolution: imageResolution,
+      request_provider: requestProvider,
     }, payload, shot, index);
     return {
       endpoint: "/api/t2i",
@@ -1567,6 +1665,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     body.set("aspect_ratio", aspectRatio);
     body.set("image_resolution", imageResolution);
     if (shot.image_model) body.set("image_model", shot.image_model);
+    if (requestProvider) body.set("request_provider", requestProvider);
     body.set("edit_input_mode", editInputMode);
     appendTemplateImageReferences(body, templateImageSourcePaths(shot, previous, slotState, 3));
     appendTemplateRequestMetadata(body, payload, shot, index);
@@ -1582,6 +1681,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     body.set("aspect_ratio", aspectRatio);
     body.set("resolution", resolution);
     if (shot.video_model) body.set("video_model", shot.video_model);
+    if (requestProvider) body.set("request_provider", requestProvider);
     appendTemplateImageReferences(body, templateImageSourcePaths(referenceShot, previous, slotState, referenceLimit));
     appendTemplateRequestMetadata(body, payload, shot, index);
     return { endpoint: "/api/i2v", prompt, options: { method: "POST", body } };
@@ -1596,6 +1696,7 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
     body.set("aspect_ratio", aspectRatio);
     body.set("resolution", resolution);
     if (shot.video_model) body.set("video_model", shot.video_model);
+    if (requestProvider) body.set("request_provider", requestProvider);
     body.set("library_video_path", source);
     if (shot.method === "frame") body.set("mute", "false");
     appendTemplateRequestMetadata(body, payload, shot, index);
@@ -1617,7 +1718,7 @@ async function fetchTemplateShot(request) {
   }
   let data;
   try {
-    data = await response.json();
+    data = await readJsonResponse(response, "템플릿 요청 실패");
   } catch {
     throw new Error(`템플릿 요청 응답을 읽지 못했습니다. HTTP ${response.status} ${response.statusText || ""}`.trim());
   }
@@ -1802,7 +1903,7 @@ async function mergeTemplateVideos(payload, sourceItems) {
   }
   let data;
   try {
-    data = await response.json();
+    data = await readJsonResponse(response, "템플릿 최종 영상 병합 실패");
   } catch {
     throw new Error(`템플릿 최종 영상 병합 응답을 읽지 못했습니다. HTTP ${response.status} ${response.statusText || ""}`.trim());
   }
@@ -2613,8 +2714,14 @@ document.querySelectorAll("form[data-endpoint]").forEach(form => {
   installQueueCountControl(form);
   installFormTemplateBlockControl(form);
   updateGrokResolutionControls(form);
+  updateI2vReferenceHelp(form);
   form.querySelector("[name='image_model']")?.addEventListener("change", () => updateGrokResolutionControls(form));
   form.querySelector("[name='video_model']")?.addEventListener("change", () => enforceI2vReferenceLimit(form, true));
+  form.querySelector("[name='request_provider']")?.addEventListener("change", () => {
+    syncOfficialImageModelOptions(form);
+    updateI2vReferenceHelp(form);
+    enforceI2vReferenceLimit(form, true);
+  });
   form.querySelector("[data-save-form-template-block]")?.addEventListener("click", event => {
     saveFormTemplateBlock(form, event.currentTarget).catch(error => showToast(error.message, true));
   });
@@ -2692,11 +2799,22 @@ function isSingleReferenceVideoModel(model) {
 }
 
 function isSingleReferenceI2vForm(form) {
-  return isMultiImageVideoForm(form) && isSingleReferenceVideoModel(form.querySelector("[name='video_model']")?.value);
+  return isMultiImageVideoForm(form) && (
+    effectiveRequestProviderForForm(form) === "grok_official"
+    || isSingleReferenceVideoModel(form.querySelector("[name='video_model']")?.value)
+  );
+}
+
+function isSingleImageSourceForm(form) {
+  return (effectiveRequestProviderForForm(form) === "grok_official" && isMultiImageSourceForm(form))
+    || isSingleReferenceI2vForm(form);
 }
 
 function i2vReferenceHelpText(form) {
   if (!isMultiImageVideoForm(form)) return "";
+  if (effectiveRequestProviderForForm(form) === "grok_official") {
+    return "Grok 공식홈 경로는 첫 이미지를 시작 프레임으로 사용합니다.";
+  }
   if (isSingleReferenceI2vForm(form)) {
     return "Grok 1.5 preview는 시작 레퍼런스 이미지 1장만 사용합니다.";
   }
@@ -2758,13 +2876,13 @@ function releaseImageSource(source) {
 
 function enforceI2vReferenceLimit(form, notify = false) {
   updateI2vReferenceHelp(form);
-  if (!isSingleReferenceI2vForm(form)) return;
+  if (!isSingleImageSourceForm(form)) return;
   const sources = getMultiImageSources(form);
   if (sources.length <= 1) return;
   sources.slice(1).forEach(releaseImageSource);
   sources.splice(1);
   renderMultiImageSources(form);
-  if (notify) showToast("1.5 영상 모델은 레퍼런스 이미지를 1장만 사용합니다.");
+  if (notify) showToast(effectiveRequestProviderForForm(form) === "grok_official" ? "Grok 공식홈 경로는 첫 이미지만 사용합니다." : "1.5 영상 모델은 레퍼런스 이미지를 1장만 사용합니다.");
 }
 
 function renderMultiImageSources(form) {
@@ -2803,7 +2921,7 @@ function renderMultiImageSources(form) {
 function addMultiImageFiles(form, files) {
   const sources = getMultiImageSources(form);
   const imageFiles = [...files].filter(file => file.type.startsWith("image/"));
-  if (isSingleReferenceI2vForm(form)) {
+  if (isSingleImageSourceForm(form)) {
     const file = imageFiles[0];
     if (!file) return;
     sources.forEach(releaseImageSource);
@@ -2820,7 +2938,7 @@ function addMultiImageFiles(form, files) {
 
 function addMultiImageLibrarySource(form, path, label = path) {
   const sources = getMultiImageSources(form);
-  if (isSingleReferenceI2vForm(form)) {
+  if (isSingleImageSourceForm(form)) {
     sources.forEach(releaseImageSource);
     sources.splice(0, sources.length, { kind: "library", path, src: path, label });
     renderMultiImageSources(form);
@@ -3308,6 +3426,10 @@ function promptTaskForEndpoint(endpoint) {
     "/api/t2i": "image",
     "/api/i2i": "edit",
     "/api/i2v": "video",
+    "/api/grok-official-t2i": "image",
+    "/api/grok-official-i2i": "edit",
+    "/api/grok-official-i2v": "video",
+    "/api/grok-official-t2v": "video",
     "/api/v2v-extend": "extend",
     "/api/v2v-frame-extend": "frame",
     "/api/manga-batch": "manga",
@@ -3474,7 +3596,7 @@ async function loadPromptManager(force = false) {
     return;
   }
   const response = await fetch("/api/prompts");
-  const data = await response.json();
+  const data = await readJsonResponse(response, "프롬프트 플래너 실행 실패");
   if (!data.ok) rememberApiError(data, "프롬프트 조회 실패");
   promptItems = data.items || [];
   renderPromptList();
@@ -3739,11 +3861,17 @@ const templateMethodUi = {
   },
 };
 
+const officialImageModelLabels = {
+  "official:imagine-x-1": "Grok Official · imagine-x-1",
+  "official:imagine_h_1": "Grok Official · imagine_h_1",
+};
+
 const templateImageModelLabels = {
   "grok-imagine-image-quality": "Grok 이미지 퀄리티",
   "grok-imagine-image-pro": "Grok 이미지 Pro",
   "grok-imagine-image-quality-latest": "Grok 이미지 퀄리티 latest",
   "grok-imagine-image": "Grok 이미지 기본",
+  ...officialImageModelLabels,
   "gpt-5.4-mini": "Codex/ChatGPT gpt-5.4-mini",
   "gpt-5.4": "Codex/ChatGPT gpt-5.4",
   "gpt-5.5": "Codex/ChatGPT gpt-5.5",
@@ -4003,6 +4131,7 @@ function renderTemplateShots(items = []) {
     return `
     <article class="template-shot-card" data-template-shot>
       <input type="hidden" data-shot-id value="${escapeHtml(item.id || "")}">
+      <input type="hidden" data-shot-request-provider value="${escapeHtml(item.request_provider || "")}">
       <div class="template-shot-head">
         <span>${String(index + 1).padStart(2, "0")}</span>
         <input type="text" data-shot-title placeholder="컷 이름" value="${escapeHtml(item.title || `컷 ${index + 1}`)}">
@@ -4135,6 +4264,7 @@ function collectTemplateShots() {
       image_resolution: row.querySelector("[data-shot-image-resolution]")?.value || "auto",
       edit_input_mode: row.querySelector("[data-shot-edit-input-mode]")?.value || "multi",
       video_model: videoModel,
+      request_provider: row.querySelector("[data-shot-request-provider]")?.value || "",
       output_slot: row.querySelector("[data-shot-output-slot]")?.value || "",
       duration: Number.parseFloat(row.querySelector("[data-shot-duration]")?.value || "6") || 6,
       reference_slot: referenceSlots[0] || "",
@@ -4338,7 +4468,7 @@ async function uploadTemplateSlotFile(row, file) {
   body.set("file", file, file.name || `template-slot.${kind === "video" ? "mp4" : "png"}`);
   try {
     const response = await fetch("/api/template-slot-upload", { method: "POST", body });
-    const data = await response.json();
+    const data = await readJsonResponse(response, "배치 상태 조회 실패");
     if (!data.ok) rememberApiError(data);
     if (!data.ok) throw new Error(data.error || data.detail || "템플릿 슬롯 파일 업로드에 실패했습니다.");
     const item = data.item;
@@ -4787,7 +4917,7 @@ async function loadTemplateManager(force = false) {
     return;
   }
   const response = await fetch("/api/video-templates");
-  const data = await response.json();
+  const data = await readJsonResponse(response, "프롬프트 조회 실패");
   if (!data.ok) rememberApiError(data, "영상 템플릿 조회 실패");
   templateItems = data.items || [];
   renderTemplateList();
@@ -4801,7 +4931,7 @@ async function loadTemplateBlocks(force = false) {
     return;
   }
   const response = await fetch("/api/video-template-blocks");
-  const data = await response.json();
+  const data = await readJsonResponse(response, "요청 실패");
   if (!data.ok) rememberApiError(data, "템플릿 블록 조회 실패");
   templateBlocks = data.items || [];
   renderTemplateBlocks();
@@ -5443,7 +5573,7 @@ document.querySelector("#templatePreview")?.addEventListener("dragend", event =>
 async function loadLibrary(resetVisible = true) {
   const grid = document.querySelector("#libraryGrid");
   const response = await fetch("/api/library");
-  const data = await response.json();
+  const data = await readJsonResponse(response, "요청 실패");
   if (!data.ok) {
     pendingErrorLog = {
       time: new Date().toISOString(),
@@ -5470,7 +5600,7 @@ async function loadLibrary(resetVisible = true, useCache = false) {
   if (!grid) return;
   if (!useCache) {
     const response = await fetch("/api/library");
-    const data = await response.json();
+    const data = await readJsonResponse(response, "라이브러리 조회 실패");
     if (!data.ok) {
       pendingErrorLog = {
         time: new Date().toISOString(),
@@ -6013,7 +6143,7 @@ async function postJson(url, payload = {}) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  const data = await response.json();
+  const data = await readJsonResponse(response, "요청 실패");
   if (!data.ok) {
     pendingErrorLog = {
       time: new Date().toISOString(),
@@ -6194,7 +6324,7 @@ async function deleteItems(ids) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids }),
   });
-  const data = await response.json();
+  const data = await readJsonResponse(response, "요청 실패");
   if (!data.ok) {
     showToast(data.error || "삭제 실패", true);
     return;
@@ -6451,7 +6581,7 @@ async function openLibraryPicker(form, options = {}) {
   document.querySelector("#libraryPickerTitle").textContent = pickerMediaType === "video" ? "라이브러리 영상 선택" : "라이브러리 이미지 선택";
   grid.innerHTML = "<p>불러오는 중입니다.</p>";
   const response = await fetch("/api/library");
-  const data = await response.json();
+  const data = await readJsonResponse(response, "요청 실패");
   pickerItems = (data.items || []).filter(item => {
     if (pickerMediaType === "video") return item.kind === "video";
     return item.kind === "image" || item.kind === "edit";
@@ -6556,7 +6686,7 @@ document.querySelector("#loadMangaBuiltinPrompt")?.addEventListener("click", asy
   const targetLanguage = encodeURIComponent(form.querySelector("[name='target_language']")?.value || "Korean");
   try {
     const response = await fetch(`/api/manga-builtin-prompt?mode=${mode}&target_language=${targetLanguage}`);
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     if (!data.ok) throw new Error(data.error || "내장 프롬프트를 불러오지 못했습니다.");
     prompt.value = data.prompt || "";
     showToast("내장 프롬프트를 불러왔습니다.");
@@ -6643,7 +6773,7 @@ document.querySelector("#libraryPickerGrid").addEventListener("click", async eve
 
 async function loadHealth() {
   const response = await fetch("/health");
-  const data = await response.json();
+  const data = await readJsonResponse(response, "상태 조회 실패");
   renderStatus(data);
   refreshQuota();
 }
@@ -6699,7 +6829,7 @@ async function refreshQuota(force = false) {
   lastQuotaRefresh = now;
   try {
     const response = await fetch("/api/oauth/quota");
-    const data = await response.json();
+    const data = await readJsonResponse(response, "quota 조회 실패");
     if (!data.ok) throw new Error(data.detail || data.error || "billing 조회 실패");
     renderQuota(data.quota);
   } catch (error) {
@@ -6707,14 +6837,72 @@ async function refreshQuota(force = false) {
   }
 }
 
+function ensureModelOption(select, value, labelPrefix = "Hermes", label = "", dataset = {}) {
+  if (!select || !value) return;
+  let option = [...select.options].find(item => item.value === value);
+  if (!option) {
+    option = document.createElement("option");
+    select.appendChild(option);
+  }
+  option.value = value;
+  option.textContent = label || `${labelPrefix} · ${value}`;
+  Object.entries(dataset || {}).forEach(([key, item]) => {
+    option.dataset[key] = String(item);
+  });
+}
+
+function syncOfficialImageModelOptions(form) {
+  const select = form?.querySelector("select[name='image_model']");
+  if (!select) return;
+  const official = requestProviderForForm(form) === "grok_official";
+  [...select.options].forEach(option => {
+    if (option.dataset.officialModel !== "1") return;
+    option.disabled = !official;
+    option.hidden = !official;
+  });
+  if (!official && select.selectedOptions[0]?.dataset.officialModel === "1") {
+    select.value = "grok-imagine-image-quality";
+  }
+}
+
+function applyOfficialImageModelCandidates(models = {}) {
+  const imageModels = models.grok_official_image_candidates || Object.keys(officialImageModelLabels);
+  document.querySelectorAll("select[name='image_model']").forEach(select => {
+    imageModels.forEach(model => ensureModelOption(
+      select,
+      model,
+      "Grok Official",
+      officialImageModelLabels[model] || `Grok Official · ${model.replace(/^official:/, "")}`,
+      { officialModel: "1" },
+    ));
+  });
+  document.querySelectorAll("form[data-endpoint]").forEach(form => syncOfficialImageModelOptions(form));
+}
+
+function applyHermesModelCandidates(models = {}) {
+  const imageModels = models.hermes_image_candidates || [];
+  const videoModels = models.hermes_video_candidates || [];
+  document.querySelectorAll("select[name='image_model']").forEach(select => {
+    imageModels.forEach(model => ensureModelOption(select, model));
+  });
+  document.querySelectorAll("select[name='video_model']").forEach(select => {
+    videoModels.forEach(model => ensureModelOption(select, model));
+  });
+  applyOfficialImageModelCandidates(models);
+}
+
 function renderStatus(data) {
   const hermesReady = Boolean(data.hermes_logged_in && data.hermes_proxy_running);
   const codexReady = Boolean(data.codex_proxy_running);
+  const grokReady = Boolean(data.grok_official?.chrome_running);
   const statusPill = document.querySelector("#statusPill");
   if (!statusPill) return;
-  statusPill.classList.toggle("is-live", hermesReady || codexReady);
-  statusPill.classList.toggle("is-mock", !(hermesReady || codexReady));
+  statusPill.classList.toggle("is-live", hermesReady || codexReady || grokReady);
+  statusPill.classList.toggle("is-mock", !(hermesReady || codexReady || grokReady));
   statusPill.innerHTML = `
+    <span class="mini-service ${grokReady ? "is-live" : "is-off"}" title="Grok Official ${grokReady ? "Chrome ready" : "not ready"}">
+      <span class="status-dot"></span><span>G</span>
+    </span>
     <span class="mini-service ${hermesReady ? "is-live" : "is-off"}" title="Hermes ${hermesReady ? "연결됨" : "연결안됨"}">
       <span class="status-dot"></span><span>H</span>
     </span>
@@ -6730,10 +6918,12 @@ function renderStatus(data) {
   if (providerMode && data.provider && !providerMode.matches(":focus")) providerMode.value = data.provider;
   if (hermesBaseUrl && data.hermes_base_url && !hermesBaseUrl.matches(":focus")) hermesBaseUrl.value = data.hermes_base_url;
   if (codexProxyBaseUrl && data.codex_proxy_base_url && !codexProxyBaseUrl.matches(":focus")) codexProxyBaseUrl.value = data.codex_proxy_base_url;
+  applyHermesModelCandidates(data.models || {});
   if (list) list.innerHTML = `
     <dt>모드</dt><dd>${data.mode}</dd>
     <dt>Provider</dt><dd>${data.provider || "direct"}</dd>
     <dt>Hermes Proxy</dt><dd>${data.hermes_configured ? data.hermes_base_url : "없음"}</dd>
+    <dt>Grok Official</dt><dd>${data.grok_official?.chrome_running ? `Chrome ${data.grok_official.chrome_port}` : "없음"}</dd>
     <dt>Codex Proxy</dt><dd>${data.codex_proxy_running ? `실행 중 · ${data.codex_proxy_base_url || ""}` : (data.codex_proxy_configured ? `대기 · ${data.codex_proxy_base_url || ""}` : "없음")}</dd>
     <dt>OAuth</dt><dd>${data.oauth_configured ? "연결됨" : "없음"}</dd>
     <dt>만료 시각</dt><dd>${data.oauth_expires_at ? new Date(data.oauth_expires_at * 1000).toLocaleString() : "없음"}</dd>
@@ -6861,7 +7051,7 @@ document.querySelector("#providerForm")?.addEventListener("submit", async event 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     if (!data.ok) throw new Error(data.error || "Provider 설정 실패");
     form.querySelector("[name='hermes_api_key']").value = "";
     form.querySelector("[name='clear_hermes_api_key']").checked = false;
@@ -6880,7 +7070,7 @@ document.querySelector("#startCodexProxy")?.addEventListener("click", async () =
   button.textContent = "시작 중";
   try {
     const response = await fetch("/api/codex-proxy/start", { method: "POST" });
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     if (!data.ok) throw new Error(data.error || data.detail || "Codex Proxy 시작 실패");
     showToast(data.message || "Codex Proxy를 시작했습니다.");
     await loadHealth();
@@ -6895,11 +7085,40 @@ document.querySelector("#startCodexProxy")?.addEventListener("click", async () =
 document.querySelector("#testHermesProxy")?.addEventListener("click", async () => {
   try {
     const response = await fetch("/api/settings/hermes-test", { method: "POST" });
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     if (!data.ok) throw new Error(data.error || data.detail || "Hermes 연결 실패");
     showToast(`Hermes 응답 확인: ${data.status_code}`);
   } catch (error) {
     showToast(error.message, true);
+  }
+});
+
+document.querySelector("#probeHermesModels")?.addEventListener("click", async () => {
+  if (!confirm("Hermes 이미지 모델 후보를 실제 생성 요청으로 테스트합니다. 계속할까요?")) return;
+  const button = document.querySelector("#probeHermesModels");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "탐색 중";
+  try {
+    const response = await fetch("/api/hermes/model-probe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "image", limit: 12 }),
+    });
+    const data = await readJsonResponse(response, "요청 실패");
+    if (!data.ok) throw new Error(data.error || data.detail || "Hermes 모델 탐색 실패");
+    applyHermesModelCandidates({
+      hermes_image_candidates: data.found_image_models || [],
+      hermes_video_candidates: data.found_video_models || [],
+    });
+    const found = [...(data.found_image_models || []), ...(data.found_edit_models || []), ...(data.found_video_models || [])];
+    showToast(found.length ? `Hermes 모델 ${found.length}개 확인: ${found.join(", ")}` : "성공한 Hermes 모델을 찾지 못했습니다.", !found.length);
+    await loadHealth();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
   }
 });
 
@@ -6913,7 +7132,7 @@ document.querySelector("#loginForm").addEventListener("submit", async event => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     if (!data.ok) throw new Error(data.error || "로그인 실패");
     form.reset();
     showToast("연결되었습니다.");
@@ -6938,7 +7157,7 @@ document.querySelector("#mediaRootForm").addEventListener("submit", async event 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ media_root }),
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     if (!data.ok) throw new Error(data.error || "저장 경로 설정 실패");
     showToast("저장 경로를 적용했습니다.");
     await loadHealth();
@@ -6955,7 +7174,7 @@ document.querySelector("#browseMediaRoot").addEventListener("click", async () =>
   button.textContent = "선택 중";
   try {
     const response = await fetch("/api/settings/browse-media-root", { method: "POST" });
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     if (!data.ok) throw new Error(data.error || "폴더 선택 실패");
     if (!data.cancelled) showToast("저장 경로를 적용했습니다.");
     await loadHealth();
@@ -6970,7 +7189,7 @@ document.querySelector("#browseMediaRoot").addEventListener("click", async () =>
 
 async function loadAuthStatus() {
   const response = await fetch("/api/auth/status");
-  const data = await response.json();
+  const data = await readJsonResponse(response, "요청 실패");
   renderStatus({ ...data, last_error: null });
 }
 
@@ -6984,7 +7203,7 @@ async function openErrorLog(errorLog = null) {
   }
   try {
     const response = await fetch("/api/error-log");
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     output.value = data.last_error ? JSON.stringify(data.last_error, null, 2) : "최근 오류가 없습니다.";
   } catch (error) {
     output.value = String(error);
@@ -7139,7 +7358,7 @@ function showHermesAuthUrl(url, openOnce = false) {
 async function refreshHermesAuthPanel() {
   try {
     const response = await fetch("/api/hermes/auth/status");
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     if (!data.ok) throw new Error(data.error || "Hermes 상태 확인 실패");
     if (data.logged_in) {
       setConnectionBadge("hermes", Boolean(data.proxy_running), data.proxy_running ? "연결됨" : "Proxy 꺼짐");
@@ -7168,7 +7387,7 @@ function bindHermesAuthPanel() {
     pendingHermesAuthAutoOpen = true;
     try {
       const response = await fetch("/api/hermes/auth/start", { method: "POST" });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "요청 실패");
       if (!data.ok) throw new Error(data.error || data.detail || "Hermes 인증 시작 실패");
       if (data.already_logged_in) {
         pendingHermesAuthAutoOpen = false;
@@ -7207,7 +7426,7 @@ function bindHermesAuthPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "요청 실패");
       if (!data.ok) throw new Error(data.error || data.detail || data.status || "Hermes 로그인 실패");
       input.value = "";
       setHermesAuthStatus(data.proxy_started ? "Hermes OAuth 연결됨 · Proxy 실행 중" : "Hermes OAuth 연결됨");
@@ -7225,7 +7444,7 @@ function bindHermesAuthPanel() {
   document.querySelector("#startHermesProxy")?.addEventListener("click", async () => {
     try {
       const response = await fetch("/api/hermes/proxy/start", { method: "POST" });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "요청 실패");
       if (!data.ok) throw new Error(data.error || data.detail || "Hermes Proxy 시작 실패");
       setHermesAuthStatus("Hermes Proxy 실행 중");
       showToast(data.message || "Hermes Proxy를 시작했습니다.");
@@ -7243,7 +7462,7 @@ function bindHermesAuthPanel() {
     button.textContent = "로그아웃 중";
     try {
       const response = await fetch("/api/hermes/auth/logout", { method: "POST" });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "요청 실패");
       if (!data.ok) throw new Error(data.error || data.detail || "Hermes 로그아웃 실패");
       document.querySelector("#hermesAuthCode").value = "";
       document.querySelector("#hermesAuthBox").hidden = true;
@@ -7266,7 +7485,7 @@ function bindHermesAuthPanel() {
     button.textContent = "리셋 중";
     try {
       const response = await fetch("/api/hermes/auth/reset", { method: "POST" });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "요청 실패");
       if (!data.ok) throw new Error(data.error || data.detail || "Hermes 상태 리셋 실패");
       if (data.logged_in) {
         setHermesAuthStatus(data.proxy_running ? "Hermes OAuth 상태 리셋됨 · Proxy 실행 중" : "Hermes OAuth 상태 리셋됨");
@@ -7318,11 +7537,121 @@ function setCodexProxyStatus(message, isError = false) {
   status.classList.toggle("error-text", isError);
 }
 
+function setGrokOfficialStatus(message, isError = false) {
+  const status = document.querySelector("#grokOfficialStatusText");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("error-text", isError);
+}
+
+async function refreshGrokOfficialPanel() {
+  try {
+    const response = await fetch("/api/grok-official/status");
+    const data = await readJsonResponse(response, "Grok 공식홈 상태 확인 실패");
+    if (!data.ok) throw new Error(data.error || "Grok 공식홈 상태 확인 실패");
+    const ready = Boolean(data.chrome_running && data.session_cookie);
+    const progress = data.progress || {};
+    const hasProgress = progress.status && progress.status !== "idle";
+    const progressDetail = hasProgress
+      ? `${progress.message || progress.stage || "Grok 공식홈 요청 상태"} · events ${progress.event_count || 0} · blobs ${progress.blob_count || 0}`
+      : "";
+    const label = ready
+      ? "연결됨"
+      : (data.chrome_running ? "로그인 필요" : (data.chrome_processes ? "재시작 필요" : "Chrome 꺼짐"));
+    setConnectionBadge("grokOfficial", ready, label);
+    setGrokOfficialStatus(
+      progressDetail || data.message || (ready ? "Grok 공식홈 세션 준비됨" : "Grok 공식홈 Chrome에서 로그인해 주세요."),
+      progress.status === "failed" || (!ready && !hasProgress),
+    );
+  } catch (error) {
+    setConnectionBadge("grokOfficial", false, "확인 실패");
+    setGrokOfficialStatus(error.message, true);
+  }
+}
+
+function bindGrokOfficialPanel() {
+  document.querySelector("#grokOfficialStart")?.addEventListener("click", async () => {
+    const button = document.querySelector("#grokOfficialStart");
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "시작 중";
+    try {
+      const response = await fetch("/api/grok-official/chrome/start", { method: "POST" });
+      const data = await readJsonResponse(response, "Grok 공식홈 Chrome 시작 실패");
+      if (!data.ok) throw new Error(data.error || data.detail || "Grok 공식홈 Chrome 시작 실패");
+      showToast("Grok 공식홈 Chrome을 열었습니다. 열린 창에서 로그인해 주세요.");
+      setGrokOfficialStatus("Grok 공식홈 Chrome에서 로그인한 뒤 새로고침을 눌러 주세요.");
+      await refreshGrokOfficialPanel();
+      await loadHealth();
+    } catch (error) {
+      showToast(error.message, true);
+      setGrokOfficialStatus(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  });
+  document.querySelector("#grokOfficialStartDefault")?.addEventListener("click", async () => {
+    const button = document.querySelector("#grokOfficialStartDefault");
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "여는 중";
+    try {
+      const response = await fetch("/api/grok-official/chrome/start-default", { method: "POST" });
+      const data = await readJsonResponse(response, "기본 Chrome 프로필 시작 실패");
+      if (!data.ok) throw new Error(data.error || data.detail || "기본 Chrome 프로필 시작 실패");
+      showToast(data.message || "기본 Chrome 프로필로 Grok 공식홈을 열었습니다.");
+      setGrokOfficialStatus(data.message || "기본 Chrome에서 Grok 로그인 상태를 확인해 주세요.");
+      await refreshGrokOfficialPanel();
+      await loadHealth();
+    } catch (error) {
+      showToast(error.message, true);
+      setGrokOfficialStatus(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  });
+  document.querySelector("#grokOfficialRestartDefault")?.addEventListener("click", async () => {
+    if (!confirm("실행 중인 모든 Chrome 창을 종료하고 기본 프로필을 9227 디버그 모드로 다시 엽니다. 계속할까요?")) return;
+    const button = document.querySelector("#grokOfficialRestartDefault");
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "종료 중";
+    try {
+      const response = await fetch("/api/grok-official/chrome/restart-default", { method: "POST" });
+      const data = await readJsonResponse(response, "Chrome 종료 후 기본 프로필 실행 실패");
+      if (!data.ok) throw new Error(data.error || data.detail || "Chrome 종료 후 기본 프로필 실행 실패");
+      showToast(data.message || "Chrome을 종료하고 기본 프로필로 Grok 공식홈을 열었습니다.");
+      setGrokOfficialStatus(data.message || "열린 Chrome에서 Grok 로그인 상태를 확인한 뒤 새로고침을 눌러 주세요.");
+      await refreshGrokOfficialPanel();
+      await loadHealth();
+    } catch (error) {
+      showToast(error.message, true);
+      setGrokOfficialStatus(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  });
+  document.querySelector("#grokOfficialUse")?.addEventListener("click", async () => {
+    try {
+      const data = await postJson("/api/settings/provider-mode", { provider: "grok_official" });
+      showToast(`Provider를 ${data.provider}로 전환했습니다.`);
+      await loadHealth();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  document.querySelector("#grokOfficialRefresh")?.addEventListener("click", refreshGrokOfficialPanel);
+  refreshGrokOfficialPanel();
+}
+
 async function refreshCodexProxyPanel() {
   const list = document.querySelector("#codexProxyStatusList");
   try {
     const response = await fetch("/api/codex-proxy/status");
-    const data = await response.json();
+    const data = await readJsonResponse(response, "요청 실패");
     if (!data.ok) throw new Error(data.error || "Codex Proxy 상태 확인 실패");
     const connected = Boolean(data.running && data.oauth_status === "ready");
     setConnectionBadge("codex", connected, connected ? "연결됨" : (data.running ? "OAuth 확인 중" : "연결안됨"));
@@ -7351,7 +7680,7 @@ function bindCodexProxyPanel() {
     button.textContent = "시작 중";
     try {
       const response = await fetch("/api/codex-proxy/start", { method: "POST" });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "요청 실패");
       if (!data.ok) throw new Error(data.error || data.detail || "Codex Proxy 시작 실패");
       showToast(data.message || "Codex Proxy를 시작했습니다.");
       await refreshCodexProxyPanel();
@@ -7416,6 +7745,7 @@ function installConnectionStatusPanel() {
   if (!grid) return;
   if (existing) {
     bindHermesAuthPanel();
+    bindGrokOfficialPanel();
     bindCodexProxyPanel();
     return;
   }
@@ -7445,6 +7775,21 @@ function installConnectionStatusPanel() {
         <input type="text" id="hermesAuthCode" autocomplete="off" placeholder="xAI 화면의 코드를 붙여넣기">
         <button type="button" id="submitHermesCode">코드로 로그인 완료</button>
       </div>
+      <div class="connection-row is-disconnected" data-connection-service="grokOfficial">
+        <span class="connection-icon" aria-hidden="true"></span>
+        <div class="connection-main">
+          <strong>Grok 공식홈</strong>
+          <small id="grokOfficialStatusText">상태 확인 전</small>
+        </div>
+        <span class="connection-state" data-connection-label>연결안됨</span>
+        <div class="connection-actions">
+          <button type="button" id="grokOfficialStart" class="secondary">Chrome</button>
+          <button type="button" id="grokOfficialStartDefault" class="secondary">내 Chrome</button>
+          <button type="button" id="grokOfficialRestartDefault" class="secondary danger-btn">종료+내 Chrome</button>
+          <button type="button" id="grokOfficialUse" class="secondary">Provider</button>
+          <button type="button" id="grokOfficialRefresh" class="secondary">새로고침</button>
+        </div>
+      </div>
       <div class="connection-row is-disconnected" data-connection-service="codex">
         <span class="connection-icon" aria-hidden="true"></span>
         <div class="connection-main">
@@ -7462,6 +7807,7 @@ function installConnectionStatusPanel() {
   `;
   grid.insertBefore(card, grid.firstChild);
   bindHermesAuthPanel();
+  bindGrokOfficialPanel();
   bindCodexProxyPanel();
 }
 

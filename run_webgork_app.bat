@@ -31,7 +31,7 @@ if not defined PYTHON_CMD (
   exit /b 1
 )
 
-%PYTHON_CMD% -c "import flask, requests, dotenv, imageio_ffmpeg" >nul 2>nul
+%PYTHON_CMD% -c "import flask, requests, dotenv, imageio_ffmpeg, PIL" >nul 2>nul
 if not %errorlevel%==0 (
   echo Installing required Python packages...
   %PYTHON_CMD% -m pip install -r requirements.txt
@@ -45,10 +45,16 @@ if not %errorlevel%==0 (
 powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 2 > $null; exit 0 } catch { exit 1 }" >nul 2>nul
 if not %errorlevel%==0 (
   echo Starting WebGUI.v3 server...
-  start "WebGUI.v3 Server" /min cmd /c "set WEBGORK_OPEN_BROWSER=0&& set WEBGORK_PORT=7863&& %PYTHON_CMD% app.py"
-  powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 30; $i++){ try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 1 > $null; $ok=$true; break } catch { Start-Sleep -Milliseconds 500 } }; if(-not $ok){ exit 1 }"
+  if exist "%~dp0work\run_server.py" (
+    start "WebGUI.v3 Server" /min cmd /c "%PYTHON_CMD% work\run_server.py"
+  ) else (
+    start "WebGUI.v3 Server" /min cmd /c "set WEBGORK_OPEN_BROWSER=0&& set WEBGORK_PORT=7863&& %PYTHON_CMD% app.py"
+  )
+  powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){ try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 1 > $null; $ok=$true; break } catch { Start-Sleep -Milliseconds 500 } }; if(-not $ok){ exit 1 }"
   if not %errorlevel%==0 (
     echo Server did not start.
+    echo Check the server log:
+    echo %~dp0work\server-runner.log
     pause
     exit /b 1
   )

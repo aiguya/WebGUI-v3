@@ -8,6 +8,7 @@ import re
 import secrets
 import shutil
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -19,7 +20,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 from urllib.parse import urlencode
 
 import requests
@@ -47,6 +48,63 @@ HERMES_LOGIN_STATE = {
 }
 HERMES_PROXY_PROCESS = None
 CODEX_PROXY_PROCESS = None
+HERMES_IMAGE_MODEL_CANDIDATES = [
+    "grok-imagine-image",
+    "grok-imagine-image-latest",
+    "grok-imagine-image-fast",
+    "grok-imagine-image-quality",
+    "grok-imagine-image-quality-latest",
+    "grok-imagine-image-pro",
+    "grok-imagine-image-pro-latest",
+    "grok-imagine-image-v2",
+    "grok-imagine-image-v3",
+    "imagine",
+    "imagine-image",
+    "imagine-image-edit",
+]
+HERMES_VIDEO_MODEL_CANDIDATES = [
+    "grok-imagine-video",
+    "grok-imagine-video-latest",
+    "grok-imagine-video-fast",
+    "grok-imagine-video-1.5-preview",
+    "grok-imagine-video-1.5",
+    "grok-imagine-video-1.5-latest",
+    "grok-imagine-video-v2",
+    "grok-imagine-video-v3",
+    "imagine-video",
+    "video-gen",
+]
+GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES = [
+    "official:imagine-x-1",
+    "official:imagine_h_1",
+]
+GROK_OFFICIAL_IMAGE_MODEL_NAMES = {
+    "official:imagine-x-1": "imagine-x-1",
+    "official:imagine_h_1": "imagine_h_1",
+}
+GROK_OFFICIAL_PRO_MODELS = {
+    "grok-imagine-image-quality",
+    "grok-imagine-image-pro",
+    "grok-imagine-image-quality-latest",
+    "official:imagine_h_1",
+}
+HERMES_PROBE_IMAGE_DATA_URI = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/axC8S0AAAAASUVORK5CYII="
+)
+
+
+def model_id_valid(value):
+    return bool(re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", str(value or "").strip()))
+
+
+def unique_model_ids(values):
+    result = []
+    for value in values or []:
+        model = str(value or "").strip()
+        if model_id_valid(model) and model not in result:
+            result.append(model)
+    return result
 
 
 def read_settings():
@@ -213,6 +271,14 @@ app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024
 app.secret_key = os.getenv("WEBGORK_SECRET_KEY", uuid.uuid4().hex)
 
 LAST_ERROR = None
+GROK_OFFICIAL_PROGRESS = {
+    "status": "idle",
+    "stage": "idle",
+    "message": "Grok 공식홈 요청 대기 중",
+    "updated_at": None,
+}
+GROK_OFFICIAL_PROGRESS_LOCK = Lock()
+GROK_CHROME_UA_CACHE = {"value": "", "expires_at": 0.0}
 OAUTH_PENDING = {}
 OAUTH_CALLBACK_SERVER = None
 MANGA_BATCH_JOBS = {}
@@ -228,7 +294,7 @@ def config():
     session_api_key = session.get("xai_api_key") if request else None
     requested_mode = session.get("webgork_mode", os.getenv("WEBGORK_MODE", "mock")).strip().lower() if request else os.getenv("WEBGORK_MODE", "mock").strip().lower()
     provider = (settings.get("provider") or os.getenv("WEBGORK_PROVIDER") or "direct").strip().lower()
-    if provider not in {"direct", "hermes_proxy", "openai_api", "codex_proxy"}:
+    if provider not in {"direct", "hermes_proxy", "grok_official", "openai_api", "codex_proxy"}:
         provider = "direct"
     hermes_base = (settings.get("hermes_base_url") or os.getenv("HERMES_PROXY_BASE_URL") or "").strip().rstrip("/")
     hermes_key = (settings.get("hermes_api_key") or os.getenv("HERMES_PROXY_API_KEY") or "").strip()
@@ -236,6 +302,7 @@ def config():
     codex_base = (settings.get("codex_proxy_base_url") or os.getenv("CODEX_IMAGE_PROXY_BASE_URL") or discover_codex_proxy_url() or "http://127.0.0.1:3333").strip().rstrip("/")
     mode = "live" if (
         (provider == "hermes_proxy" and hermes_base)
+        or provider == "grok_official"
         or (provider == "openai_api" and openai_key)
         or (provider == "codex_proxy" and codex_base)
     ) else ("live" if oauth_token_path().exists() else requested_mode)
@@ -256,6 +323,8 @@ def config():
         "management_base": os.getenv("XAI_MANAGEMENT_BASE", "https://management-api.x.ai").rstrip("/"),
         "image_model": os.getenv("XAI_IMAGE_MODEL", "grok-imagine-image-quality"),
         "video_model": os.getenv("XAI_VIDEO_MODEL", "grok-imagine-video"),
+        "hermes_discovered_image_models": unique_model_ids(settings.get("hermes_discovered_image_models") or []),
+        "hermes_discovered_video_models": unique_model_ids(settings.get("hermes_discovered_video_models") or []),
         "vision_model": os.getenv("XAI_VISION_MODEL", "grok-4.3"),
         "prompt_planner_model": os.getenv("XAI_PROMPT_PLANNER_MODEL", "grok-4.20-0309-reasoning"),
         "oauth_issuer": os.getenv("XAI_OAUTH_ISSUER", "https://auth.x.ai").rstrip("/"),
@@ -338,9 +407,28 @@ def valid_image_resolution(value):
 def valid_image_model(value, cfg=None):
     fallback = (cfg or config())["image_model"]
     model = (value or fallback).strip()
-    if re.fullmatch(r"[A-Za-z0-9._:-]{1,96}", model):
+    if model_id_valid(model):
         return model
     return fallback
+
+
+def grok_official_image_model_name(model):
+    return GROK_OFFICIAL_IMAGE_MODEL_NAMES.get(str(model or "").strip(), "")
+
+
+def grok_official_image_model_is_experimental(model):
+    return bool(grok_official_image_model_name(model))
+
+
+def grok_official_image_enable_pro(model):
+    return str(model or "").strip() in GROK_OFFICIAL_PRO_MODELS
+
+
+def grok_official_image_resolution_name(resolution):
+    resolution = str(resolution or "").strip().lower()
+    if resolution == "2k":
+        return "2mp"
+    return ""
 
 
 def valid_openai_image_model(value, cfg=None):
@@ -359,9 +447,12 @@ def valid_codex_image_model(value, cfg=None):
     return fallback
 
 
-def selected_image_backend(value, cfg=None):
+def selected_image_backend(value, cfg=None, provider_override=None):
     cfg = cfg or config()
     requested = (value or "").strip()
+    provider = provider_override if provider_override in {"direct", "hermes_proxy", "grok_official"} else (
+        cfg["provider"] if cfg["provider"] in {"direct", "hermes_proxy", "grok_official"} else ("hermes_proxy" if cfg.get("hermes_base_url") else "direct")
+    )
     if requested.startswith("gpt-image-") or (not requested and cfg["provider"] == "openai_api"):
         raise ValueError("OpenAI API 모델은 현재 UI에서 사용하지 않습니다. Codex/ChatGPT OAuth 모델(gpt-5 계열)을 선택해 주세요.")
     if requested.startswith("gpt-5.") or (not requested and cfg["provider"] == "codex_proxy"):
@@ -369,10 +460,11 @@ def selected_image_backend(value, cfg=None):
         if requested and model != requested:
             raise ValueError(f"지원하지 않는 Codex 이미지 모델입니다: {requested}")
         return "codex_proxy", model
+    if grok_official_image_model_is_experimental(requested) and provider != "grok_official":
+        raise ValueError(f"Grok 공식홈 전용 이미지 모델은 요청 경로를 Grok 공식홈 Quota로 선택해야 합니다: {requested}")
     model = valid_image_model(requested, cfg)
     if requested and model != requested:
         raise ValueError(f"지원하지 않는 Grok 이미지 모델입니다: {requested}")
-    provider = cfg["provider"] if cfg["provider"] in {"direct", "hermes_proxy"} else ("hermes_proxy" if cfg.get("hermes_base_url") else "direct")
     return provider, model
 
 
@@ -389,6 +481,19 @@ def checked(value):
     return str(value or "").strip().lower() in {"1", "true", "on", "yes"}
 
 
+def request_provider_override(source=None):
+    getter = source.get if source is not None else request.values.get
+    value = (
+        getter("request_provider")
+        or getter("request_route")
+        or getter("image_provider")
+        or getter("provider_route")
+        or ""
+    )
+    value = str(value).strip().lower()
+    return value if value in {"direct", "hermes_proxy", "grok_official"} else None
+
+
 def valid_video_resolution(value):
     resolution = (value or "720p").strip()
     return resolution if resolution in {"480p", "720p"} else "720p"
@@ -397,7 +502,7 @@ def valid_video_resolution(value):
 def valid_video_model(value, cfg=None):
     fallback = (cfg or config())["video_model"]
     model = (value or fallback).strip()
-    if model in {"grok-imagine-video", "grok-imagine-video-1.5-preview"}:
+    if model_id_valid(model):
         return model
     return fallback
 
@@ -860,6 +965,9 @@ def normalize_template_shots(value):
         transition = str(item.get("transition") or "cut").strip()
         if transition not in VIDEO_TEMPLATE_TRANSITIONS:
             transition = "cut"
+        request_provider = str(item.get("request_provider") or item.get("provider_route") or "").strip().lower()
+        if request_provider not in {"direct", "hermes_proxy", "grok_official"}:
+            request_provider = ""
         try:
             duration = float(item.get("duration") or 6)
         except (TypeError, ValueError):
@@ -881,6 +989,7 @@ def normalize_template_shots(value):
             "image_resolution": valid_image_resolution(item.get("image_resolution")),
             "edit_input_mode": valid_edit_input_mode(item.get("edit_input_mode") or "multi"),
             "video_model": clean_template_model(item.get("video_model")),
+            "request_provider": request_provider,
             "prompt": str(item.get("prompt") or "").strip()[:12000],
             "camera": str(item.get("camera") or "").strip()[:2000],
             "transition": transition,
@@ -990,6 +1099,7 @@ def normalize_template_block(item):
         "image_resolution": item.get("image_resolution"),
         "edit_input_mode": item.get("edit_input_mode"),
         "video_model": item.get("video_model"),
+        "request_provider": item.get("request_provider") or item.get("provider_route"),
         "prompt": item.get("prompt"),
         "camera": item.get("camera"),
         "transition": item.get("transition"),
@@ -1016,6 +1126,7 @@ def normalize_template_block(item):
         "image_resolution": shot.get("image_resolution") or "auto",
         "edit_input_mode": shot.get("edit_input_mode") or "multi",
         "video_model": shot.get("video_model") or "",
+        "request_provider": shot.get("request_provider") or "",
         "prompt": shot.get("prompt") or "",
         "camera": shot.get("camera") or "",
         "transition": shot.get("transition") or "cut",
@@ -1919,6 +2030,8 @@ def metadata_remote_url(item):
     for value in (
         extra.get("remote_url"),
         extra.get("source_url"),
+        extra.get("official_image_url"),
+        extra.get("official_media_url"),
         item.get("remote_url"),
         item.get("source_url"),
     ):
@@ -1936,9 +2049,31 @@ def remote_url_for_media_path(path):
     return metadata_remote_url(item)
 
 
+def remote_media_url_fetchable(url):
+    url = http_media_url(url)
+    if not url:
+        return False
+    try:
+        response = requests.head(url, allow_redirects=True, timeout=8)
+        if 200 <= response.status_code < 400:
+            return True
+        if response.status_code not in {403, 405}:
+            return False
+    except requests.RequestException:
+        pass
+    try:
+        response = requests.get(url, headers={"Range": "bytes=0-0"}, stream=True, timeout=10)
+        try:
+            return 200 <= response.status_code < 400
+        finally:
+            response.close()
+    except requests.RequestException:
+        return False
+
+
 def image_input_url(path, allow_remote=True):
     remote_url = remote_url_for_media_path(path) if allow_remote else None
-    if remote_url:
+    if remote_url and remote_media_url_fetchable(remote_url):
         return remote_url, True
     return data_uri(Path(path)), False
 
@@ -1949,6 +2084,2360 @@ def image_input_object(path, include_type=False, allow_remote=True):
     if include_type:
         payload["type"] = "image_url"
     return payload, used_remote
+
+
+class MinimalWebSocket:
+    def __init__(self, url, headers=None, timeout=30):
+        self.url = url
+        self.headers = headers or {}
+        self.timeout = timeout
+        self.sock = None
+        self.connected = False
+
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+    def connect(self):
+        parsed = urlparse(self.url)
+        if parsed.scheme not in {"ws", "wss"}:
+            raise ValueError(f"Unsupported WebSocket URL: {self.url}")
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        raw = socket.create_connection((host, port), timeout=self.timeout)
+        raw.settimeout(self.timeout)
+        if parsed.scheme == "wss":
+            raw = ssl.create_default_context().wrap_socket(raw, server_hostname=host)
+            raw.settimeout(self.timeout)
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        host_header = host if parsed.port in (None, 80, 443) else f"{host}:{port}"
+        lines = [
+            f"GET {path} HTTP/1.1",
+            f"Host: {host_header}",
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            f"Sec-WebSocket-Key: {key}",
+            "Sec-WebSocket-Version: 13",
+        ]
+        for name, value in self.headers.items():
+            if value is not None and value != "":
+                lines.append(f"{name}: {value}")
+        request_bytes = ("\r\n".join(lines) + "\r\n\r\n").encode("utf-8")
+        raw.sendall(request_bytes)
+        response = b""
+        while b"\r\n\r\n" not in response:
+            chunk = raw.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+            if len(response) > 65536:
+                break
+        head = response.split(b"\r\n\r\n", 1)[0].decode("iso-8859-1", errors="replace")
+        if " 101 " not in head.split("\r\n", 1)[0]:
+            raw.close()
+            raise RuntimeError(f"WebSocket handshake failed: {head[:800]}")
+        self.sock = raw
+        self.connected = True
+
+    def send_text(self, text):
+        self._send_frame(0x1, text.encode("utf-8"))
+
+    def send_json(self, payload):
+        self.send_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+    def recv(self):
+        while True:
+            fin, opcode, payload = self._recv_frame()
+            if opcode in {0x1, 0x2}:
+                chunks = [payload]
+                initial_opcode = opcode
+                while not fin:
+                    fin, opcode, payload = self._recv_frame()
+                    if opcode == 0x0:
+                        chunks.append(payload)
+                    elif opcode == 0x9:
+                        self._send_frame(0xA, payload)
+                    elif opcode == 0x8:
+                        self.connected = False
+                        return "close", payload
+                payload = b"".join(chunks)
+                opcode = initial_opcode
+            if opcode == 0x1:
+                return "text", payload.decode("utf-8", errors="replace")
+            if opcode == 0x2:
+                return "binary", payload
+            if opcode == 0x8:
+                self.connected = False
+                return "close", payload
+            if opcode == 0x9:
+                self._send_frame(0xA, payload)
+            elif opcode == 0xA:
+                continue
+
+    def close(self):
+        if not self.sock:
+            return
+        try:
+            if self.connected:
+                self._send_frame(0x8, b"")
+        except Exception:
+            pass
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+        self.connected = False
+        self.sock = None
+
+    def _send_frame(self, opcode, payload):
+        if not self.sock:
+            raise RuntimeError("WebSocket is not connected.")
+        payload = payload or b""
+        mask = os.urandom(4)
+        first = 0x80 | opcode
+        length = len(payload)
+        if length < 126:
+            header = struct.pack("!BB", first, 0x80 | length)
+        elif length < (1 << 16):
+            header = struct.pack("!BBH", first, 0x80 | 126, length)
+        else:
+            header = struct.pack("!BBQ", first, 0x80 | 127, length)
+        masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        self.sock.sendall(header + mask + masked)
+
+    def _recv_exact(self, count):
+        chunks = []
+        remaining = count
+        while remaining:
+            chunk = self.sock.recv(remaining)
+            if not chunk:
+                raise RuntimeError("WebSocket connection closed.")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    def _recv_frame(self):
+        header = self._recv_exact(2)
+        first, second = header
+        fin = bool(first & 0x80)
+        opcode = first & 0x0F
+        length = second & 0x7F
+        masked = bool(second & 0x80)
+        if length == 126:
+            length = struct.unpack("!H", self._recv_exact(2))[0]
+        elif length == 127:
+            length = struct.unpack("!Q", self._recv_exact(8))[0]
+        mask = self._recv_exact(4) if masked else b""
+        payload = self._recv_exact(length) if length else b""
+        if masked:
+            payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        return fin, opcode, payload
+
+
+def json_safe(value):
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [json_safe(item) for item in value]
+    return value
+
+
+def recursive_find_values(value, predicate, limit=30):
+    found = []
+
+    def walk(node):
+        if len(found) >= limit:
+            return
+        if isinstance(node, dict):
+            for item in node.values():
+                walk(item)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif predicate(node):
+            found.append(node)
+
+    walk(value)
+    return found
+
+
+def grok_official_port():
+    try:
+        return int(os.getenv("GROK_OFFICIAL_CHROME_PORT", "9227"))
+    except ValueError:
+        return 9227
+
+
+def grok_official_profile_dir():
+    return Path(os.getenv("GROK_OFFICIAL_CHROME_PROFILE") or (ROOT / ".chrome-grok-official-profile")).resolve()
+
+
+def grok_default_chrome_user_data_dir():
+    configured = os.getenv("GROK_OFFICIAL_DEFAULT_CHROME_USER_DATA_DIR")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    local_app_data = os.getenv("LOCALAPPDATA")
+    if not local_app_data:
+        return None
+    return (Path(local_app_data) / "Google" / "Chrome" / "User Data").resolve()
+
+
+def grok_default_chrome_profile_name():
+    configured = (os.getenv("GROK_OFFICIAL_DEFAULT_CHROME_PROFILE") or "").strip()
+    if configured:
+        return configured
+    user_data_dir = grok_default_chrome_user_data_dir()
+    if user_data_dir:
+        try:
+            local_state = json.loads((user_data_dir / "Local State").read_text(encoding="utf-8"))
+            last_used = (((local_state or {}).get("profile") or {}).get("last_used") or "").strip()
+            if last_used:
+                return last_used
+        except Exception:
+            pass
+    return "Default"
+
+
+def chrome_process_count():
+    if os.name != "nt":
+        return 0
+    try:
+        output = subprocess.check_output(
+            ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/FO", "CSV", "/NH"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
+    except Exception:
+        return 0
+    if "INFO:" in output:
+        return 0
+    return sum(1 for line in output.splitlines() if line.strip().lower().startswith('"chrome.exe"'))
+
+
+def stop_chrome_processes():
+    if os.name != "nt":
+        raise RuntimeError("Chrome 자동 종료는 Windows에서만 지원합니다.")
+    before = chrome_process_count()
+    if not before:
+        return {"stopped": 0, "message": "실행 중인 Chrome이 없습니다."}
+    proc = subprocess.run(
+        ["taskkill", "/IM", "chrome.exe", "/T", "/F"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    time.sleep(1.0)
+    after = chrome_process_count()
+    if proc.returncode != 0 and after:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"Chrome 종료에 실패했습니다. {detail[:500]}")
+    return {
+        "stopped": before,
+        "remaining": after,
+        "message": f"Chrome 프로세스 {before}개를 종료했습니다.",
+    }
+
+
+def chrome_executable_candidates():
+    candidates = []
+    for env_name in ("GROK_CHROME_PATH", "CHROME_PATH"):
+        value = os.getenv(env_name)
+        if value:
+            candidates.append(Path(value))
+    program_files = [os.getenv("ProgramFiles"), os.getenv("ProgramFiles(x86)"), os.getenv("LOCALAPPDATA")]
+    for base in [Path(item) for item in program_files if item]:
+        candidates.extend([
+            base / "Google" / "Chrome" / "Application" / "chrome.exe",
+            base / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+        ])
+    for name in ("chrome.exe", "chrome", "msedge.exe", "msedge"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(Path(found))
+    return candidates
+
+
+def chrome_executable_path():
+    for candidate in chrome_executable_candidates():
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def update_grok_official_progress(**fields):
+    with GROK_OFFICIAL_PROGRESS_LOCK:
+        GROK_OFFICIAL_PROGRESS.update(fields)
+        GROK_OFFICIAL_PROGRESS["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return dict(GROK_OFFICIAL_PROGRESS)
+
+
+def reset_grok_official_progress(**fields):
+    with GROK_OFFICIAL_PROGRESS_LOCK:
+        GROK_OFFICIAL_PROGRESS.clear()
+        GROK_OFFICIAL_PROGRESS.update({
+            "status": "idle",
+            "stage": "idle",
+            "message": "Grok 공식홈 요청 대기 중",
+            "updated_at": None,
+        })
+        GROK_OFFICIAL_PROGRESS.update(fields)
+        GROK_OFFICIAL_PROGRESS["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return dict(GROK_OFFICIAL_PROGRESS)
+
+
+def grok_official_progress_payload():
+    with GROK_OFFICIAL_PROGRESS_LOCK:
+        return dict(GROK_OFFICIAL_PROGRESS)
+
+
+def ensure_grok_chrome(use_default_profile=False):
+    port = grok_official_port()
+    if port_open("127.0.0.1", port):
+        return {
+            "ok": True,
+            "port": port,
+            "running": True,
+            "started": False,
+            "url": f"http://127.0.0.1:{port}",
+            "profile_mode": "existing_debug_session",
+            "message": "Grok 공식홈 Chrome 디버그 세션이 이미 실행 중입니다.",
+        }
+    exe = chrome_executable_path()
+    if not exe:
+        raise RuntimeError("Chrome 또는 Edge 실행 파일을 찾지 못했습니다. GROK_CHROME_PATH를 설정해 주세요.")
+    profile_mode = "default_chrome_profile" if use_default_profile else "dedicated_profile"
+    profile = grok_default_chrome_user_data_dir() if use_default_profile else grok_official_profile_dir()
+    if not profile:
+        raise RuntimeError("기본 Chrome 프로필 경로를 찾지 못했습니다. GROK_OFFICIAL_DEFAULT_CHROME_USER_DATA_DIR를 설정해 주세요.")
+    if use_default_profile and not profile.exists():
+        raise RuntimeError(f"기본 Chrome 프로필 폴더를 찾지 못했습니다: {profile}")
+    if use_default_profile and chrome_process_count():
+        raise RuntimeError(
+            "기본 Chrome 프로필이 이미 실행 중인 Chrome에 잠겨 있습니다. 모든 Chrome 창을 닫은 뒤 설정의 '내 Chrome'을 다시 눌러 주세요."
+        )
+    profile.mkdir(parents=True, exist_ok=True)
+    command = [
+        str(exe),
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={profile}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "https://grok.com/",
+    ]
+    if use_default_profile:
+        command.insert(-1, f"--profile-directory={grok_default_chrome_profile_name()}")
+    subprocess.Popen(command, cwd=str(ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(20):
+        if port_open("127.0.0.1", port):
+            return {
+                "ok": True,
+                "port": port,
+                "running": True,
+                "started": True,
+                "url": f"http://127.0.0.1:{port}",
+                "profile_dir": str(profile),
+                "profile_mode": profile_mode,
+                "message": "Grok 공식홈 Chrome을 열었습니다.",
+            }
+        time.sleep(0.5)
+    message = "Grok 공식홈 Chrome을 시작했지만 디버그 포트가 열리지 않았습니다."
+    if use_default_profile:
+        message += " 이미 실행 중인 일반 Chrome이 있으면 모든 Chrome 창을 닫은 뒤 다시 눌러 주세요."
+    return {
+        "ok": True,
+        "port": port,
+        "running": False,
+        "started": True,
+        "url": f"http://127.0.0.1:{port}",
+        "profile_dir": str(profile),
+        "profile_mode": profile_mode,
+        "message": message,
+    }
+
+
+def cdp_json(path, port=None, method="GET"):
+    port = port or grok_official_port()
+    url = f"http://127.0.0.1:{port}{path}"
+    response = requests.request(method, url, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
+def grok_imagine_tab(port=None):
+    port = port or grok_official_port()
+    tabs = cdp_json("/json/list", port=port)
+    for tab in tabs:
+        if isinstance(tab, dict) and "grok.com" in (tab.get("url") or "") and tab.get("webSocketDebuggerUrl"):
+            return tab
+    encoded = "https://grok.com/"
+    for method in ("PUT", "GET"):
+        try:
+            created = cdp_json("/json/new?" + encoded, port=port, method=method)
+            if created.get("webSocketDebuggerUrl"):
+                return created
+        except Exception:
+            pass
+    tabs = cdp_json("/json/list", port=port)
+    for tab in tabs:
+        if isinstance(tab, dict) and tab.get("webSocketDebuggerUrl"):
+            return tab
+    raise RuntimeError("Chrome CDP 탭을 찾지 못했습니다.")
+
+
+class CdpWebSocket:
+    def __init__(self, ws_url, timeout=20):
+        self.ws = MinimalWebSocket(ws_url, timeout=timeout)
+        self.next_id = 1
+
+    def __enter__(self):
+        self.ws.connect()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.ws.close()
+
+    def call(self, method, params=None, timeout=20):
+        msg_id = self.next_id
+        self.next_id += 1
+        self.ws.send_json({"id": msg_id, "method": method, "params": params or {}})
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            kind, data = self.ws.recv()
+            if kind != "text":
+                continue
+            payload = json.loads(data)
+            if payload.get("id") != msg_id:
+                continue
+            if payload.get("error"):
+                raise RuntimeError(json.dumps(payload["error"], ensure_ascii=False))
+            return payload.get("result") or {}
+        raise TimeoutError(f"CDP call timed out: {method}")
+
+
+def grok_official_browser_fetch(url, body=None, method="POST", timeout=360):
+    tab = grok_imagine_tab()
+    body_json = json.dumps(body or {}, ensure_ascii=False, separators=(",", ":"))
+    expression = f"""
+(async () => {{
+  const response = await fetch({json.dumps(url)}, {{
+    method: {json.dumps(method)},
+    credentials: "include",
+    headers: {{
+      "Accept": "application/json, text/event-stream, */*",
+      "Content-Type": "application/json",
+      "x-xai-request-id": crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
+    }},
+    body: {json.dumps(body_json)}
+  }});
+  const headers = Object.fromEntries(response.headers.entries());
+  let text = "";
+  if (response.body && response.body.getReader) {{
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {{
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      text += decoder.decode(chunk.value, {{stream: true}});
+    }}
+    text += decoder.decode();
+  }} else {{
+    text = await response.text();
+  }}
+  return {{ok: response.ok, status: response.status, statusText: response.statusText, headers, text}};
+}})()
+"""
+    with CdpWebSocket(tab["webSocketDebuggerUrl"], timeout=timeout + 30) as cdp:
+        result = cdp.call(
+            "Runtime.evaluate",
+            {
+                "expression": expression,
+                "awaitPromise": True,
+                "returnByValue": True,
+            },
+            timeout=timeout + 30,
+        )
+    value = (result.get("result") or {}).get("value") or {}
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Grok official browser fetch returned an unexpected response: {value}")
+    return value
+
+
+def grok_chrome_cookies(start_chrome=False):
+    if start_chrome:
+        ensure_grok_chrome()
+    elif not port_open("127.0.0.1", grok_official_port()):
+        raise RuntimeError("Grok 공식홈 Chrome이 실행 중이 아닙니다.")
+    tab = grok_imagine_tab()
+    with CdpWebSocket(tab["webSocketDebuggerUrl"]) as cdp:
+        result = cdp.call("Network.getAllCookies")
+    cookies = result.get("cookies") or []
+    return [cookie for cookie in cookies if "grok.com" in (cookie.get("domain") or "")]
+
+
+def active_grok_account_id():
+    settings = read_settings()
+    configured = (settings.get("grok_account_id") or os.getenv("GROK_ACCOUNT_ID") or "").strip()
+    if configured:
+        return configured
+    try:
+        cookies = grok_chrome_cookies()
+    except Exception:
+        return ""
+    preferred_names = {"x-userid", "x_grok_account_id", "x-grok-account-id", "grok_account_id", "account_id"}
+    for cookie in cookies:
+        name = (cookie.get("name") or "").lower()
+        if name in preferred_names and cookie.get("value"):
+            return cookie["value"]
+    for cookie in cookies:
+        name = (cookie.get("name") or "").lower()
+        if "account" in name and cookie.get("value"):
+            return cookie["value"]
+    return ""
+
+
+def grok_web_cookie_for(account_id=None, start_chrome=False):
+    try:
+        cookies = grok_chrome_cookies(start_chrome=start_chrome)
+    except Exception as exc:
+        raise RuntimeError("Grok 공식홈 세션 쿠키를 읽지 못했습니다. 설정에서 Grok 공식홈 Chrome을 열고 로그인해 주세요.") from exc
+    if not cookies:
+        raise RuntimeError("Grok 공식홈 세션 쿠키가 없습니다. 설정에서 Grok 공식홈 Chrome을 열고 로그인해 주세요.")
+    pairs = []
+    for cookie in cookies:
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if name and value is not None:
+            pairs.append(f"{name}={value}")
+    if not pairs:
+        raise RuntimeError("Grok 공식홈 세션 쿠키가 비어 있습니다. Grok 공식홈에 다시 로그인해 주세요.")
+    return "; ".join(pairs)
+
+
+def grok_cookie_value(cookie_header, names):
+    lookup = {}
+    for part in cookie_header.split(";"):
+        if "=" in part:
+            name, value = part.split("=", 1)
+            lookup[name.strip().lower()] = value.strip()
+    for name in names:
+        value = lookup.get(name.lower())
+        if value:
+            return value
+    return ""
+
+
+def grok_chrome_user_agent():
+    now = time.time()
+    cached = GROK_CHROME_UA_CACHE.get("value")
+    if cached and now < float(GROK_CHROME_UA_CACHE.get("expires_at") or 0):
+        return cached
+    configured = (os.getenv("GROK_OFFICIAL_USER_AGENT") or "").strip()
+    if configured:
+        return configured
+    try:
+        tab = grok_imagine_tab()
+        with CdpWebSocket(tab["webSocketDebuggerUrl"]) as cdp:
+            version = cdp.call("Browser.getVersion")
+        value = (version.get("userAgent") or "").strip()
+        if value:
+            GROK_CHROME_UA_CACHE.update({"value": value, "expires_at": now + 600})
+            return value
+    except Exception:
+        pass
+    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+
+def grok_web_headers(account_id=None, accept="application/json", start_chrome=False):
+    account_id = account_id or active_grok_account_id()
+    cookie = grok_web_cookie_for(account_id, start_chrome=start_chrome)
+    headers = {
+        "Accept": accept,
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "User-Agent": grok_chrome_user_agent(),
+        "Origin": "https://grok.com",
+        "Referer": "https://grok.com/",
+        "Cookie": cookie,
+    }
+    if account_id:
+        headers["x-grok-account-id"] = account_id
+    csrf = grok_cookie_value(cookie, ("csrf", "csrf_token", "_csrf", "grok_csrf_token", "x-csrf-token"))
+    if csrf:
+        headers["x-csrf-token"] = csrf
+    return headers
+
+
+def official_aspect_ratio(aspect_ratio, fallback="2:3"):
+    return aspect_ratio if aspect_ratio in {"2:3", "3:2", "1:1", "9:16", "16:9"} else fallback
+
+
+def official_image_id_from_url(url):
+    match = re.search(r"/images/([A-Za-z0-9_-]+)\.(?:jpe?g|png|webp)", url or "")
+    return match.group(1) if match else ""
+
+
+def grok_official_image_url(image_id):
+    return f"https://imagine-public.x.ai/imagine-public/images/{image_id}.jpg" if image_id else ""
+
+
+def official_generated_id_from_url(url):
+    match = re.search(r"/generated/([^/?#]+)/", url or "")
+    return match.group(1) if match else ""
+
+
+def grok_official_download_candidates(url, kind="image"):
+    candidates = []
+    raw_url = str(url or "").strip()
+    if raw_url and not raw_url.startswith(("http://", "https://")):
+        encoded = quote(raw_url, safe="")
+        if raw_url.startswith("assets.grok.com/"):
+            asset_path = raw_url.split("assets.grok.com/", 1)[1]
+        else:
+            asset_path = raw_url.lstrip("/")
+        if asset_path.startswith("users/"):
+            asset_url = f"https://assets.grok.com/{asset_path}"
+            candidates.append(asset_url)
+            if "?" not in asset_url:
+                candidates.append(asset_url + "?cache=1")
+        candidates.extend([
+            f"https://grok.com/rest/app-chat/download-file?fileUri={encoded}",
+            f"https://grok.com/rest/app-chat/file?fileUri={encoded}",
+            f"https://grok.com/rest/app-chat/files?fileUri={encoded}",
+            f"https://grok.com/rest/media/file?fileUri={encoded}",
+            f"https://grok.com/rest/media/download?fileUri={encoded}",
+        ])
+        return list(dict.fromkeys(candidates))
+    if raw_url:
+        candidates.append(raw_url)
+    if kind == "image":
+        image_id = official_image_id_from_url(raw_url)
+        if image_id:
+            for suffix in (".jpg", ".jpeg", ".png", ".webp"):
+                candidate = f"https://imagine-public.x.ai/imagine-public/images/{image_id}{suffix}"
+                if candidate not in candidates:
+                    candidates.append(candidate)
+    return candidates
+
+
+def save_response_bytes(blob, dest_dir, suffix=".jpg", filename_prefix="grok-official-"):
+    dest = dest_dir / f"{filename_prefix}{now_stamp()}-{uuid.uuid4().hex}{suffix}"
+    dest.write_bytes(blob)
+    return dest
+
+
+def response_suffix_from_bytes(blob, fallback=".jpg"):
+    if blob.startswith(b"\xff\xd8"):
+        return ".jpg"
+    if blob.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if blob.startswith(b"RIFF") and b"WEBP" in blob[:16]:
+        return ".webp"
+    if blob[:32].lower().find(b"ftyp") >= 0:
+        return ".mp4"
+    return fallback
+
+
+def decode_possible_image_blob(value):
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text.startswith("data:image/") and "," in text:
+        text = text.split(",", 1)[1]
+    if len(text) < 1024:
+        return None
+    if not text.startswith(("/9j/", "iVBORw0KGgo", "UklGR")):
+        return None
+    try:
+        blob = base64.b64decode(text, validate=False)
+    except Exception:
+        return None
+    return blob if response_suffix_from_bytes(blob, "") else None
+
+
+def grok_official_extract_image_blobs(payload, limit=8):
+    blobs = []
+
+    def walk(node):
+        if len(blobs) >= limit:
+            return
+        if isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+        else:
+            blob = decode_possible_image_blob(node)
+            if blob:
+                blobs.append(blob)
+
+    walk(payload)
+    return blobs
+
+
+def grok_official_event_block_reason(event):
+    reasons = []
+
+    def walk(node, key_path=""):
+        if len(reasons) >= 8:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                lowered_key = str(key).lower()
+                next_path = f"{key_path}.{key}" if key_path else str(key)
+                if lowered_key in {"moderated", "blocked", "is_blocked", "policy_blocked", "unsafe"} and value is True:
+                    reasons.append(f"{next_path}=true")
+                if isinstance(value, str) and lowered_key in {"current_status", "status", "error", "message", "reason", "confirmation"}:
+                    lowered_value = value.lower()
+                    if any(token in lowered_value for token in ("moderation", "blocked", "policy", "unsafe", "not allowed", "violation")):
+                        reasons.append(f"{next_path}={value[:160]}")
+                walk(value, next_path)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{key_path}[{index}]")
+
+    walk(event)
+    return "; ".join(reasons[:8])
+
+
+def grok_official_ws_error_message(event):
+    if not isinstance(event, dict) or event.get("type") != "error":
+        return ""
+    code = str(event.get("err_code") or event.get("code") or "").strip()
+    message = str(event.get("err_msg") or event.get("message") or event.get("error") or "").strip()
+    request_id = str(event.get("request_id") or event.get("requestId") or "").strip()
+    if code == "rate_limit_exceeded":
+        return (
+            "Grok 공식홈 이미지 quota 제한에 걸렸습니다"
+            + (f": {message}" if message else "")
+            + ". Quality 모델이면 'Grok 이미지 기본'으로 바꿔 보시고, 기본 모델도 실패하면 quota 회복 후 다시 시도해 주세요."
+        )
+    detail = " ".join(part for part in (code, message) if part)
+    if request_id:
+        detail = f"{detail} request_id={request_id}".strip()
+    return f"Grok 공식홈 WebSocket 오류: {detail or json.dumps(event, ensure_ascii=False)[:500]}"
+
+
+def grok_official_json_error(response):
+    try:
+        return json.dumps(response.json(), ensure_ascii=False)[:1200]
+    except Exception:
+        return (response.text or "")[:1200]
+
+
+def grok_official_pipeline_error(response, kind="media"):
+    detail = grok_official_json_error(response)
+    lowered = detail.lower()
+    is_rate_limited = (
+        response.status_code == 429
+        or '"code": 8' in detail
+        or "too many requests" in lowered
+        or "rate limit" in lowered
+    )
+    if is_rate_limited:
+        media_label = {"video": "영상", "image": "이미지"}.get(kind, "미디어")
+        retry_after = (response.headers.get("Retry-After") or "").strip()
+        retry_hint = f" Retry-After={retry_after}초." if retry_after else ""
+        message = (
+            f"Grok 공식홈 {media_label} quota/rate limit에 걸렸습니다."
+            f"{retry_hint} 잠시 후 다시 시도하거나 요청 경로를 Hermes Proxy로 바꿔 실행해 주세요."
+        )
+        update_grok_official_progress(
+            status="failed",
+            stage="rate_limited",
+            message=message,
+            http_status=response.status_code,
+        )
+        return f"{message} 원문: {detail}"
+    return f"Grok 공식홈 pipeline 요청 실패: {response.status_code} {detail}"
+
+
+def grok_official_status_payload(check_cookie=False):
+    port = grok_official_port()
+    running = port_open("127.0.0.1", port)
+    payload = {
+        "configured": True,
+        "chrome_port": port,
+        "chrome_running": running,
+        "chrome_processes": chrome_process_count(),
+        "profile_dir": str(grok_official_profile_dir()),
+        "default_profile_dir": str(grok_default_chrome_user_data_dir() or ""),
+        "default_profile_name": grok_default_chrome_profile_name(),
+        "session_cookie": False,
+        "account_id": "",
+        "message": "",
+        "progress": grok_official_progress_payload(),
+    }
+    if check_cookie:
+        try:
+            cookie = grok_web_cookie_for()
+            payload["session_cookie"] = bool(cookie)
+            payload["account_id"] = active_grok_account_id()
+            payload["message"] = "Grok 공식홈 세션 쿠키를 확인했습니다."
+        except Exception as exc:
+            payload["message"] = str(exc)
+            if not running and payload["chrome_processes"]:
+                payload["message"] = "일반 Chrome은 실행 중이지만 9227 디버그 연결이 없습니다. 모든 Chrome 창을 닫고 설정에서 '내 Chrome'을 다시 눌러 주세요."
+    return payload
+
+
+def grok_official_download(url, dest_dir, kind="image", return_url=False):
+    try:
+        headers = grok_web_headers(accept="*/*")
+    except Exception:
+        headers = {}
+    last_response = None
+    candidates = grok_official_download_candidates(url, kind=kind)
+    if not candidates:
+        raise RuntimeError("Grok 공식홈 미디어 다운로드 URL이 없습니다.")
+    attempts = 0
+    deadline = time.time() + (45 if kind == "image" else 0)
+    max_attempts = 8 if kind == "image" else 1
+    while True:
+        attempts += 1
+        for candidate in candidates:
+            request_variants = [headers] if headers else []
+            request_variants.append({})
+            for request_headers in request_variants:
+                response = requests.get(candidate, headers=request_headers or None, timeout=240)
+                last_response = response
+                if response.status_code < 400:
+                    mime = response.headers.get("content-type") or mimetypes.guess_type(urlparse(candidate).path)[0] or ""
+                    suffix = ".mp4" if kind == "video" else (".png" if "png" in mime else ".webp" if "webp" in mime else ".jpg")
+                    if kind == "video" and suffix != ".mp4":
+                        suffix = ".mp4"
+                    path = save_response_bytes(response.content, dest_dir, suffix=suffix)
+                    return (path, candidate) if return_url else path
+        if kind != "image" or attempts >= max_attempts or time.time() >= deadline:
+            break
+        time.sleep(2)
+    if last_response is not None:
+        tried = ", ".join(candidates)
+        detail = grok_official_json_error(last_response)
+        raise RuntimeError(f"Grok 공식홈 미디어 다운로드 실패: {last_response.status_code}. attempts={attempts}. tried={tried}. {detail}")
+    raise RuntimeError("Grok 공식홈 미디어 다운로드 응답이 없습니다.")
+
+
+def grok_official_browser_generated_urls():
+    tab = grok_imagine_tab()
+    expression = r"""
+(() => [...document.images]
+  .map(img => img.currentSrc || img.src || "")
+  .filter(src => src.includes("assets.grok.com") && src.includes("/generated/"))
+  .map(src => src.split("?")[0]))
+()
+"""
+    with CdpWebSocket(tab["webSocketDebuggerUrl"]) as cdp:
+        result = cdp.call("Runtime.evaluate", {"expression": expression, "returnByValue": True}, timeout=15)
+    return set(((result.get("result") or {}).get("value") or []))
+
+
+def grok_official_browser_image_candidates(exclude_urls=None):
+    exclude = set(exclude_urls or [])
+    tab = grok_imagine_tab()
+    expression = r"""
+(() => {
+  const seen = new Set();
+  return [...document.images]
+    .map((img, index) => {
+      const src = img.currentSrc || img.src || "";
+      const rect = img.getBoundingClientRect();
+      const visible = rect.width > 20 && rect.height > 20 && rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth;
+      const full = /\/image\.(?:jpe?g|png|webp)(?:\?|$)/i.test(src);
+      const generated = src.includes("assets.grok.com") && src.includes("/generated/");
+      const score = (visible ? 100000000 : 0) + (full ? 10000000 : 0) + Math.round(rect.width * rect.height * 100) + (img.naturalWidth * img.naturalHeight) + index;
+      return {
+        index,
+        src,
+        width: img.naturalWidth || 0,
+        height: img.naturalHeight || 0,
+        rendered_width: Math.round(rect.width),
+        rendered_height: Math.round(rect.height),
+        visible,
+        full,
+        generated,
+        score,
+      };
+    })
+    .filter(item => item.generated && item.src && item.width >= 256 && item.height >= 256)
+    .sort((a, b) => b.score - a.score)
+    .filter(item => {
+      const key = item.src.split("?")[0];
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 12);
+})()
+"""
+    with CdpWebSocket(tab["webSocketDebuggerUrl"]) as cdp:
+        result = cdp.call("Runtime.evaluate", {"expression": expression, "returnByValue": True}, timeout=15)
+    candidates = ((result.get("result") or {}).get("value") or [])
+    if exclude:
+        candidates = [item for item in candidates if (item.get("src") or "").split("?")[0] not in exclude]
+    return candidates
+
+
+def grok_official_fetch_browser_image(dest_dir, timeout=90, exclude_urls=None):
+    deadline = time.time() + timeout
+    last_error = ""
+    last_candidates = []
+    while time.time() < deadline:
+        candidates = grok_official_browser_image_candidates(exclude_urls=exclude_urls)
+        last_candidates = candidates
+        urls = [item.get("src") for item in candidates if item.get("src")]
+        if not urls:
+            time.sleep(2)
+            continue
+        update_grok_official_progress(
+            stage="browser-download",
+            message="Grok 공식홈 탭에서 결과 이미지 저장 중",
+            browser_candidate_count=len(urls),
+            browser_candidate_url=urls[0],
+        )
+        tab = grok_imagine_tab()
+        expression = f"""
+(async () => {{
+  const urls = {json.dumps(urls, ensure_ascii=False)};
+  const meta = {json.dumps(candidates, ensure_ascii=False)};
+  const toBase64 = (buffer) => {{
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {{
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }}
+    return btoa(binary);
+  }};
+  for (let i = 0; i < urls.length; i += 1) {{
+    try {{
+      const response = await fetch(urls[i], {{ credentials: "include", cache: "reload" }});
+      if (!response.ok) {{
+        continue;
+      }}
+      const blob = await response.blob();
+      const buffer = await blob.arrayBuffer();
+      return {{
+        ok: true,
+        url: urls[i],
+        mime: blob.type || response.headers.get("content-type") || "image/jpeg",
+        base64: toBase64(buffer),
+        bytes: buffer.byteLength,
+        candidate: meta[i] || null,
+        page_url: location.href,
+      }};
+    }} catch (error) {{
+      // Try the next rendered result URL.
+    }}
+  }}
+  return {{ ok: false, error: "No rendered Grok image could be fetched in the official tab.", candidates: meta, page_url: location.href }};
+}})()
+"""
+        with CdpWebSocket(tab["webSocketDebuggerUrl"]) as cdp:
+            result = cdp.call(
+                "Runtime.evaluate",
+                {"expression": expression, "awaitPromise": True, "returnByValue": True},
+                timeout=60,
+            )
+        value = (result.get("result") or {}).get("value") or {}
+        if value.get("ok") and value.get("base64"):
+            blob = base64.b64decode(value["base64"])
+            mime = value.get("mime") or "image/jpeg"
+            suffix = ".png" if "png" in mime else ".webp" if "webp" in mime else ".jpg"
+            path = save_response_bytes(blob, dest_dir, suffix=suffix, filename_prefix="grok-official-browser-")
+            return path, {
+                "url": value.get("url") or "",
+                "mime": mime,
+                "bytes": value.get("bytes") or len(blob),
+                "candidate": value.get("candidate") or {},
+                "page_url": value.get("page_url") or "",
+                "candidate_count": len(candidates),
+            }
+        last_error = value.get("error") or json.dumps(value, ensure_ascii=False)[:500]
+        time.sleep(2)
+    raise RuntimeError(f"Grok 공식홈 탭에서 렌더된 이미지 저장에 실패했습니다. {last_error} candidates={len(last_candidates)}")
+
+
+def grok_official_wait_for_imagine_ready(cdp, timeout=20):
+    deadline = time.time() + timeout
+    expression = r"""
+(() => {
+  const box = document.querySelector('[contenteditable="true"][role="textbox"], [role="textbox"][contenteditable="true"], textarea');
+  const submit = [...document.querySelectorAll('button')].find(button => {
+    const text = (button.innerText || button.ariaLabel || button.getAttribute("aria-label") || "").trim();
+    return button.type === "submit" || text === "제출" || text.toLowerCase() === "submit";
+  });
+  return { ready: Boolean(box && submit), url: location.href, title: document.title };
+})()
+"""
+    last = {}
+    while time.time() < deadline:
+        result = cdp.call("Runtime.evaluate", {"expression": expression, "returnByValue": True}, timeout=5)
+        last = (result.get("result") or {}).get("value") or {}
+        if last.get("ready"):
+            return last
+        time.sleep(0.5)
+    raise RuntimeError(f"Grok 공식홈 Imagine 입력창을 찾지 못했습니다. {last}")
+
+
+def grok_official_submit_imagine_ui(prompt, model=None, aspect_ratio="2:3"):
+    ensure_grok_chrome()
+    tab = grok_imagine_tab()
+    with CdpWebSocket(tab["webSocketDebuggerUrl"]) as cdp:
+        current = cdp.call("Runtime.evaluate", {"expression": "location.href", "returnByValue": True}, timeout=5)
+        current_url = ((current.get("result") or {}).get("value") or "")
+        if "/imagine" not in current_url or "/post/" in current_url:
+            cdp.call("Page.navigate", {"url": "https://grok.com/imagine"}, timeout=10)
+            time.sleep(2)
+        grok_official_wait_for_imagine_ready(cdp)
+        configure_expr = f"""
+(() => {{
+  const clickButton = (matcher) => {{
+    const buttons = [...document.querySelectorAll("button")];
+    const button = buttons.find((item) => matcher((item.innerText || item.ariaLabel || item.getAttribute("aria-label") || "").trim(), item));
+    if (button) {{
+      button.click();
+      return true;
+    }}
+    return false;
+  }};
+  const imageClicked = clickButton((text) => text === "이미지" || text.toLowerCase() === "image");
+  const qualityWanted = {json.dumps(model in {"grok-imagine-image-quality", "grok-imagine-image-pro", "grok-imagine-image-quality-latest"})};
+  const qualityClicked = qualityWanted ? clickButton((text) => text === "품질" || text.toLowerCase() === "quality") : false;
+  return {{ imageClicked, qualityClicked, url: location.href }};
+}})()
+"""
+        config_result = cdp.call("Runtime.evaluate", {"expression": configure_expr, "returnByValue": True}, timeout=10)
+        focus_expr = r"""
+(() => {
+  const box = document.querySelector('[contenteditable="true"][role="textbox"], [role="textbox"][contenteditable="true"], textarea');
+  if (!box) return { ok: false, error: "textbox not found" };
+  box.focus();
+  if (box.isContentEditable) {
+    document.execCommand("selectAll", false, null);
+    document.execCommand("delete", false, null);
+    box.textContent = "";
+    box.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+  } else {
+    box.value = "";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  return { ok: true };
+})()
+"""
+        focus_result = cdp.call("Runtime.evaluate", {"expression": focus_expr, "returnByValue": True}, timeout=10)
+        focused = (focus_result.get("result") or {}).get("value") or {}
+        if not focused.get("ok"):
+            raise RuntimeError(f"Grok 공식홈 입력창 포커스 실패: {focused}")
+        cdp.call("Input.insertText", {"text": prompt}, timeout=10)
+        verify_expr = f"""
+(() => {{
+  const prompt = {json.dumps(prompt, ensure_ascii=False)};
+  const box = document.querySelector('[contenteditable="true"][role="textbox"], [role="textbox"][contenteditable="true"], textarea');
+  if (!box) return {{ ok: false, error: "textbox missing after input" }};
+  const value = box.isContentEditable ? (box.innerText || box.textContent || "") : (box.value || "");
+  if (!value.includes(prompt.slice(0, Math.min(prompt.length, 40)))) {{
+    if (box.isContentEditable) {{
+      box.textContent = prompt;
+      box.dispatchEvent(new InputEvent("input", {{ bubbles: true, inputType: "insertText", data: prompt }}));
+    }} else {{
+      box.value = prompt;
+      box.dispatchEvent(new Event("input", {{ bubbles: true }}));
+    }}
+  }}
+  return {{ ok: true, valueLength: (box.isContentEditable ? (box.innerText || box.textContent || "") : (box.value || "")).length }};
+}})()
+"""
+        verify_result = cdp.call("Runtime.evaluate", {"expression": verify_expr, "returnByValue": True}, timeout=10)
+        submit_expr = r"""
+(() => {
+  const buttons = [...document.querySelectorAll("button")];
+  const submit = buttons.find((button) => {
+    const text = (button.innerText || button.ariaLabel || button.getAttribute("aria-label") || "").trim();
+    return button.type === "submit" || text === "제출" || text.toLowerCase() === "submit";
+  });
+  if (!submit) return { ok: false, error: "submit button not found" };
+  if (submit.disabled || submit.getAttribute("aria-disabled") === "true") return { ok: false, error: "submit button disabled" };
+  submit.click();
+  return { ok: true, url: location.href };
+})()
+"""
+        submit_result = cdp.call("Runtime.evaluate", {"expression": submit_expr, "returnByValue": True}, timeout=10)
+    return {
+        "config": (config_result.get("result") or {}).get("value") or {},
+        "verify": (verify_result.get("result") or {}).get("value") or {},
+        "submit": (submit_result.get("result") or {}).get("value") or {},
+    }
+
+
+def grok_official_image_generate_ui(prompt, dest_dir, count=1, account_id=None, aspect_ratio="2:3", resolution="auto", model=None):
+    account_id = account_id or active_grok_account_id()
+    request_id = uuid.uuid4().hex
+    try:
+        browser_baseline_urls = grok_official_browser_generated_urls()
+    except Exception:
+        browser_baseline_urls = set()
+    reset_grok_official_progress(
+        status="running",
+        stage="ui-submit",
+        message="Submitting image prompt in Grok official UI",
+        request_id=request_id,
+        prompt_preview=prompt[:120],
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        model=model or "grok-imagine-image-quality",
+        account_id_present=bool(account_id),
+        browser_baseline_count=len(browser_baseline_urls),
+    )
+    submit_meta = grok_official_submit_imagine_ui(prompt, model=model, aspect_ratio=aspect_ratio)
+    if not (submit_meta.get("submit") or {}).get("ok"):
+        raise RuntimeError(f"Grok 공식홈 UI 제출 실패: {submit_meta}")
+    update_grok_official_progress(stage="browser-download", message="Waiting for newly rendered Grok official result")
+    path, browser_saved = grok_official_fetch_browser_image(dest_dir, timeout=240, exclude_urls=browser_baseline_urls)
+    width, height = image_dimensions(path) or (None, None)
+    image_url = browser_saved.get("url") or ""
+    image_id = ""
+    generated_match = re.search(r"/generated/([^/]+)/", image_url)
+    if generated_match:
+        image_id = generated_match.group(1)
+    update_grok_official_progress(
+        status="done",
+        stage="done",
+        message="Grok official image generation completed",
+        output_path=str(path),
+        official_image_url=image_url,
+        official_image_id=image_id,
+        official_width=width,
+        official_height=height,
+        browser_saved=browser_saved,
+    )
+    return path, {
+        "source": "grok_official_web",
+        "official_mode": "quality" if model in {"grok-imagine-image-quality", "grok-imagine-image-pro", "grok-imagine-image-quality-latest"} else "speed",
+        "official_transport": "browser_ui",
+        "official_request_id": request_id,
+        "official_requested_resolution": resolution,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        "official_image_url": image_url,
+        "official_image_id": image_id,
+        "official_width": width,
+        "official_height": height,
+        "official_completed": True,
+        "official_browser_saved": browser_saved,
+        "official_ui_submit": submit_meta,
+        "grok_account_id": account_id,
+    }
+
+
+def grok_official_extract_urls(payload, kind="image"):
+    def wanted(value):
+        if not isinstance(value, str) or not value.startswith("http"):
+            return False
+        lowered = value.lower()
+        if kind == "video":
+            return ".mp4" in lowered or ".m3u8" in lowered or "video" in lowered
+        return (
+            "imagine-public.x.ai" in lowered
+            or "assets.grok.com" in lowered
+            or lowered.endswith((".jpg", ".jpeg", ".png", ".webp"))
+            or "/images/" in lowered
+            or "/generated/" in lowered
+        )
+
+    urls = []
+
+    def walk(node):
+        if len(urls) >= 30:
+            return
+        if isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+        elif isinstance(node, str):
+            if wanted(node):
+                urls.append(node)
+                return
+            text = node.strip()
+            if text and text[0] in "{[" and len(text) < 120000:
+                try:
+                    walk(json.loads(text))
+                except Exception:
+                    pass
+
+    walk(payload)
+    deduped = []
+    for url in urls:
+        if url not in deduped:
+            deduped.append(url)
+    return deduped
+
+
+def grok_official_extract_post_id(payload):
+    def wanted(value):
+        return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{8,}", value or "")
+
+    def walk(node, key_path=""):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                lowered = str(key).lower()
+                if wanted(value) and (lowered in {"postid", "post_id", "post"} or ("post" in lowered and "id" in lowered)):
+                    return value
+                if lowered in {"post", "media_post", "mediapost"} and isinstance(value, dict) and wanted(value.get("id")):
+                    return value.get("id")
+                found = walk(value, f"{key_path}.{key}" if key_path else str(key))
+                if found:
+                    return found
+        elif isinstance(node, list):
+            for value in node:
+                found = walk(value, key_path)
+                if found:
+                    return found
+        elif isinstance(node, str):
+            text = node.strip()
+            if text and text[0] in "{[" and len(text) < 120000:
+                try:
+                    return walk(json.loads(text), key_path)
+                except Exception:
+                    return ""
+        return ""
+
+    found = walk(payload)
+    if found:
+        return found
+    if isinstance(payload, dict) and wanted(payload.get("id")):
+        return payload.get("id")
+    return ""
+
+
+def grok_official_extract_image_ids(payload):
+    ids = []
+
+    def wanted(value):
+        return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{16,}", value or "")
+
+    def walk(node):
+        if len(ids) >= 20:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                lowered = str(key).lower()
+                if wanted(value) and (lowered in {"image_id", "imageid", "generated_image_id", "generatedimageid"} or ("image" in lowered and "id" in lowered)):
+                    ids.append(value)
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+        elif isinstance(node, str):
+            text = node.strip()
+            if text and text[0] in "{[" and len(text) < 120000:
+                try:
+                    walk(json.loads(text))
+                except Exception:
+                    pass
+
+    walk(payload)
+    deduped = []
+    for value in ids:
+        if value not in deduped:
+            deduped.append(value)
+    return deduped
+
+
+def grok_official_preview_value(value, depth=0):
+    if depth >= 4:
+        return "..."
+    if isinstance(value, dict):
+        preview = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 20:
+                preview["_truncated"] = f"{len(value) - index} more keys"
+                break
+            preview[str(key)] = grok_official_preview_value(item, depth + 1)
+        return preview
+    if isinstance(value, list):
+        items = [grok_official_preview_value(item, depth + 1) for item in value[:8]]
+        if len(value) > 8:
+            items.append(f"... {len(value) - 8} more items")
+        return items
+    if isinstance(value, str):
+        text = value.strip()
+        if text and text[0] in "{[" and len(text) < 120000:
+            try:
+                return grok_official_preview_value(json.loads(text), depth + 1)
+            except Exception:
+                pass
+        if text.startswith("data:image/"):
+            return f"{text[:48]}... len={len(text)}"
+        if len(text) > 240:
+            return text[:240] + f"... len={len(text)}"
+        return text
+    return value
+
+
+def grok_official_extract_media_refs(payload, limit=20):
+    refs = []
+    ref_keys = {
+        "key", "uri", "fileuri", "file_uri", "file", "blob", "blobref", "blob_ref",
+        "assetid", "asset_id", "mediaid", "media_id", "imageuri", "image_uri",
+        "videouri", "video_uri",
+    }
+
+    def wanted(value):
+        if not isinstance(value, str):
+            return False
+        text = value.strip()
+        if not text or text.startswith(("http://", "https://", "data:")):
+            return False
+        if len(text) > 500:
+            return False
+        return (
+            text.startswith(("users/", "user/", "uploads/", "files/", "content/", "media/", "blob:"))
+            or "/content" in text
+            or re.fullmatch(r"[A-Za-z0-9_-]{16,}", text) is not None
+        )
+
+    def add(value):
+        if wanted(value) and value not in refs and len(refs) < limit:
+            refs.append(value.strip())
+
+    def walk(node):
+        if len(refs) >= limit:
+            return
+        if isinstance(node, dict):
+            node_type = str(node.get("type") or node.get("kind") or "").lower()
+            if node_type in {"blob_ref", "file_ref", "media_ref", "asset_ref", "image_ref", "video_ref"}:
+                for key in ("key", "uri", "fileUri", "file_uri", "id", "assetId", "asset_id", "mediaId", "media_id"):
+                    add(node.get(key))
+            for key, value in node.items():
+                lowered = str(key).lower()
+                if lowered in ref_keys or (("uri" in lowered or "url" in lowered) and isinstance(value, str)):
+                    add(value)
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+        elif isinstance(node, str):
+            text = node.strip()
+            if text and text[0] in "{[" and len(text) < 120000:
+                try:
+                    walk(json.loads(text))
+                except Exception:
+                    pass
+
+    walk(payload)
+    return refs
+
+
+def grok_official_pipeline_event_summary(event):
+    if not isinstance(event, dict):
+        text = str(event)
+        return text[:500]
+    keys = (
+        "type", "status", "current_status", "state", "code", "err_code",
+        "message", "error", "reason", "postId", "post_id", "id",
+        "image_id", "imageId", "job_id",
+    )
+    summary = {key: event.get(key) for key in keys if key in event}
+    nested_keys = [key for key in ("output", "outputs", "result", "results", "media", "post", "data") if key in event]
+    if nested_keys:
+        summary["nested_keys"] = nested_keys
+        for key in nested_keys:
+            summary[f"{key}_preview"] = grok_official_preview_value(event.get(key))
+    refs = grok_official_extract_media_refs(event, limit=8)
+    if refs:
+        summary["media_refs"] = refs
+    if not summary:
+        summary["keys"] = list(event.keys())[:30]
+    return json_safe(summary)
+
+
+def grok_official_upload_file(path, account_id=None):
+    source = Path(path)
+    if not source.exists():
+        raise RuntimeError("업로드할 파일을 찾지 못했습니다.")
+    mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+    body = {
+        "fileName": source.name,
+        "fileMimeType": mime,
+        "fileSource": "IMAGINE_SELF_UPLOAD_FILE_SOURCE",
+        "content": base64.b64encode(source.read_bytes()).decode("ascii"),
+    }
+    headers = {**grok_web_headers(account_id), "Content-Type": "application/json"}
+    response = requests.post("https://grok.com/rest/app-chat/upload-file", headers=headers, json=body, timeout=240)
+    if response.status_code >= 400:
+        detail = grok_official_json_error(response)
+        if response.status_code == 403 and "anti-bot" in detail.lower():
+            browser_response = grok_official_browser_fetch(
+                "https://grok.com/rest/app-chat/upload-file",
+                body=body,
+                timeout=240,
+            )
+            if int(browser_response.get("status") or 0) >= 400:
+                raise RuntimeError(f"Grok official browser upload failed: {browser_response.get('status')} {(browser_response.get('text') or '')[:1200]}")
+            try:
+                payload = json.loads(browser_response.get("text") or "{}") or {}
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"Grok official browser upload returned non-JSON response: {(browser_response.get('text') or '')[:1200]}") from exc
+        else:
+            raise RuntimeError(f"Grok official upload failed: {response.status_code} {detail}")
+    else:
+        payload = response.json() or {}
+    file_uri = payload.get("fileUri") or payload.get("file_uri")
+    if not file_uri:
+        strings = recursive_find_values(payload, lambda item: isinstance(item, str) and ("/content" in item or item.startswith("users/")), limit=5)
+        file_uri = strings[0] if strings else ""
+    return {
+        "fileMetadataId": payload.get("fileMetadataId") or payload.get("file_metadata_id") or payload.get("id"),
+        "fileUri": file_uri,
+        "fileMimeType": payload.get("fileMimeType") or mime,
+        "fileName": payload.get("fileName") or source.name,
+        "raw": payload,
+    }
+
+
+def grok_official_blob_ref_for_image(path, account_id=None):
+    source = Path(path)
+    remote_url = remote_url_for_media_path(source)
+    uploaded = grok_official_upload_file(source, account_id=account_id)
+    key = uploaded.get("fileUri")
+    if not key:
+        raise RuntimeError("Grok 공식홈 업로드 응답에서 fileUri를 찾지 못했습니다.")
+    return {
+        "type": "blob_ref",
+        "key": key,
+        "mime_type": uploaded.get("fileMimeType") or (mimetypes.guess_type(source.name)[0] or "image/jpeg"),
+    }, {
+        "source_url": remote_url,
+        "upload": uploaded,
+        "official_source_type": "blob_ref",
+        "official_source_mode": "self_upload_blob_ref",
+        "official_uploaded_file_uri": key,
+        "official_uploaded_file_metadata_id": uploaded.get("fileMetadataId"),
+    }
+
+
+def grok_official_pipeline_run(spec, kind="video", account_id=None):
+    headers = {
+        **grok_web_headers(account_id, accept="text/event-stream, application/json"),
+        "Content-Type": "application/json",
+    }
+    request_body = {"spec_json": json.dumps(spec, ensure_ascii=False, separators=(",", ":"))}
+    response = requests.post(
+        "https://grok.com/rest/media/pipeline/run",
+        headers=headers,
+        json=request_body,
+        stream=True,
+        timeout=360,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(grok_official_pipeline_error(response, kind=kind))
+    events = []
+    post_id = ""
+    media_urls = []
+    media_blobs = []
+    media_blob_hashes = set()
+    media_refs = []
+    image_ids = []
+    completed = False
+    for raw_line in response.iter_lines(decode_unicode=True):
+        if not raw_line:
+            continue
+        line = raw_line.strip()
+        if not line or line.startswith(":") or line.startswith("event:"):
+            continue
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        if not line or line == "[DONE]":
+            break
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        events.append(event)
+        post_id = post_id or grok_official_extract_post_id(event)
+        media_urls.extend(url for url in grok_official_extract_urls(event, kind=kind) if url not in media_urls)
+        result_payload = event.get("result") if isinstance(event, dict) and "result" in event else None
+        for media_ref in grok_official_extract_media_refs(result_payload):
+            if media_ref not in media_refs:
+                media_refs.append(media_ref)
+        if kind == "image":
+            for blob in grok_official_extract_image_blobs(event, limit=12):
+                digest = hashlib.sha1(blob).hexdigest()
+                if digest not in media_blob_hashes:
+                    media_blob_hashes.add(digest)
+                    media_blobs.append(blob)
+            for image_id in grok_official_extract_image_ids(event):
+                if image_id not in image_ids:
+                    image_ids.append(image_id)
+        status_values = recursive_find_values(
+            event,
+            lambda item: isinstance(item, str) and item.lower() in {"completed", "complete", "done", "succeeded", "success", "successful", "finished", "ready"},
+            limit=5,
+        )
+        if status_values:
+            completed = True
+    detail_payload = None
+    if post_id and not media_urls:
+        detail_payload = grok_official_post_detail(post_id, account_id=account_id)
+        media_urls.extend(grok_official_extract_urls(detail_payload, kind=kind))
+        for media_ref in grok_official_extract_media_refs(detail_payload):
+            if media_ref not in media_refs:
+                media_refs.append(media_ref)
+        if kind == "image":
+            for blob in grok_official_extract_image_blobs(detail_payload, limit=12):
+                digest = hashlib.sha1(blob).hexdigest()
+                if digest not in media_blob_hashes:
+                    media_blob_hashes.add(digest)
+                    media_blobs.append(blob)
+            for image_id in grok_official_extract_image_ids(detail_payload):
+                if image_id not in image_ids:
+                    image_ids.append(image_id)
+    if kind == "image" and not media_urls and image_ids:
+        media_urls.extend(grok_official_image_url(image_id) for image_id in image_ids if grok_official_image_url(image_id))
+    if not media_urls and media_refs:
+        media_urls.extend(media_refs)
+    if not media_urls and not media_blobs:
+        diagnostic = {
+            "events": len(events),
+            "post_id": post_id,
+            "completed": completed,
+            "image_ids": image_ids[:8],
+            "media_refs": media_refs[:8],
+            "detail": detail_payload,
+            "last_events": [grok_official_pipeline_event_summary(event) for event in events[-5:]],
+        }
+        raise RuntimeError("Grok 공식홈 pipeline 응답에서 결과 미디어 URL/blob을 찾지 못했습니다. " + json.dumps(json_safe(diagnostic), ensure_ascii=False)[:1800])
+    return {
+        "events": events[-20:],
+        "post_id": post_id,
+        "completed": completed,
+        "media_url": media_urls[0] if media_urls else "",
+        "media_urls": media_urls,
+        "media_blobs": media_blobs,
+        "media_refs": media_refs,
+        "detail": detail_payload,
+        "request_body": request_body,
+    }
+
+
+def grok_official_post_detail(post_id, account_id=None):
+    headers = grok_web_headers(account_id)
+    candidates = [
+        f"https://grok.com/rest/media/post/{post_id}",
+        f"https://grok.com/rest/media/posts/{post_id}",
+        f"https://grok.com/rest/media/post?id={urlencode({'': post_id})[1:]}",
+        f"https://grok.com/rest/media/post?postId={urlencode({'': post_id})[1:]}",
+        f"https://grok.com/rest/media/posts?id={urlencode({'': post_id})[1:]}",
+        f"https://grok.com/rest/media/posts?postId={urlencode({'': post_id})[1:]}",
+        f"https://grok.com/rest/app-chat/post/{post_id}",
+        f"https://grok.com/rest/app-chat/posts/{post_id}",
+        f"https://grok.com/rest/app-chat/get-post?postId={urlencode({'': post_id})[1:]}",
+        f"https://grok.com/rest/app-chat/get-post?id={urlencode({'': post_id})[1:]}",
+    ]
+    errors = []
+    for url in candidates:
+        try:
+            response = requests.get(url, headers=headers, timeout=60)
+            if response.status_code < 400:
+                return response.json()
+            errors.append(f"{response.status_code} {url}")
+        except Exception as exc:
+            errors.append(f"{url}: {str(exc)[:120]}")
+    return {"postId": post_id, "detail_errors": errors}
+
+
+def grok_official_pipeline_video(prompt, source_url="", source_path=None, duration=10, resolution="720p", aspect_ratio="2:3", account_id=None):
+    aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
+    resolution = valid_video_resolution(resolution)
+    duration = max(2, min(15, int(duration or 6)))
+    inputs = {
+        "video_prompt": {
+            "type": "text",
+            "fixed": {"type": "text", "value": prompt},
+        },
+    }
+    node_inputs = {"prompt": "$input.video_prompt"}
+    source_extra = {}
+    if source_path:
+        fixed, source_extra = grok_official_blob_ref_for_image(source_path, account_id=account_id)
+        inputs["photo"] = {"type": "image", "label": "First frame", "fixed": fixed}
+        node_inputs["image"] = "$input.photo"
+    elif source_url:
+        inputs["photo"] = {"type": "image", "label": "First frame", "fixed": {"type": "image_url", "url": source_url}}
+        node_inputs["image"] = "$input.photo"
+        source_extra["source_url"] = source_url
+        source_extra["official_source_type"] = "image_url"
+        source_extra["official_source_mode"] = "external_image_url"
+    spec = {
+        "version": 1,
+        "inputs": inputs,
+        "nodes": {
+            "gen_video": {
+                "type": "video_gen",
+                "inputs": node_inputs,
+                "params": {
+                    "duration": duration,
+                    "resolution_name": resolution,
+                    "aspect_ratio": aspect_ratio,
+                    "mode": "normal",
+                },
+            },
+        },
+        "outputs": {"video": "$gen_video.video"},
+    }
+    result = grok_official_pipeline_run(spec, kind="video", account_id=account_id)
+    path = grok_official_download(result["media_url"], media_path("video"), kind="video")
+    return path, {
+        "source": "grok_official_web",
+        "official_transport": "pipeline",
+        "official_pipeline": "video_gen",
+        "official_media_url": result["media_url"],
+        "official_post_id": result.get("post_id"),
+        "official_completed": result.get("completed"),
+        "official_events": result.get("events"),
+        "official_spec": spec,
+        "official_request_body": result.get("request_body"),
+        "duration": duration,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        "grok_account_id": account_id or active_grok_account_id(),
+        **source_extra,
+    }
+
+
+def grok_official_pipeline_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
+    sources = [Path(path) for path in source_paths if path]
+    if not sources:
+        raise RuntimeError("편집할 이미지가 없습니다.")
+    aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
+    fixed, source_extra = grok_official_blob_ref_for_image(sources[0], account_id=account_id)
+    inputs = {
+        "image_prompt": {"type": "text", "fixed": {"type": "text", "value": prompt}},
+        "photo": {"type": "image", "label": "Source image", "fixed": fixed},
+    }
+    spec = {
+        "version": 1,
+        "inputs": inputs,
+        "nodes": {
+            "edit_image": {
+                "type": "image_edit",
+                "inputs": {
+                    "prompt": "$input.image_prompt",
+                    "image": "$input.photo",
+                },
+                "params": {
+                    "aspect_ratio": aspect_ratio,
+                    "mode": "normal",
+                },
+            },
+        },
+        "outputs": {"image": "$edit_image.image"},
+    }
+    if resolution and resolution != "auto":
+        spec["nodes"]["edit_image"]["params"]["resolution"] = resolution
+        spec["nodes"]["edit_image"]["params"]["imageGenResolution"] = resolution
+    result = grok_official_pipeline_run(spec, kind="image", account_id=account_id)
+    media_blobs = result.get("media_blobs") or []
+    if media_blobs:
+        blob = max(media_blobs, key=len)
+        path = save_response_bytes(blob, dest_dir, suffix=response_suffix_from_bytes(blob, ".jpg"))
+        used_media_url = result.get("media_url") or ""
+    else:
+        download_errors = []
+        path = None
+        used_media_url = ""
+        for media_url in result.get("media_urls") or [result.get("media_url")]:
+            if not media_url:
+                continue
+            try:
+                path, used_media_url = grok_official_download(media_url, dest_dir, kind="image", return_url=True)
+                break
+            except Exception as exc:
+                download_errors.append(f"{media_url}: {str(exc)[:500]}")
+        if not path:
+            raise RuntimeError("Grok 공식홈 이미지 편집 결과 다운로드에 실패했습니다. " + "; ".join(download_errors))
+    image_id = official_image_id_from_url(used_media_url)
+    return path, {
+        "source": "grok_official_web",
+        "official_transport": "pipeline",
+        "official_pipeline": "image_edit",
+        "official_image_url": used_media_url,
+        "official_image_id": image_id,
+        "official_post_id": result.get("post_id"),
+        "official_requested_resolution": resolution,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        "official_events": result.get("events"),
+        "official_spec": spec,
+        "official_request_body": result.get("request_body"),
+        "official_media_blob_count": len(media_blobs),
+        "source_count": len(sources),
+        "grok_account_id": account_id or active_grok_account_id(),
+        **source_extra,
+    }
+
+
+def grok_official_image_edit_reference_for_path(path, account_id=None):
+    source = Path(path)
+    item = find_metadata_by_file_path(source)
+    extra = item.get("extra") if isinstance(item, dict) and isinstance(item.get("extra"), dict) else {}
+    official_id = (
+        extra.get("official_image_id")
+        or official_image_id_from_url(extra.get("official_image_url") or "")
+        or official_generated_id_from_url(extra.get("official_image_url") or "")
+        or official_generated_id_from_url(extra.get("official_output_path") or "")
+    )
+    remote_url = remote_url_for_media_path(source)
+    if official_id:
+        reference = remote_url if official_image_id_from_url(remote_url or "") else grok_official_image_url(official_id)
+        return reference, {
+            "source_url": remote_url,
+            "official_source_type": "official_post",
+            "official_source_mode": "official_post_image_reference",
+            "official_parent_post_id": official_id,
+            "official_root_post_id": official_id,
+            "official_is_root_user_uploaded": False,
+        }
+    if remote_url and "imagine-public.x.ai" in remote_url:
+        image_id = official_image_id_from_url(remote_url)
+        return remote_url, {
+            "source_url": remote_url,
+            "official_source_type": "official_public_image_url",
+            "official_source_mode": "official_public_image_reference",
+            "official_parent_post_id": image_id,
+            "official_root_post_id": image_id,
+            "official_is_root_user_uploaded": False,
+        }
+    uploaded = grok_official_upload_file(source, account_id=account_id)
+    key = uploaded.get("fileUri")
+    if not key:
+        raise RuntimeError("Grok official upload response did not include fileUri.")
+    return key, {
+        "source_url": remote_url,
+        "upload": uploaded,
+        "official_source_type": "uploaded_file_uri",
+        "official_source_mode": "app_chat_image_reference_upload",
+        "official_uploaded_file_uri": key,
+        "official_uploaded_file_metadata_id": uploaded.get("fileMetadataId"),
+        "official_is_root_user_uploaded": True,
+    }
+
+
+def grok_official_app_chat_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
+    sources = [Path(path) for path in source_paths if path]
+    if not sources:
+        raise RuntimeError("No source image was provided for Grok official image edit.")
+    account_id = account_id or active_grok_account_id()
+    image_reference, source_extra = grok_official_image_edit_reference_for_path(sources[0], account_id=account_id)
+    image_edit_config = {
+        "imageReferences": [image_reference],
+        "isRootUserUploaded": bool(source_extra.get("official_is_root_user_uploaded")),
+    }
+    parent_post_id = source_extra.get("official_parent_post_id")
+    if parent_post_id:
+        image_edit_config["parentPostId"] = parent_post_id
+        image_edit_config["rootPostId"] = source_extra.get("official_root_post_id") or parent_post_id
+    request_body = {
+        "temporary": True,
+        "modelName": "imagine-image-edit",
+        "message": prompt,
+        "enableImageGeneration": True,
+        "returnImageBytes": False,
+        "returnRawGrokInXaiRequest": False,
+        "enableImageStreaming": True,
+        "imageGenerationCount": 2,
+        "forceConcise": False,
+        "enableSideBySide": True,
+        "sendFinalMetadata": True,
+        "isReasoning": False,
+        "disableTextFollowUps": True,
+        "responseMetadata": {
+            "modelConfigOverride": {
+                "modelMap": {
+                    "imageEditModel": "imagine",
+                    "imageEditModelConfig": image_edit_config,
+                }
+            }
+        },
+        "disableMemory": False,
+        "forceSideBySide": False,
+    }
+    reset_grok_official_progress(
+        status="running",
+        stage="app-chat-edit",
+        message="Grok official image edit request sent",
+        prompt_preview=prompt[:120],
+        source_mode=source_extra.get("official_source_mode"),
+        account_id_present=bool(account_id),
+    )
+    browser_response = grok_official_browser_fetch(
+        "https://grok.com/rest/app-chat/conversations/new",
+        body=request_body,
+        timeout=360,
+    )
+    if int(browser_response.get("status") or 0) >= 400:
+        raise RuntimeError(f"Grok official browser image edit request failed: {browser_response.get('status')} {(browser_response.get('text') or '')[:1200]}")
+    events = []
+    all_urls = []
+    final_urls = []
+    preview_urls = []
+    image_ids = []
+    asset_ids = []
+    moderated = []
+    r_rated = []
+    messages = []
+    stream_errors = []
+    for raw_line in (browser_response.get("text") or "").splitlines():
+        if not raw_line:
+            continue
+        line = raw_line.strip()
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        if not line or line == "[DONE]":
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        events.append(event)
+        for url in grok_official_extract_urls(event, kind="image"):
+            if url not in all_urls:
+                all_urls.append(url)
+        for ref in grok_official_extract_media_refs(event, limit=20):
+            if ref not in all_urls:
+                all_urls.append(ref)
+        result = event.get("result") if isinstance(event, dict) else None
+        response_payload = result.get("response") if isinstance(result, dict) else None
+        if not isinstance(response_payload, dict):
+            continue
+        stream = response_payload.get("streamingImageGenerationResponse")
+        if isinstance(stream, dict):
+            image_url = stream.get("imageUrl") or stream.get("url")
+            if image_url and image_url not in all_urls:
+                all_urls.append(image_url)
+            if stream.get("imageId") and stream.get("imageId") not in image_ids:
+                image_ids.append(stream.get("imageId"))
+            if stream.get("assetId") and stream.get("assetId") not in asset_ids:
+                asset_ids.append(stream.get("assetId"))
+            if "moderated" in stream:
+                moderated.append(bool(stream.get("moderated")))
+            if "rRated" in stream:
+                r_rated.append(bool(stream.get("rRated")))
+            progress = stream.get("progress") or 0
+            if image_url:
+                if progress >= 100 and "-part-" not in image_url:
+                    if image_url not in final_urls:
+                        final_urls.append(image_url)
+                elif image_url not in preview_urls:
+                    preview_urls.append(image_url)
+            update_grok_official_progress(
+                stage="app-chat-edit",
+                message="Grok official image edit streaming",
+                progress=progress,
+                image_url_found=bool(image_url),
+                event_count=len(events),
+            )
+        model_response = response_payload.get("modelResponse")
+        if isinstance(model_response, dict):
+            for url in model_response.get("generatedImageUrls") or []:
+                if url not in final_urls:
+                    final_urls.append(url)
+                if url not in all_urls:
+                    all_urls.append(url)
+            if model_response.get("message"):
+                messages.append(model_response.get("message"))
+        token = response_payload.get("token")
+        if isinstance(token, str) and token:
+            messages.append(token)
+        for error in response_payload.get("streamErrors") or []:
+            stream_errors.append(error)
+    candidate_urls = []
+    for url in final_urls + all_urls + preview_urls:
+        if url and url not in candidate_urls:
+            candidate_urls.append(url)
+    if moderated and all(moderated) and not candidate_urls:
+        raise RuntimeError("Grok official image edit result was moderated and no downloadable image was returned.")
+    download_errors = []
+    path = None
+    used_media_url = ""
+    for media_url in candidate_urls:
+        try:
+            path, used_media_url = grok_official_download(media_url, dest_dir, kind="image", return_url=True)
+            break
+        except Exception as exc:
+            download_errors.append(f"{media_url}: {str(exc)[:500]}")
+    if not path:
+        diagnostic = {
+            "events": len(events),
+            "final_urls": final_urls[:8],
+            "all_urls": all_urls[:8],
+            "image_ids": image_ids[:8],
+            "asset_ids": asset_ids[:8],
+            "moderated": moderated[-8:],
+            "stream_errors": stream_errors[-5:],
+            "last_events": [grok_official_pipeline_event_summary(event) for event in events[-5:]],
+            "download_errors": download_errors[-5:],
+        }
+        raise RuntimeError("Grok official app-chat image edit response did not include a downloadable result. " + json.dumps(json_safe(diagnostic), ensure_ascii=False)[:1800])
+    image_id = official_image_id_from_url(used_media_url) or official_generated_id_from_url(used_media_url)
+    update_grok_official_progress(
+        status="done",
+        stage="done",
+        message="Grok official image edit completed",
+        output_path=str(path),
+        official_image_url=used_media_url,
+        official_image_id=image_id,
+    )
+    return path, {
+        "source": "grok_official_web",
+        "official_transport": "app_chat_conversations",
+        "official_pipeline": "image_edit",
+        "official_image_url": used_media_url,
+        "official_image_urls": candidate_urls,
+        "official_image_id": image_id,
+        "official_asset_ids": asset_ids,
+        "official_image_ids": image_ids,
+        "official_requested_resolution": resolution,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        "official_events": events[-20:],
+        "official_request_body": request_body,
+        "official_moderated_flags": moderated,
+        "official_r_rated_flags": r_rated,
+        "official_messages": messages[-5:],
+        "official_stream_errors": stream_errors[-5:],
+        "source_count": len(sources),
+        "grok_account_id": account_id,
+        **source_extra,
+    }
+
+
+def grok_official_is_antibot_error(error):
+    detail = error_detail_text(error).lower()
+    return (
+        "anti-bot" in detail
+        or "request rejected by anti-bot" in detail
+        or ("\"code\":7" in detail and "rejected" in detail)
+        or ("\"code\": 7" in detail and "rejected" in detail)
+    )
+
+
+def grok_official_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
+    try:
+        return grok_official_pipeline_image_edit(
+            prompt,
+            source_paths,
+            dest_dir,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            account_id=account_id,
+        )
+    except Exception as exc:
+        pipeline_error = error_detail_text(exc)
+        if not checked(os.getenv("GROK_OFFICIAL_APP_CHAT_EDIT_FALLBACK", "")):
+            raise
+        update_grok_official_progress(
+            status="running",
+            stage="app-chat-edit-fallback",
+            message="Grok official pipeline image edit failed; trying optional app-chat fallback",
+            pipeline_error=pipeline_error[:1200],
+        )
+        try:
+            path, extra = grok_official_app_chat_image_edit(
+                prompt,
+                source_paths,
+                dest_dir,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                account_id=account_id,
+            )
+        except Exception as fallback_exc:
+            raise RuntimeError(
+                "Grok 공식홈 이미지 편집 pipeline 요청이 실패했고, app-chat fallback도 실패했습니다. "
+                f"pipeline={pipeline_error[:900]} app_chat={error_detail_text(fallback_exc)[:900]}"
+            ) from fallback_exc
+        extra["official_fallback_from"] = "pipeline_image_edit"
+        extra["official_fallback_reason"] = "pipeline_failed"
+        extra["official_pipeline_error"] = pipeline_error[:1200]
+        return path, extra
+
+
+def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, aspect_ratio="2:3", resolution="auto", model=None):
+    account_id = account_id or active_grok_account_id()
+    aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
+    request_id = str(uuid.uuid4())
+    timestamp = int(time.time() * 1000)
+    payload_timestamp = timestamp + 90
+    headers = grok_web_headers(account_id, accept="*/*")
+    ws_headers = {
+        "Cookie": headers["Cookie"],
+        "Origin": "https://grok.com",
+        "Referer": "https://grok.com/",
+        "User-Agent": headers["User-Agent"],
+        "Accept-Language": headers.get("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"),
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Sec-Fetch-Dest": "websocket",
+        "Sec-Fetch-Mode": "websocket",
+        "Sec-Fetch-Site": "same-origin",
+    }
+    if account_id:
+        ws_headers["x-grok-account-id"] = account_id
+    official_model_name = grok_official_image_model_name(model)
+    properties = {
+        "section_count": 0,
+        "is_kids_mode": False,
+        "enable_nsfw": True,
+        "skip_upsampler": False,
+        "enable_side_by_side": True,
+        "is_initial": False,
+        "aspect_ratio": aspect_ratio,
+        "enable_pro": grok_official_image_enable_pro(model),
+    }
+    if official_model_name:
+        properties["image_model_name"] = official_model_name
+    official_resolution_name = grok_official_image_resolution_name(resolution)
+    if official_resolution_name:
+        properties["resolution_name"] = official_resolution_name
+    payload = {
+        "type": "conversation.item.create",
+        "timestamp": payload_timestamp,
+        "item": {
+            "type": "message",
+            "content": [
+                {
+                    "requestId": request_id,
+                    "text": prompt,
+                    "type": "input_text",
+                    "properties": properties,
+                }
+            ],
+        },
+    }
+    blobs = []
+    json_events = []
+    image_url = ""
+    image_urls = []
+    image_id = ""
+    completed = False
+    blocked_reason = ""
+    ws_error_message = ""
+    deadline = time.time() + 240
+    reset_grok_official_progress(
+        status="running",
+        stage="connect",
+        message="Grok official image WebSocket connecting",
+        request_id=request_id,
+        prompt_preview=prompt[:120],
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        model=model or "grok-imagine-image-quality",
+        account_id_present=bool(account_id),
+        event_count=0,
+        blob_count=0,
+        image_url_found=False,
+        completed=False,
+        official_payload_properties=properties,
+    )
+    with MinimalWebSocket("wss://grok.com/ws/imagine/listen", headers=ws_headers, timeout=30) as ws:
+        update_grok_official_progress(stage="send", message="Grok official image request sent")
+        ws.send_json({
+            "type": "conversation.item.create",
+            "timestamp": timestamp,
+            "item": {"type": "message", "content": [{"type": "reset"}]},
+        })
+        ws.send_json(payload)
+        update_grok_official_progress(stage="listen", message="Waiting for Grok official image response")
+        while time.time() < deadline:
+            try:
+                kind, data = ws.recv()
+            except socket.timeout:
+                update_grok_official_progress(
+                    stage="listen",
+                    message="Waiting for Grok official image response",
+                    event_count=len(json_events),
+                    blob_count=len(blobs),
+                    image_url_found=bool(image_url),
+                )
+                if blobs:
+                    break
+                continue
+            except RuntimeError as exc:
+                update_grok_official_progress(
+                    status="failed" if not (completed and (blobs or image_url)) else "running",
+                    stage="closed",
+                    message="Grok official WebSocket closed",
+                    error=ws_error_message or str(exc),
+                    event_count=len(json_events),
+                    blob_count=len(blobs),
+                    image_url_found=bool(image_url),
+                    completed=completed,
+                    blocked_reason=blocked_reason,
+                    ws_error=ws_error_message,
+                )
+                if completed and (blobs or image_url):
+                    break
+                if ws_error_message:
+                    raise RuntimeError(ws_error_message) from exc
+                raise RuntimeError(
+                    "Grok 공식홈 WebSocket이 완료 이미지 응답 전에 닫혔습니다. "
+                    f"events={len(json_events)}, blobs={len(blobs)}, account_id={bool(account_id)}"
+                ) from exc
+            if kind == "binary":
+                if len(data) > 1024:
+                    blobs.append(data)
+                    update_grok_official_progress(
+                        stage="receive",
+                        message="Grok official binary image blob received",
+                        event_count=len(json_events),
+                        blob_count=len(blobs),
+                        image_url_found=bool(image_url),
+                    )
+                continue
+            if kind == "close":
+                update_grok_official_progress(
+                    stage="closed",
+                    message="Grok official WebSocket close frame received",
+                    event_count=len(json_events),
+                    blob_count=len(blobs),
+                    image_url_found=bool(image_url),
+                    completed=completed,
+                    blocked_reason=blocked_reason,
+                )
+                break
+            if kind != "text":
+                continue
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            json_events.append(event)
+            event_error_message = grok_official_ws_error_message(event)
+            if event_error_message and not ws_error_message:
+                ws_error_message = event_error_message
+            event_block_reason = grok_official_event_block_reason(event)
+            if event_block_reason and not blocked_reason:
+                blocked_reason = event_block_reason
+            event_blobs = [] if event_block_reason else grok_official_extract_image_blobs(event)
+            if event_blobs:
+                blobs.extend(event_blobs)
+                update_grok_official_progress(
+                    stage="receive",
+                    message="Grok official JSON image blob received",
+                    event_count=len(json_events),
+                    blob_count=len(blobs),
+                    image_url_found=bool(image_url),
+                    completed=completed,
+                    blocked_reason=blocked_reason,
+                )
+            urls = grok_official_extract_urls(event, kind="image")
+            for url in urls:
+                if url not in image_urls:
+                    image_urls.append(url)
+            if urls and not image_url:
+                image_url = urls[0]
+                image_id = official_image_id_from_url(image_url)
+            id_values = recursive_find_values(
+                event,
+                lambda item: isinstance(item, str) and re.fullmatch(r"[A-Za-z0-9_-]{16,}", item or ""),
+                limit=10,
+            )
+            if not image_id:
+                for value in id_values:
+                    if value != request_id:
+                        image_id = value
+                        break
+            done_values = recursive_find_values(
+                event,
+                lambda item: isinstance(item, str) and item.lower() in {"completed", "complete", "done", "succeeded"},
+                limit=5,
+            )
+            if done_values:
+                completed = True
+            update_grok_official_progress(
+                stage="receive",
+                message="Grok official image event received",
+                event_count=len(json_events),
+                blob_count=len(blobs),
+                image_url_found=bool(image_url),
+                completed=completed,
+                blocked_reason=blocked_reason,
+                ws_error=ws_error_message,
+                last_event_type=event.get("type") if isinstance(event, dict) else "",
+                last_event_status=(event.get("current_status") or event.get("status") or "") if isinstance(event, dict) else "",
+                last_error_code=(event.get("err_code") or event.get("code") or "") if isinstance(event, dict) else "",
+                last_error_message=(event.get("err_msg") or event.get("message") or event.get("error") or "") if isinstance(event, dict) else "",
+            )
+            if done_values:
+                if blobs:
+                    break
+    if ws_error_message:
+        update_grok_official_progress(
+            status="failed",
+            stage="error",
+            message="Grok official WebSocket returned an error",
+            error=ws_error_message,
+            event_count=len(json_events),
+            blob_count=len(blobs),
+            image_url_found=bool(image_url),
+            completed=completed,
+        )
+        raise RuntimeError(ws_error_message)
+    if blocked_reason and not (blobs or image_url or image_urls):
+        update_grok_official_progress(
+            status="failed",
+            stage="blocked",
+            message="Grok official request was blocked or moderated",
+            error=blocked_reason,
+            event_count=len(json_events),
+            blob_count=len(blobs),
+            image_url_found=bool(image_url),
+            completed=completed,
+        )
+        raise RuntimeError(f"Grok 공식홈에서 요청이 검열/차단되어 이미지를 저장하지 않았습니다. {blocked_reason}")
+    if not completed:
+        update_grok_official_progress(
+            status="failed",
+            stage="incomplete",
+            message="Grok official image response closed before completion",
+            error="missing completed event",
+            event_count=len(json_events),
+            blob_count=len(blobs),
+            image_url_found=bool(image_url),
+            completed=completed,
+        )
+        raise RuntimeError(
+            "Grok 공식홈 WebSocket이 완료 이벤트 전에 닫혀 이미지를 저장하지 않았습니다. "
+            f"events={len(json_events)}, blobs={len(blobs)}, account_id={bool(account_id)}"
+        )
+    path = None
+    output_paths = []
+    downloaded_urls = []
+    download_errors = []
+    if blobs:
+        update_grok_official_progress(stage="save", message="Grok 공식홈 WebSocket 이미지 blob 저장 중")
+        seen_blob_hashes = set()
+        for blob in blobs:
+            digest = hashlib.sha1(blob).hexdigest()
+            if digest in seen_blob_hashes:
+                continue
+            seen_blob_hashes.add(digest)
+            output_paths.append(save_response_bytes(blob, dest_dir, suffix=response_suffix_from_bytes(blob, ".jpg")))
+        path = output_paths[0] if output_paths else None
+    elif image_url or image_urls:
+        for url in ([*image_urls] if image_urls else [image_url]):
+            if not url or url in downloaded_urls:
+                continue
+            try:
+                downloaded_path, used_url = grok_official_download(url, dest_dir, kind="image", return_url=True)
+                output_paths.append(downloaded_path)
+                downloaded_urls.append(used_url)
+            except Exception as exc:
+                download_errors.append(f"{url}: {str(exc)[:500]}")
+        if output_paths:
+            path = output_paths[0]
+            image_url = downloaded_urls[0] if downloaded_urls else image_url
+        else:
+            image_url = image_urls[0] if image_urls else image_url
+        candidates = grok_official_download_candidates(image_url, kind="image")
+        update_grok_official_progress(
+            stage="download",
+            message="Grok 공식홈 WebSocket 이미지 URL 다운로드 중",
+            download_candidates=candidates,
+        )
+        if not output_paths and not download_errors:
+            path, image_url = grok_official_download(image_url, dest_dir, kind="image", return_url=True)
+            output_paths.append(path)
+            downloaded_urls.append(image_url)
+        if not output_paths and download_errors:
+            update_grok_official_progress(
+                status="failed",
+                stage="failed",
+                message="Grok 공식홈 이미지 다운로드 실패",
+                error="; ".join(download_errors),
+                event_count=len(json_events),
+                blob_count=len(blobs),
+                image_url_found=bool(image_url),
+                download_candidates=candidates,
+                completed=completed,
+            )
+            raise RuntimeError("; ".join(download_errors))
+    else:
+        error_message = "Grok 공식홈 WebSocket 응답에서 이미지 blob 또는 URL을 받지 못했습니다."
+        update_grok_official_progress(
+            status="failed",
+            stage="failed",
+            message="Grok 공식홈 이미지 생성 실패",
+            error=error_message,
+            event_count=len(json_events),
+            blob_count=len(blobs),
+            image_url_found=bool(image_url),
+            completed=completed,
+        )
+        raise RuntimeError(error_message)
+    if not image_url and image_id:
+        image_url = grok_official_image_url(image_id)
+    if image_url and image_url not in image_urls:
+        image_urls.insert(0, image_url)
+    if path and not output_paths:
+        output_paths = [path]
+    output_public_paths = [public_path(item) for item in output_paths]
+    output_dimensions = [image_dimensions(item) or (None, None) for item in output_paths]
+    width, height = image_dimensions(path) or (None, None)
+    update_grok_official_progress(
+        status="done",
+        stage="done",
+        message="Grok 공식홈 이미지 생성 완료",
+        event_count=len(json_events),
+        blob_count=len(blobs),
+        image_url_found=bool(image_url),
+        completed=completed,
+        output_path=str(path),
+        output_paths=[str(item) for item in output_paths],
+        saved_count=len(output_paths),
+        official_image_url=image_url,
+        official_image_id=image_id,
+    )
+    return path, {
+        "source": "grok_official_web",
+        "official_mode": "quality" if properties.get("enable_pro") else "speed",
+        "official_transport": "websocket",
+        "official_image_model": model,
+        "official_image_model_name": official_model_name,
+        "official_request_id": request_id,
+        "official_requested_resolution": resolution,
+        "official_resolution_name": official_resolution_name,
+        "official_payload_properties": properties,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        "official_image_url": image_url,
+        "official_image_urls": image_urls,
+        "official_image_id": image_id,
+        "official_width": width,
+        "official_height": height,
+        "official_output_count": len(output_paths),
+        "official_output_paths": output_public_paths,
+        "official_output_file_paths": [str(item) for item in output_paths],
+        "official_output_dimensions": [{"width": item[0], "height": item[1]} for item in output_dimensions],
+        "official_downloaded_urls": downloaded_urls,
+        "official_download_errors": download_errors,
+        "official_partial_blocked_reason": blocked_reason or "",
+        "official_completed": completed,
+        "official_events": json_events[-20:],
+        "grok_account_id": account_id,
+    }
 
 
 def xai_headers(provider=None):
@@ -3001,7 +5490,7 @@ def maybe_upscale_frame(frame_path, prompt, aspect_ratio, resolution):
     if not needs_upscale:
         return frame_path, False, dimensions, None
     cfg = config()
-    if cfg["mode"] != "live":
+    if cfg["mode"] != "live" and image_provider not in {"hermes_proxy", "grok_official"}:
         return frame_path, False, dimensions, "mock 모드에서는 업스케일을 건너뜁니다."
     upscale_prompt = (
         f"이 이미지를 영상 생성의 첫 프레임으로 쓰기 좋게 선명하게 업스케일해 주세요. "
@@ -3021,9 +5510,10 @@ def frame_upscale_prompt(prompt):
     )
 
 
-def upscale_frame_to_2k(frame_path, prompt):
+def upscale_frame_to_2k(frame_path, prompt, image_provider=None):
     dimensions = image_dimensions(frame_path)
     cfg = config()
+    image_provider = image_provider or cfg["provider"]
     if cfg["mode"] != "live":
         return frame_path, False, dimensions, "mock 모드에서는 업스케일을 건너뜁니다."
     upscale_prompt = frame_upscale_prompt(prompt)
@@ -3033,13 +5523,14 @@ def upscale_frame_to_2k(frame_path, prompt):
         edit_source=frame_path,
         aspect_ratio="auto",
         resolution="2k",
+        image_provider=image_provider,
     )
     if isinstance(extra, dict):
         extra["upscale_prompt"] = upscale_prompt
     return upscaled, True, dimensions, extra
 
 
-def upscale_i2v_sources_to_2k(sources, video_prompt=None):
+def upscale_i2v_sources_to_2k(sources, video_prompt=None, image_provider=None):
     upscale_prompt = (
         "Upscale this image to 2K quality for image-to-video generation. "
         "Preserve the exact composition, subject identity, pose, clothing, lighting, colors, background, text if present, and camera angle. "
@@ -3054,6 +5545,7 @@ def upscale_i2v_sources_to_2k(sources, video_prompt=None):
             edit_source=source,
             aspect_ratio="auto",
             resolution="2k",
+            image_provider=image_provider,
         )
         upscaled_sources.append(upscaled)
         details.append({
@@ -3095,6 +5587,10 @@ def live_image(prompt, dest_dir, edit_source=None, edit_sources=None, aspect_rat
         return openai_live_image(prompt, dest_dir, edit_sources=sources, aspect_ratio=aspect_ratio, model=image_model)
     if provider == "codex_proxy":
         return codex_proxy_live_image(prompt, dest_dir, edit_sources=sources, aspect_ratio=aspect_ratio, model=image_model)
+    if provider == "grok_official":
+        if sources:
+            return grok_official_image_edit(prompt, sources[:3], dest_dir, aspect_ratio=aspect_ratio, resolution=resolution)
+        return grok_official_image_generate_ws(prompt, dest_dir, aspect_ratio=aspect_ratio, resolution=resolution, model=valid_image_model(image_model, cfg))
     endpoint = "/images/edits" if sources else "/images/generations"
     model = valid_image_model(image_model, cfg)
     body = {"model": model, "prompt": prompt}
@@ -3218,9 +5714,21 @@ def edit_image_sources_with_config(prompt, source_paths, dest_dir, cfg, auth_hea
     }
 
 
-def live_video(prompt, image_path, duration, aspect_ratio="source", resolution="720p", video_model=None):
+def live_video(prompt, image_path, duration, aspect_ratio="source", resolution="720p", video_model=None, provider=None):
     cfg = config()
+    provider = provider or cfg["provider"]
     model = valid_video_model(video_model, cfg)
+    if provider == "grok_official":
+        path, extra = grok_official_pipeline_video(
+            prompt,
+            source_path=image_path,
+            duration=duration,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+        )
+        extra["video_model"] = model
+        extra["input_image_mode"] = "grok_official_upload_blob_ref"
+        return path, extra
     image_payload, used_remote = image_input_object(image_path)
     payload = {
         "model": model,
@@ -3232,8 +5740,8 @@ def live_video(prompt, image_path, duration, aspect_ratio="source", resolution="
     if aspect_ratio not in {"auto", "source"}:
         payload["aspect_ratio"] = aspect_ratio
     start = requests.post(
-        cfg["api_base"] + "/videos/generations",
-        headers=xai_headers(),
+        (cfg["hermes_base_url"] if provider == "hermes_proxy" and cfg.get("hermes_base_url") else cfg["api_base"]) + "/videos/generations",
+        headers=xai_headers(provider=provider),
         json=payload,
         timeout=120,
     )
@@ -3242,15 +5750,16 @@ def live_video(prompt, image_path, duration, aspect_ratio="source", resolution="
     request_id = (start.json() or {}).get("request_id")
     if not request_id:
         raise RuntimeError("영상 생성 요청 ID를 받지 못했습니다.")
-    path, extra = poll_video_request(request_id)
+    path, extra = poll_video_request(request_id, provider=provider)
     extra["video_model"] = model
     extra["input_image_remote_url"] = image_payload["url"] if used_remote else None
     extra["input_image_mode"] = "remote_url" if used_remote else "data_uri"
     return path, extra
 
 
-def live_video_from_reference_images(prompt, reference_paths, duration, aspect_ratio="source", resolution="720p", video_model=None):
+def live_video_from_reference_images(prompt, reference_paths, duration, aspect_ratio="source", resolution="720p", video_model=None, provider=None):
     cfg = config()
+    provider = provider or cfg["provider"]
     model = valid_video_model(video_model, cfg)
     references = []
     input_reference_remote_urls = []
@@ -3278,8 +5787,8 @@ def live_video_from_reference_images(prompt, reference_paths, duration, aspect_r
     if aspect_ratio not in {"auto", "source"}:
         payload["aspect_ratio"] = aspect_ratio
     start = requests.post(
-        cfg["api_base"] + "/videos/generations",
-        headers=xai_headers(),
+        (cfg["hermes_base_url"] if provider == "hermes_proxy" and cfg.get("hermes_base_url") else cfg["api_base"]) + "/videos/generations",
+        headers=xai_headers(provider=provider),
         json=payload,
         timeout=120,
     )
@@ -3288,7 +5797,7 @@ def live_video_from_reference_images(prompt, reference_paths, duration, aspect_r
     request_id = (start.json() or {}).get("request_id")
     if not request_id:
         raise RuntimeError("참조 이미지 기반 영상 생성 요청 ID를 받지 못했습니다.")
-    path, extra = poll_video_request(request_id)
+    path, extra = poll_video_request(request_id, provider=provider)
     extra["video_model"] = model
     extra["reference_image_count"] = len(references[:7])
     extra["input_reference_remote_urls"] = input_reference_remote_urls[:7]
@@ -3299,9 +5808,9 @@ def live_video_from_reference_images(prompt, reference_paths, duration, aspect_r
     return path, extra
 
 
-def live_video_with_reference_context(prompt, image_path, duration, aspect_ratio="source", resolution="720p", reference_context=None, video_model=None):
+def live_video_with_reference_context(prompt, image_path, duration, aspect_ratio="source", resolution="720p", reference_context=None, video_model=None, provider=None):
     if not reference_context:
-        return live_video(prompt, image_path, duration, aspect_ratio=aspect_ratio, resolution=resolution, video_model=video_model)
+        return live_video(prompt, image_path, duration, aspect_ratio=aspect_ratio, resolution=resolution, video_model=video_model, provider=provider)
     original_start = reference_context.get("start_image")
     reference_prompt = (
         f"{prompt}\n\n"
@@ -3316,6 +5825,7 @@ def live_video_with_reference_context(prompt, image_path, duration, aspect_ratio
         aspect_ratio=aspect_ratio,
         resolution=resolution,
         video_model=video_model,
+        provider=provider,
     )
     extra["used_last_frame_and_original_image_references"] = True
     extra["original_start_image_path"] = reference_context.get("start_image_path")
@@ -3520,10 +6030,13 @@ def live_video_extension(prompt, video_path, duration, video_url=None, video_mod
     return path, extra
 
 
-def poll_video_request(request_id):
+def poll_video_request(request_id, provider=None):
     cfg = config()
+    provider = provider or cfg["provider"]
+    base_url = cfg["hermes_base_url"] if provider == "hermes_proxy" and cfg.get("hermes_base_url") else cfg["api_base"]
+    headers = xai_auth_header(provider=provider)
     for _ in range(90):
-        poll = requests.get(cfg["api_base"] + f"/videos/{request_id}", headers=xai_auth_header(), timeout=60)
+        poll = requests.get(base_url + f"/videos/{request_id}", headers=headers, timeout=60)
         if poll.status_code >= 400:
             raise RuntimeError(f"영상 상태 조회 실패: {poll.status_code} {response_error_detail(poll)}")
         data = poll.json() or {}
@@ -3648,6 +6161,7 @@ def health():
         hermes_logged_in, _ = hermes_auth_logged_in()
         hermes_proxy_running = port_open("127.0.0.1", 8645)
     codex_running = codex_proxy_running(cfg)
+    grok_official = grok_official_status_payload(check_cookie=cfg["provider"] == "grok_official")
     return jsonify({
         "ok": True,
         "mode": cfg["mode"],
@@ -3658,6 +6172,7 @@ def health():
         "codex_proxy_configured": bool(cfg["codex_proxy_base_url"]),
         "codex_proxy_base_url": cfg["codex_proxy_base_url"],
         "codex_proxy_running": codex_running,
+        "grok_official": grok_official,
         "hermes_logged_in": hermes_logged_in,
         "hermes_proxy_running": hermes_proxy_running,
         "api_key_configured": bool(cfg["api_key"]),
@@ -3665,6 +6180,7 @@ def health():
         "oauth_expires_at": oauth_token.get("expires_at") if oauth_token else None,
         "authenticated": bool(
             (cfg["provider"] == "hermes_proxy" and hermes_logged_in and hermes_proxy_running)
+            or (cfg["provider"] == "grok_official" and grok_official.get("chrome_running") and grok_official.get("session_cookie"))
             or (cfg["provider"] == "openai_api" and cfg["openai_api_key"])
             or (cfg["provider"] == "codex_proxy" and codex_running)
             or session.get("xai_api_key")
@@ -3678,6 +6194,11 @@ def health():
             "codex_image": cfg["codex_image_model"],
             "video": cfg["video_model"],
             "vision": cfg["vision_model"],
+            "hermes_image_candidates": unique_model_ids(HERMES_IMAGE_MODEL_CANDIDATES + cfg.get("hermes_discovered_image_models", [])),
+            "hermes_video_candidates": unique_model_ids(HERMES_VIDEO_MODEL_CANDIDATES + cfg.get("hermes_discovered_video_models", [])),
+            "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),
+            "hermes_discovered_image": cfg.get("hermes_discovered_image_models", []),
+            "hermes_discovered_video": cfg.get("hermes_discovered_video_models", []),
         },
         "last_error": LAST_ERROR,
     })
@@ -3781,9 +6302,16 @@ def auth_logout():
 
 def auth_status_payload(include_balance=False):
     cfg = config()
+    grok_official = grok_official_status_payload(check_cookie=cfg["provider"] == "grok_official")
+    grok_official_ready = bool(
+        cfg["provider"] == "grok_official"
+        and grok_official.get("chrome_running")
+        and grok_official.get("session_cookie")
+    )
     payload = {
         "authenticated": bool(
             cfg["provider"] == "hermes_proxy" and cfg["hermes_base_url"]
+            or grok_official_ready
             or cfg["provider"] == "openai_api" and cfg["openai_api_key"]
             or cfg["provider"] == "codex_proxy" and cfg["codex_proxy_base_url"]
             or cfg["api_key"]
@@ -3798,6 +6326,7 @@ def auth_status_payload(include_balance=False):
         "codex_proxy_configured": bool(cfg["codex_proxy_base_url"]),
         "codex_proxy_base_url": cfg["codex_proxy_base_url"],
         "codex_proxy_running": codex_proxy_running(cfg),
+        "grok_official": grok_official,
         "oauth_configured": bool(read_oauth_token()),
         "management_configured": bool(cfg["management_key"] and cfg["team_id"]),
         "mode": cfg["mode"],
@@ -3808,6 +6337,11 @@ def auth_status_payload(include_balance=False):
             "codex_image": cfg["codex_image_model"],
             "video": cfg["video_model"],
             "vision": cfg["vision_model"],
+            "hermes_image_candidates": unique_model_ids(HERMES_IMAGE_MODEL_CANDIDATES + cfg.get("hermes_discovered_image_models", [])),
+            "hermes_video_candidates": unique_model_ids(HERMES_VIDEO_MODEL_CANDIDATES + cfg.get("hermes_discovered_video_models", [])),
+            "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),
+            "hermes_discovered_image": cfg.get("hermes_discovered_image_models", []),
+            "hermes_discovered_video": cfg.get("hermes_discovered_video_models", []),
         },
         "usage": read_usage(),
         "balance": None,
@@ -3950,7 +6484,7 @@ def get_settings():
 def set_provider_settings():
     data = request.get_json(silent=True) or {}
     provider = (data.get("provider") or "direct").strip().lower()
-    if provider not in {"direct", "hermes_proxy", "openai_api", "codex_proxy"}:
+    if provider not in {"direct", "hermes_proxy", "grok_official", "openai_api", "codex_proxy"}:
         return safe_error("지원하지 않는 provider입니다.")
     settings = read_settings()
     settings["provider"] = provider
@@ -3977,6 +6511,68 @@ def set_provider_settings():
         "openai_api_key": bool(settings.get("openai_api_key")),
         "codex_proxy_base_url": settings.get("codex_proxy_base_url") or "",
     }})
+
+
+@app.post("/api/settings/provider-mode")
+def set_provider_mode():
+    data = request.get_json(silent=True) or {}
+    provider = (data.get("provider") or "").strip().lower()
+    if provider not in {"direct", "hermes_proxy", "grok_official", "openai_api", "codex_proxy"}:
+        return safe_error("지원하지 않는 provider입니다.")
+    settings = read_settings()
+    settings["provider"] = provider
+    write_settings(settings)
+    return jsonify({"ok": True, "provider": provider, "settings": settings})
+
+
+@app.get("/api/grok-official/status")
+def grok_official_status():
+    return jsonify({"ok": True, **grok_official_status_payload(check_cookie=True)})
+
+
+@app.get("/api/grok-official/progress")
+def grok_official_progress():
+    return jsonify({"ok": True, "progress": grok_official_progress_payload()})
+
+
+@app.post("/api/grok-official/chrome/start")
+def grok_official_chrome_start():
+    try:
+        result = ensure_grok_chrome()
+        return jsonify({"ok": True, **result, "status": grok_official_status_payload(check_cookie=False)})
+    except Exception as exc:
+        return safe_error("Grok 공식홈 Chrome을 시작하지 못했습니다.", exc, 502)
+
+
+@app.post("/api/grok-official/chrome/start-default")
+def grok_official_chrome_start_default():
+    if port_open("127.0.0.1", grok_official_port()):
+        return safe_error(
+            "Grok 공식홈 Chrome 디버그 포트가 이미 사용 중입니다.",
+            detail="전용 Grok Chrome 창을 모두 닫은 뒤 다시 눌러 주세요. 기본 Chrome 프로필은 이미 실행 중인 일반 Chrome에 뒤늦게 붙을 수 없습니다.",
+            status=409,
+        )
+    try:
+        result = ensure_grok_chrome(use_default_profile=True)
+        return jsonify({"ok": True, **result, "status": grok_official_status_payload(check_cookie=False)})
+    except Exception as exc:
+        return safe_error("기본 Chrome 프로필로 Grok 공식홈을 시작하지 못했습니다.", exc, 502)
+
+
+@app.post("/api/grok-official/chrome/restart-default")
+def grok_official_chrome_restart_default():
+    try:
+        stopped = stop_chrome_processes()
+        result = ensure_grok_chrome(use_default_profile=True)
+        return jsonify({
+            "ok": True,
+            **result,
+            "stopped_chrome": stopped,
+            "status": grok_official_status_payload(check_cookie=False),
+            "message": "Chrome을 종료하고 기본 프로필로 Grok 공식홈을 열었습니다.",
+        })
+    except Exception as exc:
+        return safe_error("Chrome 종료 후 기본 프로필 실행에 실패했습니다.", exc, 502)
 
 
 @app.post("/api/codex-proxy/start")
@@ -4061,6 +6657,170 @@ def hermes_test():
         except Exception as exc:
             errors.append(f"{url}: {str(exc)[:160]}")
     return safe_error("Hermes Proxy 연결 테스트에 실패했습니다.", "; ".join(errors), 502)
+
+
+def hermes_listed_models(cfg, headers):
+    models = []
+    errors = []
+    for path in ("/v1/models", "/models"):
+        try:
+            response = requests.get(cfg["hermes_base_url"].rstrip("/") + path, headers=headers, timeout=20)
+            if response.status_code >= 400:
+                errors.append(f"{path}: {response.status_code}")
+                continue
+            payload = response.json()
+            rows = payload.get("data") if isinstance(payload, dict) else payload
+            if isinstance(rows, list):
+                for row in rows:
+                    if isinstance(row, dict):
+                        models.append(row.get("id") or row.get("name") or row.get("model"))
+                    else:
+                        models.append(row)
+        except Exception as exc:
+            errors.append(f"{path}: {str(exc)[:120]}")
+    return unique_model_ids(models), errors
+
+
+def hermes_probe_image_model(cfg, headers, model):
+    payload = {
+        "model": model,
+        "prompt": "model capability probe: a plain gray square on white background",
+        "aspect_ratio": "1:1",
+    }
+    response = requests.post(
+        cfg["hermes_base_url"].rstrip("/") + "/images/generations",
+        headers=headers,
+        json=payload,
+        timeout=180,
+    )
+    detail = response_error_detail(response) if response.status_code >= 400 else response.text[:500]
+    missing = response.status_code in {400, 404} and any(token in detail.lower() for token in ("does not exist", "does not have access", "model_not_found", "not found"))
+    return {
+        "model": model,
+        "ok": response.status_code < 400,
+        "accepted": response.status_code < 400 or not missing,
+        "status_code": response.status_code,
+        "detail": detail[:900],
+    }
+
+
+def hermes_probe_edit_model(cfg, headers, model):
+    payload = {
+        "model": model,
+        "prompt": "model capability probe: make the square blue",
+        "image": {"type": "image_url", "url": HERMES_PROBE_IMAGE_DATA_URI},
+    }
+    response = requests.post(
+        cfg["hermes_base_url"].rstrip("/") + "/images/edits",
+        headers=headers,
+        json=payload,
+        timeout=180,
+    )
+    detail = response_error_detail(response) if response.status_code >= 400 else response.text[:500]
+    missing = response.status_code in {400, 404} and any(token in detail.lower() for token in ("does not exist", "does not have access", "model_not_found", "not found"))
+    return {
+        "model": model,
+        "ok": response.status_code < 400,
+        "accepted": response.status_code < 400 or not missing,
+        "status_code": response.status_code,
+        "detail": detail[:900],
+    }
+
+
+def hermes_probe_video_model(cfg, headers, model):
+    payload = {
+        "model": model,
+        "prompt": "model capability probe: slow camera drift over a plain gray square",
+        "duration": 2,
+        "resolution": "480p",
+    }
+    response = requests.post(
+        cfg["hermes_base_url"].rstrip("/") + "/videos/generations",
+        headers=headers,
+        json=payload,
+        timeout=180,
+    )
+    detail = response_error_detail(response) if response.status_code >= 400 else response.text[:500]
+    missing = response.status_code in {400, 404} and any(token in detail.lower() for token in ("does not exist", "does not have access", "model_not_found", "not found"))
+    return {
+        "model": model,
+        "ok": response.status_code < 400,
+        "accepted": response.status_code < 400 or not missing,
+        "status_code": response.status_code,
+        "detail": detail[:900],
+    }
+
+
+@app.post("/api/hermes/model-probe")
+def hermes_model_probe():
+    cfg = config()
+    if not cfg["hermes_base_url"]:
+        return safe_error("Hermes Proxy Base URL을 먼저 설정해 주세요.")
+    data = request.get_json(silent=True) or {}
+    kind = (data.get("kind") or "image").strip().lower()
+    if kind not in {"image", "edit", "video", "both", "all"}:
+        return safe_error("kind는 image, edit, video, both, all 중 하나여야 합니다.")
+    try:
+        limit = max(1, min(80, int(data.get("limit") or 30)))
+    except (TypeError, ValueError):
+        limit = 30
+    headers = xai_headers(provider="hermes_proxy")
+    listed, listed_errors = hermes_listed_models(cfg, headers)
+    user_candidates = data.get("candidates") or []
+    if isinstance(user_candidates, str):
+        user_candidates = re.split(r"[\s,]+", user_candidates)
+    image_candidates = unique_model_ids(
+        list(user_candidates)
+        + HERMES_IMAGE_MODEL_CANDIDATES
+        + cfg.get("hermes_discovered_image_models", [])
+        + [model for model in listed if "image" in model or "imagine" in model]
+    )[:limit]
+    video_candidates = unique_model_ids(
+        list(user_candidates)
+        + HERMES_VIDEO_MODEL_CANDIDATES
+        + cfg.get("hermes_discovered_video_models", [])
+        + [model for model in listed if "video" in model or "imagine" in model]
+    )[:limit]
+    image_results = []
+    edit_results = []
+    video_results = []
+    if kind in {"image", "both", "all"}:
+        for model in image_candidates:
+            image_results.append(hermes_probe_image_model(cfg, headers, model))
+    if kind in {"edit", "all"}:
+        for model in image_candidates:
+            edit_results.append(hermes_probe_edit_model(cfg, headers, model))
+    if kind in {"video", "both", "all"}:
+        for model in video_candidates:
+            video_results.append(hermes_probe_video_model(cfg, headers, model))
+    found_images = [item["model"] for item in image_results if item.get("ok")]
+    found_edits = [item["model"] for item in edit_results if item.get("accepted")]
+    found_videos = [item["model"] for item in video_results if item.get("ok")]
+    settings = read_settings()
+    if found_images or found_edits:
+        settings["hermes_discovered_image_models"] = unique_model_ids(
+            settings.get("hermes_discovered_image_models", []) + found_images + found_edits
+        )
+    if found_videos:
+        settings["hermes_discovered_video_models"] = unique_model_ids(
+            settings.get("hermes_discovered_video_models", []) + found_videos
+        )
+    if found_images or found_videos:
+        write_settings(settings)
+    return jsonify({
+        "ok": True,
+        "kind": kind,
+        "listed_models": listed,
+        "listed_errors": listed_errors,
+        "image_candidates": image_candidates,
+        "video_candidates": video_candidates if kind in {"video", "both"} else [],
+        "image_results": image_results,
+        "edit_results": edit_results,
+        "video_results": video_results,
+        "found_image_models": found_images,
+        "found_edit_models": found_edits,
+        "found_video_models": found_videos,
+    })
 
 
 @app.post("/api/settings/media-root")
@@ -4545,6 +7305,145 @@ def template_slot_upload():
         return safe_error("템플릿 슬롯 파일 업로드에 실패했습니다.", exc, 502)
 
 
+@app.post("/api/grok-official-t2i")
+def grok_official_t2i():
+    payload = request.get_json(silent=True) or {}
+    prompt = (payload.get("prompt") or request.form.get("prompt") or "").strip()
+    aspect_ratio = valid_aspect_ratio(payload.get("aspect_ratio") or request.form.get("aspect_ratio"))
+    image_resolution = valid_image_resolution(payload.get("image_resolution") or request.form.get("image_resolution"))
+    image_model = valid_image_model(payload.get("image_model") or request.form.get("image_model"))
+    if not prompt:
+        return safe_error("프롬프트를 입력해 주세요.")
+    try:
+        path, extra = grok_official_image_generate_ws(
+            prompt,
+            media_path("image"),
+            aspect_ratio=aspect_ratio,
+            resolution=image_resolution,
+            model=image_model,
+        )
+        extra.update(prompt_planner_request_metadata(payload, prompt))
+        extra.update(template_request_metadata(payload))
+        extra.update(project_request_metadata(payload))
+        output_file_paths = [Path(item) for item in (extra.get("official_output_file_paths") or []) if item]
+        output_file_paths = [item for item in output_file_paths if item.exists()]
+        if not output_file_paths:
+            output_file_paths = [Path(path)]
+        output_total = len(output_file_paths)
+        common_extra = dict(extra)
+        common_extra.pop("official_output_file_paths", None)
+        created = []
+        for index, output_path in reversed(list(enumerate(output_file_paths, start=1))):
+            item_extra = dict(common_extra)
+            width, height = image_dimensions(output_path) or (None, None)
+            item_extra.update({
+                "official_output_index": index,
+                "official_output_total": output_total,
+                "official_output_path": public_path(output_path),
+                "official_width": width,
+                "official_height": height,
+            })
+            created.append((index, add_metadata("image", prompt, image_model, output_path, extra=item_extra)))
+        items = [item for _, item in sorted(created, key=lambda pair: pair[0])]
+        item = items[0]
+        return jsonify({"ok": True, "item": item, "items": items, "official": json_safe(extra)})
+    except Exception as exc:
+        return safe_error("Grok 공식홈 이미지 생성에 실패했습니다.", exc, 502)
+
+
+@app.post("/api/grok-official-i2i")
+def grok_official_i2i():
+    prompt = (request.form.get("prompt") or "").strip()
+    aspect_ratio = valid_aspect_ratio(request.form.get("aspect_ratio"))
+    image_resolution = valid_image_resolution(request.form.get("image_resolution"))
+    image_model = valid_image_model(request.form.get("image_model"))
+    if not prompt:
+        return safe_error("편집 프롬프트를 입력해 주세요.")
+    try:
+        sources, source_items = save_reference_images_or_library("image", "grok-official-i2i", limit=3)
+        path, extra = grok_official_image_edit(
+            prompt,
+            sources,
+            media_path("image"),
+            aspect_ratio=aspect_ratio,
+            resolution=image_resolution,
+        )
+        extra.update({
+            "source_image_path": public_path(sources[0]),
+            "source_image_paths": [public_path(source) for source in sources],
+            "source_image_ids": [item.get("id") if item else None for item in source_items],
+            "image_model": image_model,
+        })
+        extra.update(prompt_planner_request_metadata(request.form, prompt))
+        extra.update(template_request_metadata(request.form))
+        extra.update(project_request_metadata(request.form))
+        item = add_metadata("edit", prompt, image_model, path, source_path=sources[0], extra=extra)
+        return jsonify({"ok": True, "item": item, "official": json_safe(extra)})
+    except ValueError as exc:
+        return safe_error(str(exc))
+    except Exception as exc:
+        return safe_error("Grok 공식홈 이미지 편집에 실패했습니다.", exc, 502)
+
+
+@app.post("/api/grok-official-t2v")
+def grok_official_t2v():
+    payload = request.get_json(silent=True) or {}
+    prompt = (payload.get("prompt") or request.form.get("prompt") or "").strip()
+    duration = valid_duration(payload.get("duration") or request.form.get("duration"))
+    aspect_ratio = valid_aspect_ratio(payload.get("aspect_ratio") or request.form.get("aspect_ratio"))
+    resolution = valid_video_resolution(payload.get("resolution") or request.form.get("resolution"))
+    video_model = valid_video_model(payload.get("video_model") or request.form.get("video_model"))
+    if not prompt:
+        return safe_error("영상 프롬프트를 입력해 주세요.")
+    try:
+        path, extra = grok_official_pipeline_video(prompt, duration=duration, aspect_ratio=aspect_ratio, resolution=resolution)
+        extra.update({
+            "generation_type": "t2v",
+            "video_model": video_model,
+            "requested_resolution": resolution,
+        })
+        extra.update(prompt_planner_request_metadata(payload, prompt))
+        extra.update(template_request_metadata(payload))
+        extra.update(project_request_metadata(payload))
+        item = add_metadata("video", prompt, video_model, path, extra=extra)
+        return jsonify({"ok": True, "item": item, "official": json_safe(extra)})
+    except Exception as exc:
+        return safe_error("Grok 공식홈 텍스트→영상 생성에 실패했습니다.", exc, 502)
+
+
+@app.post("/api/grok-official-i2v")
+def grok_official_i2v():
+    prompt = (request.form.get("prompt") or "").strip()
+    duration = valid_duration(request.form.get("duration"))
+    aspect_ratio = valid_aspect_ratio(request.form.get("aspect_ratio"), allow_source=True)
+    resolution = valid_video_resolution(request.form.get("resolution"))
+    video_model = valid_video_model(request.form.get("video_model"))
+    if not prompt:
+        return safe_error("영상 프롬프트를 입력해 주세요.")
+    try:
+        sources, source_items = save_reference_images_or_library("image", "grok-official-i2v", limit=1)
+        source = sources[0]
+        source_item = source_items[0] if source_items else None
+        path, extra = grok_official_pipeline_video(prompt, source_path=source, duration=duration, aspect_ratio=aspect_ratio, resolution=resolution)
+        extra.update({
+            "generation_type": "i2v",
+            "i2v_prompt": prompt,
+            "video_model": video_model,
+            "requested_resolution": resolution,
+            "start_image_path": public_path(source),
+            "start_image_id": source_item.get("id") if source_item else None,
+        })
+        extra.update(prompt_planner_request_metadata(request.form, prompt))
+        extra.update(template_request_metadata(request.form))
+        extra.update(project_request_metadata(request.form))
+        item = add_metadata("video", prompt, video_model, path, source_path=source, extra=extra)
+        return jsonify({"ok": True, "item": item, "official": json_safe(extra)})
+    except ValueError as exc:
+        return safe_error(str(exc))
+    except Exception as exc:
+        return safe_error("Grok 공식홈 이미지→영상 생성에 실패했습니다.", exc, 502)
+
+
 @app.post("/api/t2i")
 def t2i():
     payload = request.get_json(silent=True) or {}
@@ -4555,8 +7454,9 @@ def t2i():
     if not prompt:
         return safe_error("프롬프트를 입력해 주세요.")
     try:
-        image_provider, image_model = selected_image_backend(payload.get("image_model") or request.form.get("image_model"), cfg)
-        if cfg["mode"] == "live":
+        provider_override = request_provider_override(payload) or request_provider_override(request.form)
+        image_provider, image_model = selected_image_backend(payload.get("image_model") or request.form.get("image_model"), cfg, provider_override=provider_override)
+        if cfg["mode"] == "live" or image_provider in {"hermes_proxy", "grok_official"}:
             path, extra = live_image(
                 prompt,
                 media_path("image"),
@@ -4567,6 +7467,7 @@ def t2i():
             )
         else:
             path, extra = mock_svg(media_path("image"), "Text to Image", prompt), {"aspect_ratio": aspect_ratio, "image_resolution": image_resolution, "image_model": image_model, "image_provider": image_provider}
+        extra["request_provider"] = image_provider
         extra.update(prompt_planner_request_metadata(payload, prompt))
         extra.update(template_request_metadata(payload))
         extra.update(project_request_metadata(payload))
@@ -4589,7 +7490,8 @@ def i2i():
     if not prompt:
         return safe_error("편집 프롬프트를 입력해 주세요.")
     try:
-        image_provider, image_model = selected_image_backend(request.form.get("image_model"), cfg)
+        provider_override = request_provider_override(request.form)
+        image_provider, image_model = selected_image_backend(request.form.get("image_model"), cfg, provider_override=provider_override)
         sources, source_items = save_reference_images_or_library("image", "i2i", limit=3)
         edit_source = stitched_reference_image(sources) if edit_input_mode == "stitch" else sources[0]
         edit_sources = sources if edit_input_mode == "multi" and len(sources) > 1 else None
@@ -4599,7 +7501,7 @@ def i2i():
             source_name = (source_items[0].get("extra") or {}).get("original_name") or source_items[0].get("file_path") or source_name
         source_name = re.split(r"[\\/]", str(source_name))[-1]
         manga_prefix = f"grok_trans_{safe_output_stem(source_name, 1)}_" if manga_edit else ""
-        if cfg["mode"] == "live":
+        if cfg["mode"] == "live" or image_provider in {"hermes_proxy", "grok_official"}:
             path, extra = live_image(
                 prompt,
                 output_dir,
@@ -4625,6 +7527,7 @@ def i2i():
             "source_image_path": public_path(sources[0]),
             "source_image_paths": [public_path(source) for source in sources],
             "image_provider": image_provider,
+            "request_provider": image_provider,
             "image_resolution": image_resolution,
             "experimental_image_resolution": image_resolution != "auto",
             "edit_input_mode": edit_input_mode,
@@ -5280,6 +8183,7 @@ def i2v():
     resolution = valid_video_resolution(request.form.get("resolution"))
     cfg = config()
     video_model = valid_video_model(request.form.get("video_model"), cfg)
+    provider_override = request_provider_override(request.form)
     upscale_source = checked(request.form.get("upscale_source"))
     if not prompt:
         return safe_error("영상 프롬프트를 입력해 주세요.")
@@ -5292,19 +8196,23 @@ def i2v():
         original_sources = sources
         video_sources = sources
         upscale_details = []
-        if cfg["mode"] == "live" and upscale_source:
-            video_sources, upscale_details = upscale_i2v_sources_to_2k(sources, prompt)
+        live_requested = cfg["mode"] == "live" or provider_override in {"hermes_proxy", "grok_official"}
+        effective_video_provider = provider_override or cfg["provider"]
+        if live_requested and upscale_source:
+            video_sources, upscale_details = upscale_i2v_sources_to_2k(sources, prompt, image_provider=effective_video_provider)
         source = video_sources[0]
-        if cfg["mode"] == "live":
-            if len(video_sources) > 1:
+        if live_requested:
+            if effective_video_provider == "grok_official":
+                path, extra = grok_official_pipeline_video(prompt, source_path=source, duration=duration, aspect_ratio=aspect_ratio, resolution=resolution)
+            elif len(video_sources) > 1:
                 reference_prompt = (
                     f"{prompt}\n\n"
                     f"Use IMAGE_1 as the primary starting image. "
                     f"Use the additional reference images to preserve identity, outfit, environment, palette, style, and target visual details."
                 ).strip()
-                path, extra = live_video_from_reference_images(reference_prompt, video_sources, duration, aspect_ratio=aspect_ratio, resolution=resolution, video_model=video_model)
+                path, extra = live_video_from_reference_images(reference_prompt, video_sources, duration, aspect_ratio=aspect_ratio, resolution=resolution, video_model=video_model, provider=effective_video_provider)
             else:
-                path, extra = live_video(prompt, source, duration, aspect_ratio=aspect_ratio, resolution=resolution, video_model=video_model)
+                path, extra = live_video(prompt, source, duration, aspect_ratio=aspect_ratio, resolution=resolution, video_model=video_model, provider=effective_video_provider)
         else:
             path, extra = mock_svg(media_path("video"), "Image to Video", prompt), {
                 "mock_video": True,
@@ -5334,6 +8242,7 @@ def i2v():
             "upscale_resolution": "2k" if upscale_source else None,
             "upscaled_reference_images": upscale_details,
             "video_model": video_model,
+            "request_provider": effective_video_provider,
         })
         extra.update(prompt_planner_request_metadata(request.form, prompt))
         extra.update(template_request_metadata(request.form))
@@ -5404,6 +8313,8 @@ def handle_v2v_extend(strategy):
     mute = (request.form.get("mute") or "true") != "false"
     upscale_frame = (request.form.get("upscale_frame") or "true") != "false"
     cfg = config()
+    provider_override = request_provider_override(request.form)
+    effective_video_provider = provider_override or cfg["provider"]
     video_model = valid_video_model(request.form.get("video_model"), cfg)
     if not prompt:
         return safe_error("연장할 영상 프롬프트를 입력해 주세요.")
@@ -5443,12 +8354,13 @@ def handle_v2v_extend(strategy):
             extra["combined"] = True
             extra["source_duration"] = source_duration
             extra["output_duration"] = output_duration
-        elif cfg["mode"] == "live":
+        elif cfg["mode"] == "live" or effective_video_provider in {"hermes_proxy", "grok_official"}:
             frame = extract_last_frame(source_video)
             if upscale_frame:
                 prepared_frame, upscaled, frame_dimensions, upscale_extra = upscale_frame_to_2k(
                     frame,
                     extension_prompt,
+                    image_provider=effective_video_provider,
                 )
             else:
                 prepared_frame = frame
@@ -5462,6 +8374,7 @@ def handle_v2v_extend(strategy):
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
                 video_model=video_model,
+                provider=effective_video_provider,
             )
             path, concat_extra = concat_videos(
                 source_video,
@@ -5506,6 +8419,7 @@ def handle_v2v_extend(strategy):
             "used_i2v_start_image_reference": bool(reference_context),
             "effective_prompt": extension_prompt,
             "video_model": video_model,
+            "request_provider": effective_video_provider,
         })
         extra.update(prompt_planner_request_metadata(request.form, prompt))
         extra.update(template_request_metadata(request.form))

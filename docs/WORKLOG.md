@@ -811,3 +811,29 @@
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
   - 실제 v3 서버를 `http://127.0.0.1:7863`에 재시작하고 `/health`, `/?v=20260605-v3-52`, `/static/app.js?v=20260605-v3-52` 응답과 새 모델 옵션 포함 확인.
 - 백업: `backups/before-image-model-options-20260605-184546`
+
+### Grok 공식홈 Quota 연동 보강과 실행 런처 안정화
+- 목표: xAI API 과금 경로를 제외하고, 사용자가 로그인한 Grok 공식홈 세션 쿠키 기반 Quota 경로를 Hermes Proxy 경로와 병행해 쓸 수 있게 한다.
+- 결정:
+  - 이미지 생성은 `wss://grok.com/ws/imagine/listen` 공식홈 WebSocket 경로를 사용한다.
+  - 이미지 편집과 이미지→영상은 `https://grok.com/rest/media/pipeline/run` 공식홈 streaming 경로를 사용한다.
+  - 공식홈 경로는 UI에서 Hermes Proxy와 분리하고, 템플릿 블록에서도 `official:` 이미지 모델을 고르면 공식홈 경로로 자동 라우팅한다.
+  - `official:imagine_h_1`의 고해상도 요청은 공식 payload 기준 `resolution_name: "2mp"`로 보낸다. UI의 `2k` 표시는 유지하되 실제 WebSocket payload에서는 `2mp`로 매핑한다.
+- 변경:
+  - `app.py`: `grok_official` provider 모드, 공식홈 Chrome/CDP 세션 상태, 진행 상태 API, 공식홈 이미지 WebSocket 생성, pipeline 기반 이미지 편집/이미지→영상 생성, 업로드 blob 참조 처리, 결과 blob/URL 다운로드 로직을 추가했다.
+  - `app.py`: 공식홈 이미지 모델 후보 `official:imagine-x-1`, `official:imagine_h_1`을 추가하고 `/health`, `/api/auth/status` 모델 응답에 포함했다.
+  - `app.py`: `official:imagine_h_1`에서 `2k` 선택 시 `resolution_name: "2mp"`로 전송하고, `1k`는 공식 payload 값이 확인되지 않아 명시하지 않도록 했다.
+  - `templates/index.html`: 이미지 생성, 이미지 편집, 이미지→영상, Provider 설정에 `Grok 공식홈 Quota` 요청 경로 선택지를 추가했다.
+  - `static/app.js`: 요청 경로 선택, 공식홈 모델 선택지 표시, 공식홈 경로의 파일/참조 이미지 처리 제한, Hermes 모델 탐색 버튼, 템플릿 블록의 공식홈 자동 라우팅을 연결했다.
+  - `run_webgork_app.bat`: `PIL` 의존성 확인을 추가하고, `work\run_server.py`가 있으면 서버 로그를 남기는 runner로 실행하도록 하여 더블클릭 실행 실패 원인을 확인할 수 있게 했다.
+  - `work/run_server.py`: 배치 실행 시 Flask 서버 stdout/stderr를 `work/server-runner.log`에 남기는 runner를 추가했다.
+  - `.gitignore`: Grok 공식홈 Chrome 프로필과 임시 캡처 작업물을 저장소에 올리지 않도록 제외하고, `work/run_server.py`만 추적 대상으로 남겼다.
+  - `templates/index.html`, `static/service-worker.js`, `static/app.js`, `run_webgork_app.bat`: 정적 버전과 앱 캐시를 `20260605-v3-59` / `webgui-shell-v3-59`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py work\run_server.py` 통과.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - Flask test client로 `/health` 응답과 `models.grok_official_image_candidates`에 `official:imagine_h_1` 포함 확인.
+  - `grok_official_image_resolution_name("2k") == "2mp"` 및 `grok_official_image_resolution_name("1k") == ""` 확인.
+  - 새 `run_webgork_app.bat` 서버 시작 경로로 `/health` 200 응답 확인.
+- 백업: `backups/after-grok-official-routes-launcher-20260606-230007`
