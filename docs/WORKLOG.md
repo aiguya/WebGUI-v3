@@ -1064,3 +1064,19 @@
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
   - 실제 Grok 생성/편집 요청은 크레딧 절약을 위해 실행하지 않았다.
 - 백업: `backups/grok-official-appchat-context-20260607-233041`
+
+### 2026-06-07 23:40 KST - Codex/ChatGPT 모델 표시 보강
+- 목표: 이미지 생성/편집 UI에서 Codex/ChatGPT OAuth 경로와 `gpt-5.x` 모델이 요청 경로별 모델 필터에 맞게 보이도록 최소 수정했다.
+- 변경:
+  - `templates/index.html`: 이미지 생성, 이미지 편집의 요청 경로에 `Codex/ChatGPT OAuth` 옵션을 추가했다.
+  - `static/app.js`: `codex_proxy` 요청 경로를 인식하고, 해당 경로 선택 시 `gpt-5.4-mini`, `gpt-5.4`, `gpt-5.5` 모델만 보이도록 이미지 모델 필터를 분리했다.
+  - `static/app.js`: 템플릿 블록에서도 Codex/ChatGPT 경로와 GPT 모델 표시/실행값이 어긋나지 않도록 허용 목록을 맞췄다.
+  - `app.py`, `static/app.js`: Codex Proxy 상태 패널에 현재 Codex 이미지 모델을 표시하도록 `image_model` 상태값과 UI 행을 추가했다.
+  - `templates/index.html`, `static/service-worker.js`, `run_webgork_app.bat`: 정적 캐시 버전을 `20260605-v3-63` / `webgui-shell-v3-63`으로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - Flask test client `/`에서 `Codex/ChatGPT OAuth`, `20260605-v3-63` 포함 확인.
+  - Flask test client `/api/codex-proxy/status` 200 및 `image_model: gpt-5.4-mini` 확인.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+- 백업: `backups/gpt-codex-model-display-20260607-234011`

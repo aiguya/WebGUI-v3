@@ -152,12 +152,12 @@ const grokOfficialEndpointByBase = {
 
 function requestProviderForForm(form) {
   const value = form?.querySelector("[name='request_provider'], [name='request_route']")?.value || "";
-  return ["hermes_proxy", "grok_official", "direct"].includes(value) ? value : "";
+  return ["hermes_proxy", "grok_official", "direct", "codex_proxy"].includes(value) ? value : "";
 }
 
 function effectiveRequestProviderForForm(form) {
   const imageModel = form?.querySelector("[name='image_model']")?.value || "";
-  if (imageModel.startsWith("gpt-5.")) return "";
+  if (imageModel.startsWith("gpt-5.")) return "codex_proxy";
   if (imageModel.startsWith("official:")) return "grok_official";
   return requestProviderForForm(form);
 }
@@ -174,12 +174,20 @@ function requestProviderLabel(provider) {
     hermes_proxy: "Hermes Proxy",
     grok_official: "Grok 공식홈",
     direct: "직접 OAuth",
+    codex_proxy: "Codex/ChatGPT OAuth",
   })[provider] || "";
 }
+
+const codexImageModelLabels = {
+  "gpt-5.4-mini": "Codex/ChatGPT gpt-5.4-mini",
+  "gpt-5.4": "Codex/ChatGPT gpt-5.4",
+  "gpt-5.5": "Codex/ChatGPT gpt-5.5",
+};
 
 const modelRouteState = {
   hermesImage: new Set(),
   hermesVideo: new Set(),
+  codexImage: new Set(Object.keys(codexImageModelLabels)),
   officialImage: new Set(["official:imagine-x-1", "official:imagine_h_1"]),
   officialVideo: new Set(["grok-imagine-video"]),
 };
@@ -1652,7 +1660,8 @@ function buildTemplateShotRequest(payload, shot, previous, slotState = templateR
   const resolution = payload.settings.resolution || "720p";
   const imageResolution = ["auto", "1k", "2k"].includes(shot.image_resolution) ? shot.image_resolution : "auto";
   const editInputMode = shot.edit_input_mode === "stitch" ? "stitch" : "multi";
-  let requestProvider = ["hermes_proxy", "grok_official", "direct"].includes(shot.request_provider) ? shot.request_provider : "";
+  let requestProvider = ["hermes_proxy", "grok_official", "direct", "codex_proxy"].includes(shot.request_provider) ? shot.request_provider : "";
+  if (!requestProvider && String(shot.image_model || "").startsWith("gpt-5.")) requestProvider = "codex_proxy";
   if (!requestProvider && String(shot.image_model || "").startsWith("official:")) requestProvider = "grok_official";
   if (shot.method === "image") {
     const body = appendTemplateRequestMetadata({
@@ -3884,9 +3893,7 @@ const templateImageModelLabels = {
   "grok-imagine-image-quality-latest": "Grok 이미지 퀄리티 latest",
   "grok-imagine-image": "Grok 이미지 기본",
   ...officialImageModelLabels,
-  "gpt-5.4-mini": "Codex/ChatGPT gpt-5.4-mini",
-  "gpt-5.4": "Codex/ChatGPT gpt-5.4",
-  "gpt-5.5": "Codex/ChatGPT gpt-5.5",
+  ...codexImageModelLabels,
 };
 
 const templateImageResolutionLabels = {
@@ -3912,6 +3919,7 @@ const templateOfficialVideoModelLabels = {
 const templateRequestProviderLabels = {
   hermes_proxy: "Hermes Proxy",
   grok_official: "Grok 공식홈 Quota",
+  codex_proxy: "Codex/ChatGPT OAuth",
 };
 
 const templateTransitionLabels = {
@@ -4041,13 +4049,14 @@ function templateReferenceLimitedShot(shot, limit = 3) {
 }
 
 function defaultTemplateRequestProvider(method, imageModel = "") {
+  if (String(imageModel || "").startsWith("gpt-5.")) return "codex_proxy";
   if (String(imageModel || "").startsWith("official:")) return "grok_official";
   return method === "official" || method === "frame" ? "grok_official" : "hermes_proxy";
 }
 
 function templateRouteModelLabels(kind, provider) {
   const labels = kind === "image"
-    ? (provider === "grok_official" ? officialImageModelLabels : templateImageModelLabels)
+    ? (provider === "grok_official" ? officialImageModelLabels : (provider === "codex_proxy" ? codexImageModelLabels : templateImageModelLabels))
     : (provider === "grok_official" ? templateOfficialVideoModelLabels : templateVideoModelLabels);
   const allowed = allowedModelSet(kind, provider);
   if (!allowed.size) return labels;
@@ -6915,6 +6924,7 @@ function markExistingModelOptions() {
   document.querySelectorAll("select[name='image_model'] option").forEach(option => {
     if (option.value.startsWith("official:")) option.dataset.officialImageModel = "1";
     if (option.value.startsWith("grok-imagine-image") || option.value.startsWith("imagine")) option.dataset.hermesImageModel = "1";
+    if (option.value.startsWith("gpt-5.")) option.dataset.codexImageModel = "1";
   });
   document.querySelectorAll("select[name='video_model'] option").forEach(option => {
     if (modelRouteState.officialVideo.has(option.value)) option.dataset.officialVideoModel = "1";
@@ -6925,7 +6935,11 @@ function markExistingModelOptions() {
 }
 
 function allowedModelSet(kind, provider) {
-  if (kind === "image") return provider === "grok_official" ? modelRouteState.officialImage : modelRouteState.hermesImage;
+  if (kind === "image") {
+    if (provider === "grok_official") return modelRouteState.officialImage;
+    if (provider === "codex_proxy") return modelRouteState.codexImage;
+    return modelRouteState.hermesImage;
+  }
   if (kind === "video") return provider === "grok_official" ? modelRouteState.officialVideo : modelRouteState.hermesVideo;
   return new Set();
 }
@@ -7776,6 +7790,7 @@ async function refreshCodexProxyPanel() {
     if (list) list.innerHTML = `
       <dt>상태</dt><dd>${data.running ? "실행 중" : "꺼짐"}</dd>
       <dt>Provider</dt><dd>${data.provider || "없음"}</dd>
+      <dt>이미지 모델</dt><dd>${data.image_model || "gpt-5.4-mini"}</dd>
       <dt>OAuth</dt><dd>${data.oauth_status || "없음"}</dd>
       <dt>URL</dt><dd>${data.backend_url || data.base_url || "없음"}</dd>
       <dt>버전</dt><dd>${data.version || "없음"}</dd>`;

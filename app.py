@@ -5216,6 +5216,7 @@ def codex_proxy_status_payload():
         "provider": None,
         "oauth_status": None,
         "version": None,
+        "image_model": cfg.get("codex_image_model"),
         "detail": "",
         "log_path": str(codex_proxy_log_path()),
         "log_tail": "",
