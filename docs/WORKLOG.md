@@ -1029,3 +1029,21 @@
   - Cloudflare challenge 문자열 판별 함수가 `True`를 반환하는지 확인.
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
 - 백업: `backups/after-grok-agent-provider-cloudflare-upload-message-20260607-000000`
+
+### 2026-06-07 22:53 KST - Grok 공식홈 내부 이미지 편집 app-chat 우선 분기
+- 목표: 공식홈에서 내부 생성 이미지를 편집할 때 실제 웹이 사용하는 `https://grok.com/rest/app-chat/conversations/new` 요청 형태와 앱의 공식 이미지 편집 경로를 맞춘다.
+- 확인:
+  - Chrome 9227 탭 훅으로 공식홈 편집 요청을 추적했다.
+  - 공식 웹은 `modelName: imagine-image-edit`, `imageReferences: [assets.grok.com/.../generated/<parentPostId>/image.jpg]`, `parentPostId`를 `conversations/new`로 전송했다.
+  - 응답에서 서버가 `rootPostId`, `resolvedImageReferences`, `isRootUserUploaded: false`, 최종 `assetId`를 보강했다.
+- 변경:
+  - `app.py`: 라이브러리 이미지가 공식 생성 post reference를 가진 경우 감지하는 `grok_official_path_has_post_reference()`를 추가했다.
+  - `app.py`: 공식 생성 이미지 편집은 `app-chat/conversations/new` 경로를 먼저 사용하도록 분기했다.
+  - `app.py`: 공식 내부 이미지 app-chat 요청에서는 공식 웹과 맞추기 위해 클라이언트가 `isRootUserUploaded: false`와 `rootPostId`를 직접 보내지 않도록 했다. 업로드 파일인 경우에만 `isRootUserUploaded: true`를 유지한다.
+  - 기존 외부/업로드 이미지의 기본 `pipeline/run` 경로는 유지했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - 기존 라이브러리의 공식 생성 이미지 metadata 샘플 5개에서 `grok_official_path_has_post_reference()`가 `True`를 반환하는지 확인.
+  - WebGUI 서버를 재시작하고 `http://127.0.0.1:7863/health` 200 및 Grok 공식홈 세션 쿠키 연결 상태를 확인.
+  - 실제 Grok 재요청은 크레딧 소모를 피하기 위해 자동 실행하지 않았다.
+- 백업: `backups/grok-official-appchat-edit-20260607-225231`

@@ -4331,6 +4331,28 @@ def grok_official_image_edit_reference_for_path(path, account_id=None):
     }
 
 
+def grok_official_path_has_post_reference(path):
+    source = Path(path)
+    item = find_metadata_by_file_path(source)
+    extra = item.get("extra") if isinstance(item, dict) and isinstance(item.get("extra"), dict) else {}
+    official_id = (
+        extra.get("official_image_id")
+        or official_image_id_from_url(extra.get("official_image_url") or "")
+        or official_generated_id_from_url(extra.get("official_image_url") or "")
+        or official_generated_id_from_url(extra.get("official_output_path") or "")
+    )
+    if official_id:
+        return True
+    remote_url = remote_url_for_media_path(source)
+    return bool(
+        remote_url
+        and (
+            "imagine-public.x.ai" in remote_url
+            or ("assets.grok.com" in remote_url and "/generated/" in remote_url)
+        )
+    )
+
+
 def grok_official_app_chat_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
     sources = [Path(path) for path in source_paths if path]
     if not sources:
@@ -4339,12 +4361,12 @@ def grok_official_app_chat_image_edit(prompt, source_paths, dest_dir, aspect_rat
     image_reference, source_extra = grok_official_image_edit_reference_for_path(sources[0], account_id=account_id)
     image_edit_config = {
         "imageReferences": [image_reference],
-        "isRootUserUploaded": bool(source_extra.get("official_is_root_user_uploaded")),
     }
+    if source_extra.get("official_source_type") == "uploaded_file_uri":
+        image_edit_config["isRootUserUploaded"] = True
     parent_post_id = source_extra.get("official_parent_post_id")
     if parent_post_id:
         image_edit_config["parentPostId"] = parent_post_id
-        image_edit_config["rootPostId"] = source_extra.get("official_root_post_id") or parent_post_id
     request_body = {
         "temporary": True,
         "modelName": "imagine-image-edit",
@@ -4531,10 +4553,46 @@ def grok_official_is_antibot_error(error):
 
 
 def grok_official_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
+    sources = [Path(path) for path in source_paths if path]
+    if sources and grok_official_path_has_post_reference(sources[0]):
+        try:
+            path, extra = grok_official_app_chat_image_edit(
+                prompt,
+                sources,
+                dest_dir,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                account_id=account_id,
+            )
+            extra["official_preferred_transport"] = "app_chat_conversations"
+            extra["official_preferred_reason"] = "official_post_reference"
+            return path, extra
+        except Exception as exc:
+            app_chat_error = error_detail_text(exc)
+            if not checked(os.getenv("GROK_OFFICIAL_PIPELINE_EDIT_FALLBACK", "")):
+                raise
+            update_grok_official_progress(
+                status="running",
+                stage="pipeline-edit-fallback",
+                message="Grok official app-chat image edit failed; trying optional pipeline fallback",
+                app_chat_error=app_chat_error[:1200],
+            )
+            path, extra = grok_official_pipeline_image_edit(
+                prompt,
+                sources,
+                dest_dir,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                account_id=account_id,
+            )
+            extra["official_fallback_from"] = "app_chat_image_edit"
+            extra["official_fallback_reason"] = "app_chat_failed"
+            extra["official_app_chat_error"] = app_chat_error[:1200]
+            return path, extra
     try:
         return grok_official_pipeline_image_edit(
             prompt,
-            source_paths,
+            sources,
             dest_dir,
             aspect_ratio=aspect_ratio,
             resolution=resolution,
