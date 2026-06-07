@@ -2518,9 +2518,28 @@ def cdp_json(path, port=None, method="GET"):
     return response.json()
 
 
-def grok_imagine_tab(port=None):
+def grok_imagine_tab(port=None, post_id=None):
     port = port or grok_official_port()
     tabs = cdp_json("/json/list", port=port)
+    if post_id:
+        post_token = f"/imagine/post/{post_id}"
+        for tab in tabs:
+            if (
+                isinstance(tab, dict)
+                and post_token in (tab.get("url") or "")
+                and tab.get("webSocketDebuggerUrl")
+            ):
+                return tab
+        target_url = f"https://grok.com/imagine/post/{post_id}"
+        encoded = quote(target_url, safe=":/?=&")
+        for method in ("PUT", "GET"):
+            try:
+                created = cdp_json("/json/new?" + encoded, port=port, method=method)
+                if created.get("webSocketDebuggerUrl"):
+                    time.sleep(2)
+                    return created
+            except Exception:
+                pass
     for tab in tabs:
         if isinstance(tab, dict) and "grok.com" in (tab.get("url") or "") and tab.get("webSocketDebuggerUrl"):
             return tab
@@ -2529,6 +2548,7 @@ def grok_imagine_tab(port=None):
         try:
             created = cdp_json("/json/new?" + encoded, port=port, method=method)
             if created.get("webSocketDebuggerUrl"):
+                time.sleep(2)
                 return created
         except Exception:
             pass
@@ -2590,19 +2610,75 @@ def grok_official_cloudflare_upload_message(status, detail=""):
     return f"{hint} HTTP {status}" + (f" / {preview}" if preview else "")
 
 
-def grok_official_browser_fetch(url, body=None, method="POST", timeout=360):
-    tab = grok_imagine_tab()
+def grok_official_browser_fetch(url, body=None, method="POST", timeout=360, target_post_id=None):
+    tab = grok_imagine_tab(post_id=target_post_id)
     body_json = json.dumps(body or {}, ensure_ascii=False, separators=(",", ":"))
     expression = f"""
 (async () => {{
+  const findStatsigId = () => {{
+    const looksLikeStatsigId = (value) => {{
+      if (typeof value !== "string") return false;
+      const text = value.trim().replace(/^["']|["']$/g, "");
+      return text.length >= 32 && text.length <= 300 && /^[A-Za-z0-9+/=_-]+$/.test(text);
+    }};
+    const clean = (value) => String(value || "").trim().replace(/^["']|["']$/g, "");
+    const scanJson = (value, depth = 0) => {{
+      if (depth > 4 || value == null) return "";
+      if (looksLikeStatsigId(value)) return clean(value);
+      if (Array.isArray(value)) {{
+        for (const item of value) {{
+          const found = scanJson(item, depth + 1);
+          if (found) return found;
+        }}
+      }} else if (typeof value === "object") {{
+        for (const [key, item] of Object.entries(value)) {{
+          const found = scanJson(item, depth + 1);
+          if (found && String(key).toLowerCase().includes("stable")) return found;
+        }}
+        for (const item of Object.values(value)) {{
+          const found = scanJson(item, depth + 1);
+          if (found) return found;
+        }}
+      }}
+      return "";
+    }};
+    const stores = [];
+    try {{ stores.push(window.localStorage); }} catch (error) {{}}
+    try {{ stores.push(window.sessionStorage); }} catch (error) {{}}
+    const directKeys = ["STATSIG_LOCAL_STORAGE_STABLE_ID", "statsig.stable_id", "statsigStableId", "statsigStableID", "x-statsig-id"];
+    for (const store of stores) {{
+      for (const key of directKeys) {{
+        try {{
+          const value = store.getItem(key);
+          if (looksLikeStatsigId(value)) return clean(value);
+        }} catch (error) {{}}
+      }}
+      try {{
+        for (let index = 0; index < store.length; index += 1) {{
+          const key = store.key(index) || "";
+          if (!key.toLowerCase().includes("statsig")) continue;
+          const raw = store.getItem(key);
+          if (looksLikeStatsigId(raw)) return clean(raw);
+          try {{
+            const found = scanJson(JSON.parse(raw));
+            if (found) return found;
+          }} catch (error) {{}}
+        }}
+      }} catch (error) {{}}
+    }}
+    return "";
+  }};
+  const requestHeaders = {{
+    "Accept": "application/json, text/event-stream, */*",
+    "Content-Type": "application/json",
+    "x-xai-request-id": crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
+  }};
+  const statsigId = findStatsigId();
+  if (statsigId) requestHeaders["x-statsig-id"] = statsigId;
   const response = await fetch({json.dumps(url)}, {{
     method: {json.dumps(method)},
     credentials: "include",
-    headers: {{
-      "Accept": "application/json, text/event-stream, */*",
-      "Content-Type": "application/json",
-      "x-xai-request-id": crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
-    }},
+    headers: requestHeaders,
     body: {json.dumps(body_json)}
   }});
   const headers = Object.fromEntries(response.headers.entries());
@@ -2619,7 +2695,7 @@ def grok_official_browser_fetch(url, body=None, method="POST", timeout=360):
   }} else {{
     text = await response.text();
   }}
-  return {{ok: response.ok, status: response.status, statusText: response.statusText, headers, text}};
+  return {{ok: response.ok, status: response.status, statusText: response.statusText, headers, text, href: location.href, requestHeaders}};
 }})()
 """
     with CdpWebSocket(tab["webSocketDebuggerUrl"], timeout=timeout + 30) as cdp:
@@ -2758,6 +2834,22 @@ def grok_official_image_url(image_id):
 def official_generated_id_from_url(url):
     match = re.search(r"/generated/([^/?#]+)/", url or "")
     return match.group(1) if match else ""
+
+
+def grok_official_generated_asset_image_url(post_id, account_id=None, source_url=""):
+    if not post_id:
+        return ""
+    source_url = source_url or ""
+    match = re.search(
+        r"(https://assets\.grok\.com/users/[^/]+/generated/" + re.escape(post_id) + r")(?:/[^?#]*)?",
+        source_url,
+    )
+    if match:
+        return match.group(1) + "/image.jpg"
+    account_id = account_id or active_grok_account_id()
+    if account_id:
+        return f"https://assets.grok.com/users/{account_id}/generated/{post_id}/image.jpg"
+    return grok_official_image_url(post_id)
 
 
 def grok_official_download_candidates(url, kind="image"):
@@ -4289,21 +4381,29 @@ def grok_official_image_edit_reference_for_path(path, account_id=None):
     source = Path(path)
     item = find_metadata_by_file_path(source)
     extra = item.get("extra") if isinstance(item, dict) and isinstance(item.get("extra"), dict) else {}
-    official_id = (
+    remote_url = remote_url_for_media_path(source)
+    generated_id = (
+        official_generated_id_from_url(extra.get("official_image_url") or "")
+        or official_generated_id_from_url(extra.get("official_media_url") or "")
+        or official_generated_id_from_url(extra.get("official_output_path") or "")
+        or official_generated_id_from_url(remote_url or "")
+    )
+    official_id = generated_id or (
         extra.get("official_image_id")
         or official_image_id_from_url(extra.get("official_image_url") or "")
-        or official_generated_id_from_url(extra.get("official_image_url") or "")
-        or official_generated_id_from_url(extra.get("official_output_path") or "")
     )
-    remote_url = remote_url_for_media_path(source)
     if official_id:
-        reference = remote_url if official_image_id_from_url(remote_url or "") else grok_official_image_url(official_id)
+        reference = grok_official_generated_asset_image_url(
+            official_id,
+            account_id=account_id,
+            source_url=remote_url or extra.get("official_image_url") or extra.get("official_media_url") or "",
+        )
         return reference, {
             "source_url": remote_url,
             "official_source_type": "official_post",
             "official_source_mode": "official_post_image_reference",
             "official_parent_post_id": official_id,
-            "official_root_post_id": official_id,
+            "official_root_post_id": generated_id or official_id,
             "official_is_root_user_uploaded": False,
         }
     if remote_url and "imagine-public.x.ai" in remote_url:
@@ -4404,6 +4504,7 @@ def grok_official_app_chat_image_edit(prompt, source_paths, dest_dir, aspect_rat
         "https://grok.com/rest/app-chat/conversations/new",
         body=request_body,
         timeout=360,
+        target_post_id=parent_post_id,
     )
     if int(browser_response.get("status") or 0) >= 400:
         raise RuntimeError(f"Grok official browser image edit request failed: {browser_response.get('status')} {(browser_response.get('text') or '')[:1200]}")

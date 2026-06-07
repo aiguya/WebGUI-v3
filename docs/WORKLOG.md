@@ -1047,3 +1047,20 @@
   - WebGUI 서버를 재시작하고 `http://127.0.0.1:7863/health` 200 및 Grok 공식홈 세션 쿠키 연결 상태를 확인.
   - 실제 Grok 재요청은 크레딧 소모를 피하기 위해 자동 실행하지 않았다.
 - 백업: `backups/grok-official-appchat-edit-20260607-225231`
+
+### 2026-06-07 23:33 KST - Grok 공식홈 app-chat 요청 context 정렬
+- 목표: 공식홈 직접 요청과 앱의 app-chat 이미지 편집 요청 차이를 줄이되, 실제 Grok 생성/편집 요청은 보내지 않아 크레딧을 쓰지 않는다.
+- 확인:
+  - 공식홈 캡처 요청에는 `x-statsig-id`, `x-xai-request-id`, `parentPostId`, `assets.grok.com/.../generated/<postId>/image.jpg` 형식의 `imageReferences`가 포함되어 있었다.
+  - 기존 앱 요청은 `target_post_id`와 무관하게 첫 Grok 탭에서 fetch가 실행될 수 있었고, metadata 상태에 따라 `imagine-public.x.ai` URL을 참조할 수 있었다.
+- 변경:
+  - `app.py`: `grok_imagine_tab()`에 `post_id` 우선 선택을 추가하고, 일치 탭이 없으면 해당 공식 post 탭을 연 뒤 그 context에서 fetch하도록 했다.
+  - `app.py`: `grok_official_browser_fetch()`가 페이지 storage에서 `x-statsig-id`를 찾을 수 있을 때만 공식 요청과 같은 헤더로 포함하도록 했다.
+  - `app.py`: 공식 post reference 이미지 URL을 `assets.grok.com/.../generated/<postId>/image.jpg` 형식으로 정규화하는 helper를 추가했다.
+  - `app.py`: app-chat 이미지 편집 요청에 `target_post_id=parentPostId`를 넘기도록 했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `grok_official_generated_asset_image_url()`가 성공 기록의 `generated/<postId>/content`를 `generated/<postId>/image.jpg`로 변환하는지 확인.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - 실제 Grok 생성/편집 요청은 크레딧 절약을 위해 실행하지 않았다.
+- 백업: `backups/grok-official-appchat-context-20260607-233041`
