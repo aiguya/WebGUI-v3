@@ -1080,3 +1080,19 @@
   - Flask test client `/api/codex-proxy/status` 200 및 `image_model: gpt-5.4-mini` 확인.
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
 - 백업: `backups/gpt-codex-model-display-20260607-234011`
+
+### 2026-06-08 10:41 KST - Agent 탭 숨김 및 Hermes 이미지 모델 4개 제한
+- 목표: Grok Agent 탭은 화면에서만 숨기고, Hermes Proxy 이미지 생성/편집 모델 목록은 실제 사용할 4개 모델만 표시되도록 정리했다.
+- 변경:
+  - `templates/index.html`: `grokAgent` 탭 버튼에 `hidden`을 추가했다. Agent 패널과 API 코드는 유지했다.
+  - `app.py`: `HERMES_IMAGE_MODEL_CANDIDATES`를 `grok-imagine-image-quality`, `grok-imagine-image-pro`, `grok-imagine-image-quality-latest`, `grok-imagine-image` 4개로 제한했다.
+  - `app.py`: `/api/auth/status`, `/health`의 Hermes 이미지 후보가 기존 발견 모델을 섞지 않고 4개만 내려가도록 수정했다.
+  - `app.py`, `static/app.js`: Hermes 모델 탐색/프론트 후보 적용에서도 숨긴 이미지 모델이 다시 목록에 섞이지 않도록 필터링했다.
+  - `templates/index.html`, `static/service-worker.js`, `run_webgork_app.bat`: 정적 캐시 버전을 `20260605-v3-64` / `webgui-shell-v3-64`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - Flask test client `/`에서 `grokAgent` 탭 버튼 `hidden` 및 `20260605-v3-64` 확인.
+  - Flask test client `/api/auth/status`에서 Hermes 이미지 후보가 4개만 내려오는지 확인.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+- 백업: `backups/hide-agent-limit-hermes-models-20260608-104109`

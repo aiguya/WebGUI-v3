@@ -184,8 +184,16 @@ const codexImageModelLabels = {
   "gpt-5.5": "Codex/ChatGPT gpt-5.5",
 };
 
+const hermesImageModelIds = [
+  "grok-imagine-image-quality",
+  "grok-imagine-image-pro",
+  "grok-imagine-image-quality-latest",
+  "grok-imagine-image",
+];
+const hermesImageModelIdSet = new Set(hermesImageModelIds);
+
 const modelRouteState = {
-  hermesImage: new Set(),
+  hermesImage: new Set(hermesImageModelIds),
   hermesVideo: new Set(),
   codexImage: new Set(Object.keys(codexImageModelLabels)),
   officialImage: new Set(["official:imagine-x-1", "official:imagine_h_1"]),
@@ -7010,7 +7018,8 @@ function applyOfficialModelCandidates(models = {}) {
 }
 
 function applyHermesModelCandidates(models = {}) {
-  const imageModels = models.hermes_image_candidates || [];
+  const rawImageModels = models.hermes_image_candidates?.length ? models.hermes_image_candidates : hermesImageModelIds;
+  const imageModels = rawImageModels.filter(model => hermesImageModelIdSet.has(model));
   const videoModels = models.hermes_video_candidates || [];
   modelRouteState.hermesImage = new Set(imageModels);
   modelRouteState.hermesVideo = new Set(videoModels);

@@ -50,18 +50,10 @@ HERMES_LOGIN_STATE = {
 HERMES_PROXY_PROCESS = None
 CODEX_PROXY_PROCESS = None
 HERMES_IMAGE_MODEL_CANDIDATES = [
-    "grok-imagine-image",
-    "grok-imagine-image-latest",
-    "grok-imagine-image-fast",
     "grok-imagine-image-quality",
-    "grok-imagine-image-quality-latest",
     "grok-imagine-image-pro",
-    "grok-imagine-image-pro-latest",
-    "grok-imagine-image-v2",
-    "grok-imagine-image-v3",
-    "imagine",
-    "imagine-image",
-    "imagine-image-edit",
+    "grok-imagine-image-quality-latest",
+    "grok-imagine-image",
 ]
 HERMES_VIDEO_MODEL_CANDIDATES = [
     "grok-imagine-video",
@@ -6897,7 +6889,7 @@ def health():
             "codex_image": cfg["codex_image_model"],
             "video": cfg["video_model"],
             "vision": cfg["vision_model"],
-            "hermes_image_candidates": unique_model_ids(HERMES_IMAGE_MODEL_CANDIDATES + cfg.get("hermes_discovered_image_models", [])),
+            "hermes_image_candidates": unique_model_ids(HERMES_IMAGE_MODEL_CANDIDATES),
             "hermes_video_candidates": unique_model_ids(HERMES_VIDEO_MODEL_CANDIDATES + cfg.get("hermes_discovered_video_models", [])),
             "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),
             "grok_official_video_candidates": unique_model_ids(GROK_OFFICIAL_VIDEO_MODEL_CANDIDATES),
@@ -7041,7 +7033,7 @@ def auth_status_payload(include_balance=False):
             "codex_image": cfg["codex_image_model"],
             "video": cfg["video_model"],
             "vision": cfg["vision_model"],
-            "hermes_image_candidates": unique_model_ids(HERMES_IMAGE_MODEL_CANDIDATES + cfg.get("hermes_discovered_image_models", [])),
+            "hermes_image_candidates": unique_model_ids(HERMES_IMAGE_MODEL_CANDIDATES),
             "hermes_video_candidates": unique_model_ids(HERMES_VIDEO_MODEL_CANDIDATES + cfg.get("hermes_discovered_video_models", [])),
             "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),
             "grok_official_video_candidates": unique_model_ids(GROK_OFFICIAL_VIDEO_MODEL_CANDIDATES),
@@ -7497,10 +7489,7 @@ def hermes_model_probe():
     if isinstance(user_candidates, str):
         user_candidates = re.split(r"[\s,]+", user_candidates)
     image_candidates = unique_model_ids(
-        list(user_candidates)
-        + HERMES_IMAGE_MODEL_CANDIDATES
-        + cfg.get("hermes_discovered_image_models", [])
-        + [model for model in listed if "image" in model or "imagine" in model]
+        [model for model in list(user_candidates) + HERMES_IMAGE_MODEL_CANDIDATES if model in HERMES_IMAGE_MODEL_CANDIDATES]
     )[:limit]
     video_candidates = unique_model_ids(
         list(user_candidates)
@@ -7520,8 +7509,8 @@ def hermes_model_probe():
     if kind in {"video", "both", "all"}:
         for model in video_candidates:
             video_results.append(hermes_probe_video_model(cfg, headers, model))
-    found_images = [item["model"] for item in image_results if item.get("ok")]
-    found_edits = [item["model"] for item in edit_results if item.get("accepted")]
+    found_images = [item["model"] for item in image_results if item.get("ok") and item.get("model") in HERMES_IMAGE_MODEL_CANDIDATES]
+    found_edits = [item["model"] for item in edit_results if item.get("accepted") and item.get("model") in HERMES_IMAGE_MODEL_CANDIDATES]
     found_videos = [item["model"] for item in video_results if item.get("ok")]
     settings = read_settings()
     if found_images or found_edits:
