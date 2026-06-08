@@ -1113,3 +1113,16 @@
   - monkeypatch 테스트로 `provider='hermes_proxy'`일 때 호출 URL이 `http://127.0.0.1:8645/v1/files`, `http://127.0.0.1:8645/v1/videos/extensions`가 되는지 확인했다.
   - 실제 영상 연장 요청은 크레딧 절약을 위해 실행하지 않았다.
 - 백업: `backups/hermes-v2v-extension-provider-20260608-200053`
+
+### 2026-06-08 20:21 KST - 검열 안내 토스트 전용 처리
+- 목표: 검열/모더레이션 관련 안내는 큰 오류 로그 팝업을 띄우지 않고 간단한 토스트로만 보여주도록 조정했다.
+- 변경:
+  - `static/app.js`: `moderationNoticeText()`를 추가해 `검열`, `moderated`, `moderation`, `content policy`, `policy violation` 등 모더레이션 계열 메시지를 감지하도록 했다.
+  - `static/app.js`: `showToast(message, true)` 호출 시 모더레이션 안내이면 `errorModal`을 열지 않고 토스트만 표시하도록 분기했다.
+  - `static/app.js`: 긴 모더레이션 문구는 짧은 안내 문구로 줄여 표시하도록 했다.
+  - `static/app.js`, `templates/index.html`, `static/service-worker.js`, `run_webgork_app.bat`: 정적 캐시 버전을 `20260605-v3-65` / `webgui-shell-v3-65`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - DOM 시뮬레이션으로 모더레이션 메시지는 `openErrorLog()`를 호출하지 않고, 일반 오류는 기존처럼 `openErrorLog()`를 호출하는지 확인했다.
+- 백업: `backups/moderation-toast-only-20260608-202149`

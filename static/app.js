@@ -283,8 +283,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-62";
-const appShellCacheName = "webgui-shell-v3-62";
+const appStaticVersion = "20260605-v3-65";
+const appShellCacheName = "webgui-shell-v3-65";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -309,13 +309,44 @@ window.addEventListener("resize", scheduleWorkspaceHeight);
 window.visualViewport?.addEventListener("resize", scheduleWorkspaceHeight);
 window.visualViewport?.addEventListener("scroll", scheduleWorkspaceHeight);
 
+function moderationNoticeText(...values) {
+  return values
+    .map(value => String(value || "").toLowerCase())
+    .some(value => (
+      value.includes("검열")
+      || value.includes("moderated")
+      || value.includes("moderation")
+      || value.includes("content_policy")
+      || value.includes("content policy")
+      || value.includes("policy_violation")
+      || value.includes("policy violation")
+      || value.includes("result.post.moderated")
+      || value.includes("was blocked or moderated")
+      || value.includes("result was moderated")
+    ));
+}
+
+function moderationToastMessage(message) {
+  const text = String(message || "").trim();
+  if (!moderationNoticeText(text)) return text;
+  return text.length > 140
+    ? "검열/정책 차단으로 결과를 저장하지 않았습니다. 프롬프트를 조정한 뒤 다시 시도해 주세요."
+    : text;
+}
+
 function showToast(message, isError = false) {
-  toast.textContent = message;
-  toast.classList.toggle("error", isError);
+  const errorLog = pendingErrorLog;
+  const isModerationNotice = isError && moderationNoticeText(message, errorLog?.message, errorLog?.detail);
+  toast.textContent = isModerationNotice ? moderationToastMessage(message) : message;
+  toast.classList.toggle("error", isError && !isModerationNotice);
   toast.hidden = false;
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => toast.hidden = true, 4200);
   if (isError) {
+    if (isModerationNotice) {
+      pendingErrorLog = null;
+      return;
+    }
     const errorLog = pendingErrorLog || {
       time: new Date().toISOString(),
       message: String(message || "오류가 발생했습니다."),
