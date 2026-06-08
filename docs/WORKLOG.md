@@ -1096,3 +1096,20 @@
   - Flask test client `/api/auth/status`에서 Hermes 이미지 후보가 4개만 내려오는지 확인.
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
 - 백업: `backups/hide-agent-limit-hermes-models-20260608-104109`
+
+### 2026-06-08 20:00 KST - Hermes Proxy 영상 공식 연장 provider 전달 수정
+- 목표: 템플릿 공식 연장 단계에서 요청 경로가 `Hermes Proxy`인 경우에도 기존 direct xAI OAuth/API 경로로 떨어지던 문제를 수정했다.
+- 확인:
+  - 2026-06-08 19:56~19:57 KST 템플릿 08단계는 `/api/v2v-extend` 502로 실패했다.
+  - 에러는 `Grok OAuth 로그인 또는 XAI_API_KEY 설정이 필요합니다.`였고, 이는 Hermes Proxy 인증 실패가 아니라 direct xAI 인증 경로로 들어갔다는 신호였다.
+  - `handle_v2v_extend("official")`가 `request_provider`를 읽고도 `live_video_extension()`에 provider를 전달하지 않아 `/files`, `/videos/extensions`, polling이 기본 direct provider를 사용하고 있었다.
+- 변경:
+  - `app.py`: `xai_upload_file(path, provider=None)`로 확장하고 provider가 `hermes_proxy`이면 Hermes base URL과 Hermes headers를 사용하도록 했다.
+  - `app.py`: `live_video_extension(..., provider=None)`로 확장하고 `/videos/extensions`와 polling에도 provider를 전달하도록 했다.
+  - `app.py`: `/api/v2v-extend` 공식 연장 분기에서 `effective_video_provider`를 `live_video_extension()`으로 넘기도록 했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - monkeypatch 테스트로 `provider='hermes_proxy'`일 때 호출 URL이 `http://127.0.0.1:8645/v1/files`, `http://127.0.0.1:8645/v1/videos/extensions`가 되는지 확인했다.
+  - 실제 영상 연장 요청은 크레딧 절약을 위해 실행하지 않았다.
+- 백업: `backups/hermes-v2v-extension-provider-20260608-200053`

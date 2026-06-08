@@ -6663,17 +6663,19 @@ def plan_generation_prompt(prompt, context):
     return planned, {"model": model, "usage": data.get("usage"), "base_url": base}
 
 
-def xai_upload_file(path):
+def xai_upload_file(path, provider=None):
     cfg = config()
+    provider = provider or cfg["provider"]
     if not path.exists():
         raise RuntimeError("업로드할 파일을 찾을 수 없습니다.")
     if path.stat().st_size > 48 * 1024 * 1024:
         raise RuntimeError("xAI Files API 업로드 한도(48MB)를 초과했습니다. 더 짧거나 작은 mp4를 사용해 주세요.")
     mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    base_url = cfg["hermes_base_url"] if provider == "hermes_proxy" and cfg.get("hermes_base_url") else cfg["api_base"]
     with path.open("rb") as handle:
         response = requests.post(
-            cfg["api_base"] + "/files",
-            headers=xai_auth_header(),
+            base_url + "/files",
+            headers=xai_auth_header(provider=provider),
             data={"purpose": "assistants"},
             files={"file": (path.name, handle, mime)},
             timeout=240,
@@ -6687,10 +6689,12 @@ def xai_upload_file(path):
     return file_id, payload
 
 
-def live_video_extension(prompt, video_path, duration, video_url=None, video_model=None):
+def live_video_extension(prompt, video_path, duration, video_url=None, video_model=None, provider=None):
     cfg = config()
+    provider = provider or cfg["provider"]
     model = valid_video_model(video_model, cfg)
-    file_id, file_payload = xai_upload_file(video_path)
+    base_url = cfg["hermes_base_url"] if provider == "hermes_proxy" and cfg.get("hermes_base_url") else cfg["api_base"]
+    file_id, file_payload = xai_upload_file(video_path, provider=provider)
     payload = {
         "model": model,
         "prompt": prompt,
@@ -6698,8 +6702,8 @@ def live_video_extension(prompt, video_path, duration, video_url=None, video_mod
         "duration": min(10, duration),
     }
     start, used_model, model_attempts = post_video_with_model_fallback(
-        cfg["api_base"] + "/videos/extensions",
-        xai_headers(),
+        base_url + "/videos/extensions",
+        xai_headers(provider=provider),
         payload,
         model,
         timeout=120,
@@ -6709,12 +6713,13 @@ def live_video_extension(prompt, video_path, duration, video_url=None, video_mod
     request_id = (start.json() or {}).get("request_id")
     if not request_id:
         raise RuntimeError("영상 연장 요청 ID를 받지 못했습니다.")
-    path, extra = poll_video_request(request_id)
+    path, extra = poll_video_request(request_id, provider=provider)
     extra["video_model"] = used_model
     if used_model != model:
         extra["requested_video_model"] = model
         extra["video_model_fallback_attempts"] = model_attempts
     extra["extension_api"] = True
+    extra["extension_provider"] = provider
     extra["input_video_url"] = video_url
     extra["input_mode"] = "file_id"
     extra["input_file_id"] = file_id
@@ -9125,7 +9130,14 @@ def handle_v2v_extend(strategy):
                 raise ValueError("공식 영상 연장 API는 mp4 원본 영상만 사용할 수 있습니다. 프레임 기반 연장을 사용해 주세요.")
             remote_url = source_video_remote_url(source_video)
             extension_source, trim_extra = trim_video_for_extension(source_video, connect_time)
-            official_path, extra = live_video_extension(extension_prompt, extension_source, duration, video_url=remote_url if not trim_extra.get("trimmed_for_connect_time") else None, video_model=video_model)
+            official_path, extra = live_video_extension(
+                extension_prompt,
+                extension_source,
+                duration,
+                video_url=remote_url if not trim_extra.get("trimmed_for_connect_time") else None,
+                video_model=video_model,
+                provider=effective_video_provider,
+            )
             source_duration = video_duration_seconds(extension_source)
             official_output_duration = video_duration_seconds(official_path)
             path, stitch_extra = compose_official_connected_result(
