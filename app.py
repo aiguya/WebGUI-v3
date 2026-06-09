@@ -6606,6 +6606,23 @@ def prompt_planner_base_and_headers():
     raise RuntimeError("Grok 4.2 프롬프트 플래너를 사용하려면 Hermes xAI OAuth 프록시를 연결해 주세요.")
 
 
+def xai_responses_base_headers_provider(provider_override=None):
+    cfg = config()
+    hermes_base = (cfg.get("hermes_base_url") or "").strip().rstrip("/")
+    provider = provider_override or ("hermes_proxy" if hermes_base else cfg["provider"])
+    if provider == "grok_official":
+        raise RuntimeError("프롬프트 추출은 Hermes xAI OAuth 프록시 또는 direct xAI 경로에서만 사용할 수 있습니다.")
+    if provider == "hermes_proxy":
+        if not hermes_base:
+            raise RuntimeError("프롬프트 추출에 사용할 Hermes xAI OAuth 프록시 연결이 필요합니다.")
+        if "127.0.0.1:8645" in hermes_base or "localhost:8645" in hermes_base:
+            ensure_hermes_proxy_background()
+        return hermes_base, xai_headers(provider="hermes_proxy"), "hermes_proxy"
+    if provider == "direct":
+        return cfg["api_base"].rstrip("/"), xai_headers(provider="direct"), "direct"
+    raise RuntimeError("프롬프트 추출은 Hermes xAI OAuth 프록시 또는 direct xAI 경로에서만 사용할 수 있습니다.")
+
+
 def plan_generation_prompt(prompt, context):
     cfg = config()
     model = cfg.get("prompt_planner_model") or "grok-4.20-0309-reasoning"
@@ -9240,7 +9257,10 @@ def reverse_prompt():
     try:
         source, source_item, source_from_library = save_reference_image_or_library("image", "reverse-prompt")
         cfg = config()
+        request_provider = None
         if cfg["mode"] == "live":
+            provider_override = request_provider_override(request.form)
+            base_url, headers, request_provider = xai_responses_base_headers_provider(provider_override)
             body = {
                 "model": cfg["vision_model"],
                 "input": [{
@@ -9251,7 +9271,7 @@ def reverse_prompt():
                     ],
                 }],
             }
-            response = requests.post(cfg["api_base"] + "/responses", headers=xai_headers(), json=body, timeout=240)
+            response = requests.post(base_url.rstrip("/") + "/responses", headers=headers, json=body, timeout=240)
             response.raise_for_status()
             data = response.json() or {}
             record_usage(data.get("usage"))
@@ -9264,6 +9284,7 @@ def reverse_prompt():
             "source_path": public_path(source),
             "source_item": source_item,
             "source_from_library": source_from_library,
+            "request_provider": request_provider,
         })
     except ValueError as exc:
         return safe_error(str(exc))

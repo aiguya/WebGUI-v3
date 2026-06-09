@@ -1126,3 +1126,18 @@
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
   - DOM 시뮬레이션으로 모더레이션 메시지는 `openErrorLog()`를 호출하지 않고, 일반 오류는 기존처럼 `openErrorLog()`를 호출하는지 확인했다.
 - 백업: `backups/moderation-toast-only-20260608-202149`
+
+### 2026-06-09 16:44 KST - 프롬프트 추출 Hermes Proxy 라우팅 수정
+- 목표: 그림 → 프롬프트 추출 기능이 Hermes Proxy 연결 상태에서도 direct xAI `/responses` 인증 경로로 빠지던 문제를 수정했다.
+- 확인:
+  - `/api/reverse-prompt`가 기존에는 `cfg["api_base"] + "/responses"`와 기본 `xai_headers()`를 사용해 provider가 `grok_official`일 때 `Grok OAuth 로그인 또는 XAI_API_KEY 설정이 필요합니다.` 오류가 날 수 있었다.
+  - 현재 설정은 `provider: grok_official`, `hermes_base_url: http://127.0.0.1:8645/v1` 조합이라 프롬프트 추출도 Hermes base URL을 우선 사용해야 한다.
+- 변경:
+  - `app.py`: `xai_responses_base_headers_provider()`를 추가해 Hermes base URL이 있으면 `/responses` 요청도 Hermes Proxy 헤더와 base URL을 사용하도록 했다.
+  - `app.py`: `/api/reverse-prompt`에서 provider override를 읽고, 응답에 `request_provider`를 함께 반환하도록 했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - monkeypatch 테스트로 실제 외부 요청 없이 `/api/reverse-prompt` 호출 URL이 `http://127.0.0.1:8645/v1/responses`, provider가 `hermes_proxy`로 잡히는 것을 확인했다.
+  - 실제 프롬프트 추출 요청은 크레딧/쿼터 사용 방지를 위해 실행하지 않았다.
+- 백업: `backups/before-reverse-prompt-hermes-20260609-163800`
