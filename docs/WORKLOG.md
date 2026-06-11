@@ -1360,3 +1360,16 @@
   - 실행 서버 기준 전체 라이브러리 compact 첫 호출 5.97초, 캐시 재호출 0.052초, 응답 2,547,789 bytes.
   - 서버를 새 코드로 재시작했고 `/health` 200 및 7863 LISTENING PID 32736 확인.
   - Browser 플러그인 검증은 기존과 같은 `spawn setup refresh` 오류로 진행하지 못했다.
+
+### 2026-06-12 04:29 KST - 릴리즈 라이브러리 불러오기 성능 개선 반영
+- 목표: 원본 앱에 적용한 라이브러리 선택창 경량 조회/캐시 개선을 Hermes-only 릴리즈 전달본에도 반영한다.
+- 변경:
+  - `tools/build_release_no_official.py`: 릴리즈 정적 스탬프를 `20260612-release-hermes-04`로 올리고, 원본 `20260612-v3-70` / `webgui-shell-v3-70`도 릴리즈 스탬프로 치환하도록 보정했다.
+  - `release/WebGrok-v3-Hermes`: 빌드 스크립트로 릴리즈 폴더를 재생성해 `LIBRARY_CACHE`, compact `/api/library`, 선택창용 `fetchPickerItems()` 개선이 포함되도록 했다.
+  - `release/WebGrok-v3-Hermes-20260611.zip`: 최신 릴리즈 폴더 기준으로 다시 압축했다.
+- 검증:
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - 릴리즈 Flask test client로 `/`, `/health`, `/api/library?media_type=image&scan=0&compact=1&limit=20` 응답을 확인했다.
+  - 릴리즈 폴더에서 `20260612-release-hermes-04`, `LIBRARY_CACHE`, `fetchPickerItems`, `compact=1` 포함을 확인했다.
+  - zip 내부에 `__pycache__`, `.webgork-private`, `.chrome`, OAuth token류가 포함되지 않았음을 확인했다.

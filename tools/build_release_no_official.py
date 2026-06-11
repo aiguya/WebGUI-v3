@@ -9,7 +9,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260611-release-hermes-03"
+STATIC_VERSION = "20260612-release-hermes-04"
+SOURCE_STATIC_VERSIONS = [
+    "20260605-v3-68",
+    "20260612-v3-69",
+    "20260612-v3-70",
+]
+SOURCE_SHELL_CACHE_NAMES = [
+    "webgui-shell-v3-68",
+    "webgui-shell-v3-69",
+    "webgui-shell-v3-70",
+]
+
+
+def apply_release_static_version(text):
+    for version in SOURCE_STATIC_VERSIONS:
+        text = text.replace(version, STATIC_VERSION)
+    for cache_name in SOURCE_SHELL_CACHE_NAMES:
+        text = text.replace(cache_name, f"webgui-shell-{STATIC_VERSION}")
+    return text
 
 
 def copy_tree(src, dst):
@@ -103,15 +121,14 @@ def strip_html_official_quota(html):
         html,
         count=1,
     )
-    html = html.replace("20260605-v3-68", STATIC_VERSION)
+    html = apply_release_static_version(html)
     html = html.replace(r"C:\Users\aiguy\Pictures\WebGUI-v3", r"C:\WebGrok\media")
     html = html.replace("실행 시 Hermes/Grok 쿼터가 사용될 수 있습니다.", "실행 시 Hermes 요청량이 사용될 수 있습니다.")
     return html
 
 
 def strip_js_official_quota(js):
-    js = js.replace("20260605-v3-68", STATIC_VERSION)
-    js = js.replace("webgui-shell-v3-68", f"webgui-shell-{STATIC_VERSION}")
+    js = apply_release_static_version(js)
     js = js.replace("let lastQuotaRefresh = 0;\n", "")
     js = js.replace("  refreshQuota();\n", "")
     js = re.sub(r"\n\s*refreshQuota\(true\);", "", js)
@@ -725,9 +742,7 @@ def main():
     write(RELEASE_ROOT / "static" / "app.js", strip_js_official_quota(read(RELEASE_ROOT / "static" / "app.js")))
     write(
         RELEASE_ROOT / "static" / "service-worker.js",
-        read(RELEASE_ROOT / "static" / "service-worker.js")
-        .replace("20260605-v3-68", STATIC_VERSION)
-        .replace("webgui-shell-v3-68", f"webgui-shell-{STATIC_VERSION}"),
+        apply_release_static_version(read(RELEASE_ROOT / "static" / "service-worker.js")),
     )
     write_clean_settings()
     write_release_media_seed()
