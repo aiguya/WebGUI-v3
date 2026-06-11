@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260605-v3-67">
+  <link rel="stylesheet" href="/static/styles.css?v=20260605-v3-68">
 </head>
 <body>
   <header class="topbar">
@@ -1093,10 +1093,31 @@
             <div class="button-row">
               <button type="submit">Provider 저장</button>
               <button type="button" id="testHermesProxy" class="secondary">Hermes 연결 테스트</button>
-              <button type="button" id="probeHermesModels" class="secondary">Hermes 모델 탐색</button>
             </div>
           </form>
           <p class="note">Version 3는 Hermes Agent가 OAuth 인증과 Grok 호출을 담당하고, 이 앱은 Proxy endpoint만 호출하는 구성을 권장합니다.</p>
+        </div>
+        <div class="settings-card model-discovery-card">
+          <h2>Hermes 모델 검색</h2>
+          <p class="note">실제 생성 요청으로 후보 모델을 확인합니다. 실행 시 Hermes/Grok 쿼터가 사용될 수 있습니다.</p>
+          <div class="inline-form">
+            <label>검색 범위</label>
+            <select id="modelDiscoveryKind">
+              <option value="image">이미지 생성</option>
+              <option value="edit">이미지 편집</option>
+              <option value="video">이미지→영상</option>
+              <option value="all">전체</option>
+            </select>
+            <label>후보 모델</label>
+            <textarea id="modelDiscoveryCandidates" rows="4" placeholder="한 줄에 하나씩 입력하거나 쉼표로 구분하세요. 비워두면 Hermes /models와 기본 후보를 사용합니다."></textarea>
+            <label>최대 검사 수</label>
+            <input type="number" id="modelDiscoveryLimit" min="1" max="80" value="20">
+            <div class="button-row">
+              <button type="button" id="probeHermesModels" class="secondary">모델 검색</button>
+              <button type="button" id="addDiscoveredHermesModels" class="secondary" disabled>선택 모델 추가</button>
+            </div>
+          </div>
+          <div id="modelDiscoveryResults" class="model-discovery-results" aria-live="polite"></div>
         </div>
         <div class="settings-card">
           <h2>직접 OAuth 로그인</h2>
@@ -1237,6 +1258,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260605-v3-67"></script>
+  <script src="/static/app.js?v=20260605-v3-68"></script>
 </body>
 </html>

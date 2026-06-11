@@ -190,7 +190,6 @@ const hermesImageModelIds = [
   "grok-imagine-image-quality-latest",
   "grok-imagine-image",
 ];
-const hermesImageModelIdSet = new Set(hermesImageModelIds);
 
 const modelRouteState = {
   hermesImage: new Set(hermesImageModelIds),
@@ -283,8 +282,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-67";
-const appShellCacheName = "webgui-shell-v3-67";
+const appStaticVersion = "20260605-v3-68";
+const appShellCacheName = "webgui-shell-v3-68";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -7188,7 +7187,7 @@ function applyOfficialModelCandidates(models = {}) {
 
 function applyHermesModelCandidates(models = {}) {
   const rawImageModels = models.hermes_image_candidates?.length ? models.hermes_image_candidates : hermesImageModelIds;
-  const imageModels = rawImageModels.filter(model => hermesImageModelIdSet.has(model));
+  const imageModels = rawImageModels.filter(Boolean);
   const videoModels = models.hermes_video_candidates || [];
   modelRouteState.hermesImage = new Set(imageModels);
   modelRouteState.hermesVideo = new Set(videoModels);
@@ -7403,32 +7402,145 @@ document.querySelector("#testHermesProxy")?.addEventListener("click", async () =
   }
 });
 
+function splitModelCandidateInput(value) {
+  return String(value || "")
+    .split(/[\s,]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function modelProbeSuccessfulModels(data = {}) {
+  return [
+    ...(data.found_image_models || []),
+    ...(data.found_edit_models || []),
+    ...(data.found_video_models || []),
+  ];
+}
+
+function updateModelDiscoveryAddState() {
+  const button = document.querySelector("#addDiscoveredHermesModels");
+  if (!button) return;
+  button.disabled = !document.querySelector("#modelDiscoveryResults [data-probe-model]:checked");
+}
+
+function renderModelProbeGroup(kind, label, results = []) {
+  if (!results.length) return "";
+  const rows = results.map(item => {
+    const ok = Boolean(item.ok);
+    const detail = item.detail ? `<small>${escapeHtml(String(item.detail).slice(0, 260))}</small>` : "";
+    return `
+      <tr class="${ok ? "is-ok" : "is-failed"}">
+        <td><input type="checkbox" data-probe-kind="${escapeHtml(kind)}" data-probe-model="${escapeHtml(item.model)}"${ok ? " checked" : " disabled"}></td>
+        <td><strong>${escapeHtml(item.model)}</strong>${detail}</td>
+        <td>${ok ? "정상" : "실패"}</td>
+        <td>${escapeHtml(item.status_code ?? "")}</td>
+      </tr>`;
+  }).join("");
+  return `
+    <section class="model-probe-group">
+      <h3>${escapeHtml(label)}</h3>
+      <table>
+        <thead><tr><th></th><th>모델</th><th>결과</th><th>HTTP</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </section>`;
+}
+
+function renderHermesModelProbeResults(data = {}) {
+  const host = document.querySelector("#modelDiscoveryResults");
+  if (!host) return;
+  const groups = [
+    renderModelProbeGroup("image", "이미지 생성", data.image_results || []),
+    renderModelProbeGroup("edit", "이미지 편집", data.edit_results || []),
+    renderModelProbeGroup("video", "이미지→영상", data.video_results || []),
+  ].filter(Boolean).join("");
+  const found = modelProbeSuccessfulModels(data);
+  const listed = data.listed_models?.length
+    ? `<p class="note">Hermes /models 응답: ${escapeHtml(data.listed_models.slice(0, 24).join(", "))}${data.listed_models.length > 24 ? " ..." : ""}</p>`
+    : "";
+  const errors = data.listed_errors?.length
+    ? `<p class="note danger-text">/models 조회 참고 오류: ${escapeHtml(data.listed_errors.join(" · "))}</p>`
+    : "";
+  host.innerHTML = `
+    <div class="model-probe-summary">
+      <strong>${found.length ? `정상 응답 ${found.length}개` : "정상 응답 모델 없음"}</strong>
+      <span>${escapeHtml(found.join(", ") || "추가할 모델을 찾지 못했습니다.")}</span>
+    </div>
+    ${listed}
+    ${errors}
+    ${groups || `<p class="note">검색 결과가 없습니다.</p>`}`;
+  updateModelDiscoveryAddState();
+}
+
+function selectedHermesProbeModels() {
+  const selected = { image_models: [], edit_models: [], video_models: [] };
+  document.querySelectorAll("#modelDiscoveryResults [data-probe-model]:checked").forEach(input => {
+    const bucket = input.dataset.probeKind === "video"
+      ? "video_models"
+      : (input.dataset.probeKind === "edit" ? "edit_models" : "image_models");
+    selected[bucket].push(input.dataset.probeModel);
+  });
+  return selected;
+}
+
+document.querySelector("#modelDiscoveryResults")?.addEventListener("change", updateModelDiscoveryAddState);
+
 document.querySelector("#probeHermesModels")?.addEventListener("click", async () => {
-  if (!confirm("Hermes 이미지 모델 후보를 실제 생성 요청으로 테스트합니다. 계속할까요?")) return;
+  if (!confirm("실제 Hermes 생성/편집/영상 요청으로 모델을 검사합니다. 쿼터나 크레딧이 사용될 수 있습니다. 계속할까요?")) return;
   const button = document.querySelector("#probeHermesModels");
   const original = button.textContent;
+  const kind = document.querySelector("#modelDiscoveryKind")?.value || "image";
+  const limit = Math.max(1, Math.min(80, Number(document.querySelector("#modelDiscoveryLimit")?.value || 20)));
+  const candidates = splitModelCandidateInput(document.querySelector("#modelDiscoveryCandidates")?.value || "");
   button.disabled = true;
-  button.textContent = "탐색 중";
+  button.textContent = "검색 중";
   try {
     const response = await fetch("/api/hermes/model-probe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind: "image", limit: 12 }),
+      body: JSON.stringify({ kind, limit, candidates }),
     });
     const data = await readJsonResponse(response, "요청 실패");
-    if (!data.ok) throw new Error(data.error || data.detail || "Hermes 모델 탐색 실패");
-    applyHermesModelCandidates({
-      hermes_image_candidates: data.found_image_models || [],
-      hermes_video_candidates: data.found_video_models || [],
-    });
-    const found = [...(data.found_image_models || []), ...(data.found_edit_models || []), ...(data.found_video_models || [])];
-    showToast(found.length ? `Hermes 모델 ${found.length}개 확인: ${found.join(", ")}` : "성공한 Hermes 모델을 찾지 못했습니다.", !found.length);
-    await loadHealth();
+    if (!data.ok) throw new Error(data.error || data.detail || "Hermes 모델 검색 실패");
+    renderHermesModelProbeResults(data);
+    const found = modelProbeSuccessfulModels(data);
+    showToast(found.length ? `정상 응답 모델 ${found.length}개 확인` : "정상 응답 모델을 찾지 못했습니다.", !found.length);
   } catch (error) {
     showToast(error.message, true);
   } finally {
     button.disabled = false;
     button.textContent = original;
+  }
+});
+
+document.querySelector("#addDiscoveredHermesModels")?.addEventListener("click", async () => {
+  const selected = selectedHermesProbeModels();
+  const total = selected.image_models.length + selected.edit_models.length + selected.video_models.length;
+  if (!total) {
+    showToast("추가할 모델을 선택해 주세요.", true);
+    return;
+  }
+  const button = document.querySelector("#addDiscoveredHermesModels");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "추가 중";
+  try {
+    const response = await fetch("/api/hermes/models/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(selected),
+    });
+    const data = await readJsonResponse(response, "요청 실패");
+    if (!data.ok) throw new Error(data.error || data.detail || "모델 추가 실패");
+    applyHermesModelCandidates(data.models || {});
+    await loadHealth();
+    showToast(`Hermes 모델 ${total}개를 목록에 추가했습니다.`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+    updateModelDiscoveryAddState();
   }
 });
 

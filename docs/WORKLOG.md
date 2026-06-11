@@ -1177,3 +1177,26 @@
   - 실제 서버를 `http://127.0.0.1:7863`에 재시작하고 `/health`, `/?v=20260605-v3-67`, `/static/app.js?v=20260605-v3-67` 응답을 확인했다.
   - 실제 영상 생성 요청은 쿼터/크레딧 보호를 위해 실행하지 않았다.
 - 백업: `backups/before-video-model-route-strict-20260611-145244`
+
+### 2026-06-11 15:11 KST - 설정 탭 Hermes 신규 모델 검색/추가
+- 목표: 설정 탭에서 Hermes Proxy 기반 이미지 생성, 이미지 편집, 이미지→영상 모델 후보를 실제 요청으로 검사하고, 정상 응답한 모델을 사용자가 선택해 목록에 추가할 수 있게 했다.
+- 변경:
+  - `templates/index.html`: 설정 탭에 `Hermes 모델 검색` 카드를 추가했다. 검색 범위, 후보 모델 입력, 최대 검사 수, 검색/선택 추가 버튼, 결과 영역을 포함한다.
+  - `app.py`: `/api/hermes/model-probe`가 사용자 입력 후보와 Hermes `/models` 응답까지 검사하도록 확장했다. 검색 결과는 기본적으로 저장하지 않고, `save=true`일 때만 저장하도록 분리했다.
+  - `app.py`: `/api/hermes/models/add`를 추가해 체크된 정상 응답 모델만 `hermes_discovered_image_models`, `hermes_discovered_video_models`에 저장하도록 했다.
+  - `app.py`: 이미지/편집/영상 후보 응답을 `hermes_model_candidates_payload()`로 통합하고, 저장된 신규 이미지/편집 모델도 드롭다운 후보에 포함되도록 했다.
+  - `app.py`: 영상 모델 probe는 앱의 이미지→영상 흐름에 맞춰 1px 테스트 이미지를 `reference_images`로 포함해 검사하도록 했다.
+  - `static/app.js`: 검색 결과 표, 성공 모델 체크박스, 선택 모델 추가 동작을 구현했다. 검색만으로는 기존 목록을 바꾸지 않고, 추가 버튼을 눌렀을 때만 모델 목록을 갱신한다.
+  - `static/app.js`: Hermes 이미지 후보의 고정 4개 필터를 풀어 사용자가 추가한 신규 모델이 이미지 생성/편집 드롭다운에 표시되도록 했다.
+  - `static/styles.css`, `templates/index.html`, `static/service-worker.js`, `run_webgork_app.bat`: 모델 검색 결과 UI와 정적 캐시 버전 `20260605-v3-68` / `webgui-shell-v3-68`을 반영했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - Flask test client로 `/?v=20260605-v3-68`, `/static/app.js?v=20260605-v3-68`에 모델 검색 UI/JS가 포함되는 것을 확인했다.
+  - 임시 설정 파일을 사용해 `/api/hermes/models/add`가 이미지/편집/영상 모델을 저장 후보로 반환하는 것을 확인했다.
+  - monkeypatch 테스트로 `/api/hermes/model-probe`가 정상 응답 모델을 반환하되 기본적으로 실제 설정 파일에 저장하지 않는 것을 확인했다.
+  - 실제 서버를 `http://127.0.0.1:7863`에 재시작하고 `/health`, `/?v=20260605-v3-68`, `/api/hermes/models/add` 응답을 확인했다.
+  - 인앱 브라우저 검증은 브라우저 연결 프로세스가 샌드박스에서 시작 중 종료되어 진행하지 못했고, HTTP/DOM 문자열 검증으로 대체했다.
+  - 실제 생성/편집/영상 probe 요청은 쿼터/크레딧 보호를 위해 실행하지 않았다.
+- 백업: `backups/before-20260611-1500-model-discovery-ui`

@@ -8068,6 +8068,89 @@ html body .queue-job.is-review .queue-actions {
   color: var(--muted);
 }
 
+.model-discovery-card textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.model-discovery-results {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.model-probe-summary {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .04);
+}
+
+.model-probe-summary span {
+  min-width: 0;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.model-probe-group {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 8px;
+}
+
+.model-probe-group h3 {
+  margin: 0;
+  padding: 9px 11px;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(255, 255, 255, .05);
+}
+
+.model-probe-group table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.model-probe-group th,
+.model-probe-group td {
+  padding: 8px 10px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+  text-align: left;
+  vertical-align: top;
+}
+
+.model-probe-group th:first-child,
+.model-probe-group td:first-child {
+  width: 34px;
+}
+
+.model-probe-group strong,
+.model-probe-group small {
+  display: block;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.model-probe-group small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.model-probe-group tr.is-ok td:nth-child(3) {
+  color: #80f0a0;
+}
+
+.model-probe-group tr.is-failed td:nth-child(3) {
+  color: #ff9f9f;
+}
+
+.danger-text {
+  color: #ffb0b0;
+}
+
 .project-badge {
   display: inline-flex;
   width: fit-content;

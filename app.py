@@ -95,6 +95,34 @@ def unique_model_ids(values):
     return result
 
 
+def request_model_id_list(value):
+    if isinstance(value, str):
+        return re.split(r"[\s,]+", value)
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return []
+
+
+def hermes_model_candidates_payload(cfg):
+    return {
+        "image": cfg["image_model"],
+        "openai_image": cfg["openai_image_model"],
+        "codex_image": cfg["codex_image_model"],
+        "video": cfg["video_model"],
+        "vision": cfg["vision_model"],
+        "hermes_image_candidates": unique_model_ids(
+            HERMES_IMAGE_MODEL_CANDIDATES + cfg.get("hermes_discovered_image_models", [])
+        ),
+        "hermes_video_candidates": unique_model_ids(
+            HERMES_VIDEO_MODEL_CANDIDATES + cfg.get("hermes_discovered_video_models", [])
+        ),
+        "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),
+        "grok_official_video_candidates": unique_model_ids(GROK_OFFICIAL_VIDEO_MODEL_CANDIDATES),
+        "hermes_discovered_image": cfg.get("hermes_discovered_image_models", []),
+        "hermes_discovered_video": cfg.get("hermes_discovered_video_models", []),
+    }
+
+
 def read_settings():
     try:
         return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
@@ -6898,19 +6926,7 @@ def health():
         "management_configured": bool(cfg["management_key"] and cfg["team_id"]),
         "media_root": str(media_root()),
         "usage": usage,
-        "models": {
-            "image": cfg["image_model"],
-            "openai_image": cfg["openai_image_model"],
-            "codex_image": cfg["codex_image_model"],
-            "video": cfg["video_model"],
-            "vision": cfg["vision_model"],
-            "hermes_image_candidates": unique_model_ids(HERMES_IMAGE_MODEL_CANDIDATES),
-            "hermes_video_candidates": unique_model_ids(HERMES_VIDEO_MODEL_CANDIDATES + cfg.get("hermes_discovered_video_models", [])),
-            "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),
-            "grok_official_video_candidates": unique_model_ids(GROK_OFFICIAL_VIDEO_MODEL_CANDIDATES),
-            "hermes_discovered_image": cfg.get("hermes_discovered_image_models", []),
-            "hermes_discovered_video": cfg.get("hermes_discovered_video_models", []),
-        },
+        "models": hermes_model_candidates_payload(cfg),
         "last_error": LAST_ERROR,
     })
 
@@ -7042,19 +7058,7 @@ def auth_status_payload(include_balance=False):
         "management_configured": bool(cfg["management_key"] and cfg["team_id"]),
         "mode": cfg["mode"],
         "media_root": str(media_root()),
-        "models": {
-            "image": cfg["image_model"],
-            "openai_image": cfg["openai_image_model"],
-            "codex_image": cfg["codex_image_model"],
-            "video": cfg["video_model"],
-            "vision": cfg["vision_model"],
-            "hermes_image_candidates": unique_model_ids(HERMES_IMAGE_MODEL_CANDIDATES),
-            "hermes_video_candidates": unique_model_ids(HERMES_VIDEO_MODEL_CANDIDATES + cfg.get("hermes_discovered_video_models", [])),
-            "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),
-            "grok_official_video_candidates": unique_model_ids(GROK_OFFICIAL_VIDEO_MODEL_CANDIDATES),
-            "hermes_discovered_image": cfg.get("hermes_discovered_image_models", []),
-            "hermes_discovered_video": cfg.get("hermes_discovered_video_models", []),
-        },
+        "models": hermes_model_candidates_payload(cfg),
         "usage": read_usage(),
         "balance": None,
         "balance_error": None,
@@ -7415,6 +7419,35 @@ def hermes_listed_models(cfg, headers):
     return unique_model_ids(models), errors
 
 
+def hermes_model_kind_hint(model, kind):
+    value = str(model or "").strip().lower()
+    if not value:
+        return False
+    if kind in {"image", "edit"}:
+        return (
+            "video" not in value
+            and ("image" in value or "imagine" in value)
+            or value in {item.lower() for item in HERMES_IMAGE_MODEL_CANDIDATES}
+        )
+    if kind == "video":
+        return (
+            "video" in value
+            or "i2v" in value
+            or value in {item.lower() for item in HERMES_VIDEO_MODEL_CANDIDATES}
+        )
+    return False
+
+
+def hermes_probe_candidates(user_candidates, listed, cfg, kind, limit):
+    user_models = unique_model_ids(user_candidates)
+    listed_models = [model for model in listed if hermes_model_kind_hint(model, kind)]
+    if kind == "video":
+        defaults = HERMES_VIDEO_MODEL_CANDIDATES + cfg.get("hermes_discovered_video_models", [])
+    else:
+        defaults = HERMES_IMAGE_MODEL_CANDIDATES + cfg.get("hermes_discovered_image_models", [])
+    return unique_model_ids(user_models + defaults + listed_models)[:limit]
+
+
 def hermes_probe_image_model(cfg, headers, model):
     payload = {
         "model": model,
@@ -7465,6 +7498,7 @@ def hermes_probe_video_model(cfg, headers, model):
     payload = {
         "model": model,
         "prompt": "model capability probe: slow camera drift over a plain gray square",
+        "reference_images": [{"url": HERMES_PROBE_IMAGE_DATA_URI}],
         "duration": 2,
         "resolution": "480p",
     }
@@ -7503,15 +7537,10 @@ def hermes_model_probe():
     user_candidates = data.get("candidates") or []
     if isinstance(user_candidates, str):
         user_candidates = re.split(r"[\s,]+", user_candidates)
-    image_candidates = unique_model_ids(
-        [model for model in list(user_candidates) + HERMES_IMAGE_MODEL_CANDIDATES if model in HERMES_IMAGE_MODEL_CANDIDATES]
-    )[:limit]
-    video_candidates = unique_model_ids(
-        list(user_candidates)
-        + HERMES_VIDEO_MODEL_CANDIDATES
-        + cfg.get("hermes_discovered_video_models", [])
-        + [model for model in listed if "video" in model or "imagine" in model]
-    )[:limit]
+    save_results = str(data.get("save") or "").strip().lower() in {"1", "true", "yes", "on"}
+    image_candidates = hermes_probe_candidates(user_candidates, listed, cfg, "image", limit)
+    edit_candidates = hermes_probe_candidates(user_candidates, listed, cfg, "edit", limit)
+    video_candidates = hermes_probe_candidates(user_candidates, listed, cfg, "video", limit)
     image_results = []
     edit_results = []
     video_results = []
@@ -7519,38 +7548,70 @@ def hermes_model_probe():
         for model in image_candidates:
             image_results.append(hermes_probe_image_model(cfg, headers, model))
     if kind in {"edit", "all"}:
-        for model in image_candidates:
+        for model in edit_candidates:
             edit_results.append(hermes_probe_edit_model(cfg, headers, model))
     if kind in {"video", "both", "all"}:
         for model in video_candidates:
             video_results.append(hermes_probe_video_model(cfg, headers, model))
-    found_images = [item["model"] for item in image_results if item.get("ok") and item.get("model") in HERMES_IMAGE_MODEL_CANDIDATES]
-    found_edits = [item["model"] for item in edit_results if item.get("accepted") and item.get("model") in HERMES_IMAGE_MODEL_CANDIDATES]
+    found_images = [item["model"] for item in image_results if item.get("ok")]
+    found_edits = [item["model"] for item in edit_results if item.get("ok")]
     found_videos = [item["model"] for item in video_results if item.get("ok")]
     settings = read_settings()
-    if found_images or found_edits:
+    if save_results and (found_images or found_edits):
         settings["hermes_discovered_image_models"] = unique_model_ids(
             settings.get("hermes_discovered_image_models", []) + found_images + found_edits
         )
-    if found_videos:
+    if save_results and found_videos:
         settings["hermes_discovered_video_models"] = unique_model_ids(
             settings.get("hermes_discovered_video_models", []) + found_videos
         )
-    if found_images or found_videos:
+    if save_results and (found_images or found_edits or found_videos):
         write_settings(settings)
+    saved_models = hermes_model_candidates_payload(config()) if save_results else None
     return jsonify({
         "ok": True,
         "kind": kind,
+        "saved": save_results,
         "listed_models": listed,
         "listed_errors": listed_errors,
         "image_candidates": image_candidates,
-        "video_candidates": video_candidates if kind in {"video", "both"} else [],
+        "edit_candidates": edit_candidates,
+        "video_candidates": video_candidates if kind in {"video", "both", "all"} else [],
         "image_results": image_results,
         "edit_results": edit_results,
         "video_results": video_results,
         "found_image_models": found_images,
         "found_edit_models": found_edits,
         "found_video_models": found_videos,
+        "models": saved_models,
+    })
+
+
+@app.post("/api/hermes/models/add")
+def hermes_models_add():
+    data = request.get_json(silent=True) or {}
+    image_models = unique_model_ids(
+        request_model_id_list(data.get("image_models")) + request_model_id_list(data.get("edit_models"))
+    )
+    video_models = unique_model_ids(request_model_id_list(data.get("video_models")))
+    if not image_models and not video_models:
+        return safe_error("추가할 모델을 선택해 주세요.", status=400)
+    settings = read_settings()
+    if image_models:
+        settings["hermes_discovered_image_models"] = unique_model_ids(
+            settings.get("hermes_discovered_image_models", []) + image_models
+        )
+    if video_models:
+        settings["hermes_discovered_video_models"] = unique_model_ids(
+            settings.get("hermes_discovered_video_models", []) + video_models
+        )
+    write_settings(settings)
+    cfg = config()
+    return jsonify({
+        "ok": True,
+        "added_image_models": image_models,
+        "added_video_models": video_models,
+        "models": hermes_model_candidates_payload(cfg),
     })
 
 
