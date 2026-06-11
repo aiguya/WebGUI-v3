@@ -2,6 +2,7 @@ import json
 import re
 import shutil
 import ast
+import subprocess
 from pathlib import Path
 
 
@@ -367,6 +368,186 @@ endlocal
     write(RELEASE_ROOT / "RUN_WEBGROK_HERMES_ONLY.bat", text)
 
 
+def build_chrome_app_launcher():
+    source = RELEASE_ROOT / "work" / "WebGrokChromeAppLauncher.cs"
+    exe = RELEASE_ROOT / "WEBGROK_CHROME_APP.exe"
+    csc = Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
+    if not csc.exists():
+        csc = Path(r"C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe")
+    code = f'''using System;
+using System.Diagnostics;
+using System.IO;
+using System.Net;
+using System.Threading;
+using System.Windows.Forms;
+
+internal static class WebGrokChromeAppLauncher
+{{
+    private const string Port = "7863";
+    private const string HealthUrl = "http://127.0.0.1:" + Port + "/health";
+    private const string AppUrl = "http://127.0.0.1:" + Port + "/?v={STATIC_VERSION}";
+
+    [STAThread]
+    private static int Main()
+    {{
+        string root = AppDomain.CurrentDomain.BaseDirectory;
+        try
+        {{
+            if (!HealthOk())
+            {{
+                StartServer(root);
+            }}
+            if (!WaitForHealth())
+            {{
+                MessageBox.Show("WebGrok 서버를 시작하지 못했습니다. RUN_WEBGROK_HERMES_ONLY.bat을 한 번 실행해 의존성을 설치한 뒤 다시 시도해 주세요.", "WebGrok Chrome App");
+                return 1;
+            }}
+            OpenChromeApp();
+            return 0;
+        }}
+        catch (Exception ex)
+        {{
+            MessageBox.Show(ex.Message, "WebGrok Chrome App");
+            return 1;
+        }}
+    }}
+
+    private static bool HealthOk()
+    {{
+        try
+        {{
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(HealthUrl);
+            request.Method = "GET";
+            request.Timeout = 1500;
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            {{
+                return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
+            }}
+        }}
+        catch
+        {{
+            return false;
+        }}
+    }}
+
+    private static bool WaitForHealth()
+    {{
+        for (int i = 0; i < 80; i++)
+        {{
+            if (HealthOk()) return true;
+            Thread.Sleep(500);
+        }}
+        return false;
+    }}
+
+    private static void StartServer(string root)
+    {{
+        string python = FindPython();
+        if (String.IsNullOrEmpty(python))
+        {{
+            throw new InvalidOperationException("Python을 찾을 수 없습니다. Python 3.11 이상을 설치하거나 RUN_WEBGROK_HERMES_ONLY.bat을 사용해 주세요.");
+        }}
+
+        ProcessStartInfo info = new ProcessStartInfo();
+        info.WorkingDirectory = root;
+        info.UseShellExecute = false;
+        info.CreateNoWindow = true;
+        info.WindowStyle = ProcessWindowStyle.Minimized;
+        info.EnvironmentVariables["WEBGORK_OPEN_BROWSER"] = "0";
+        info.EnvironmentVariables["WEBGORK_PORT"] = Port;
+        if (Path.GetFileName(python).Equals("py.exe", StringComparison.OrdinalIgnoreCase))
+        {{
+            info.FileName = python;
+            info.Arguments = "-3 work\\\\run_server.py";
+        }}
+        else
+        {{
+            info.FileName = python;
+            info.Arguments = "work\\\\run_server.py";
+        }}
+        Process.Start(info);
+    }}
+
+    private static string FindPython()
+    {{
+        string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Python", "pythoncore-3.14-64", "python.exe");
+        if (File.Exists(local)) return local;
+        string py = FindOnPath("py.exe");
+        if (!String.IsNullOrEmpty(py)) return py;
+        return FindOnPath("python.exe");
+    }}
+
+    private static string FindChrome()
+    {{
+        string[] candidates = new string[]
+        {{
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Google", "Chrome", "Application", "chrome.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Google", "Chrome", "Application", "chrome.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Google", "Chrome", "Application", "chrome.exe")
+        }};
+        foreach (string item in candidates)
+        {{
+            if (File.Exists(item)) return item;
+        }}
+        return FindOnPath("chrome.exe");
+    }}
+
+    private static string FindOnPath(string fileName)
+    {{
+        string path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (string dir in path.Split(Path.PathSeparator))
+        {{
+            try
+            {{
+                if (String.IsNullOrWhiteSpace(dir)) continue;
+                string full = Path.Combine(dir.Trim(), fileName);
+                if (File.Exists(full)) return full;
+            }}
+            catch {{ }}
+        }}
+        return "";
+    }}
+
+    private static void OpenChromeApp()
+    {{
+        string chrome = FindChrome();
+        if (!String.IsNullOrEmpty(chrome))
+        {{
+            ProcessStartInfo info = new ProcessStartInfo();
+            info.FileName = chrome;
+            info.Arguments = "--app=\\"" + AppUrl + "\\" --new-window";
+            info.UseShellExecute = false;
+            Process.Start(info);
+            return;
+        }}
+        ProcessStartInfo fallback = new ProcessStartInfo(AppUrl);
+        fallback.UseShellExecute = true;
+        Process.Start(fallback);
+    }}
+}}
+'''
+    write(source, code)
+    if not csc.exists():
+        print("Chrome app launcher skipped: csc.exe not found")
+        return
+    subprocess.run(
+        [
+            str(csc),
+            "/nologo",
+            "/target:winexe",
+            "/platform:anycpu",
+            "/reference:System.Windows.Forms.dll",
+            f"/out:{exe}",
+            str(source),
+        ],
+        check=True,
+    )
+    try:
+        source.unlink()
+    except OSError:
+        pass
+
+
 def write_release_notes():
     text = f"""# WebGrok v3 Hermes-only Release
 
@@ -376,6 +557,7 @@ Included:
 - Hermes Proxy based image generation, image editing, image-to-video, queue, templates, library, and local media tools.
 - A sanitized sample video template JSON. No sample image or video assets are bundled.
 - `RUN_WEBGROK_HERMES_ONLY.bat` one-click launcher.
+- `WEBGROK_CHROME_APP.exe` one-click Chrome app-mode launcher.
 
 Excluded:
 - Homepage quota UI and related web-session routes.
@@ -384,8 +566,11 @@ Excluded:
 
 First run:
 1. Start your Hermes proxy separately if it is not already running.
-2. Run `RUN_WEBGROK_HERMES_ONLY.bat`.
+2. Run `WEBGROK_CHROME_APP.exe` to open the app in Chrome app mode, or run `RUN_WEBGROK_HERMES_ONLY.bat` to open it in the default browser.
 3. Open Settings and adjust `Hermes Proxy Base URL` if needed.
+
+Note:
+- `WEBGROK_CHROME_APP.exe` is locally built and unsigned, so Windows may show a SmartScreen/security prompt.
 
 Build stamp: {STATIC_VERSION}
 """
@@ -444,6 +629,7 @@ def main():
     write_clean_settings()
     write_release_media_seed()
     write_runner()
+    build_chrome_app_launcher()
     write_release_notes()
     print(RELEASE_ROOT)
 

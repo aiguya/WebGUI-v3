@@ -1251,3 +1251,17 @@
   - 릴리즈 폴더에서 `Grok 공식홈`, `grok_official`, `grok-official`, `home_quota`, `disabled_web_provider`, `release_removed_provider`, `quotaPill`, `refreshQuota`, `/api/oauth/quota`, `grok.com/?_s=usage`, `C:\Users\` 패턴이 검색되지 않음을 확인했다.
   - Flask test client에서 `/health` 200, provider `hermes_proxy`, UI에 `quotaPill`/`무료 크레딧`/`Grok 공식홈`/`C:\Users\` 미포함, 샘플 템플릿 1개 유지 확인.
   - `release/WebGrok-v3-Hermes-20260611.zip`를 갱신했다.
+
+### 2026-06-11 22:02 KST - 릴리즈 Chrome 앱 모드 exe 추가
+- 목표: 릴리즈 사용자가 배치 파일 대신 Chrome 앱 창 형태로 WebGrok을 실행할 수 있는 exe를 제공한다.
+- 변경:
+  - `tools/build_release_no_official.py`: `WEBGROK_CHROME_APP.exe`를 생성하는 C# WinExe 런처 빌드 단계를 추가했다.
+  - 런처는 `/health`를 확인하고 서버가 없으면 `work/run_server.py`를 `WEBGORK_PORT=7863`, `WEBGORK_OPEN_BROWSER=0` 환경으로 시작한 뒤 Chrome을 `--app=http://127.0.0.1:7863/?v=...` 모드로 연다.
+  - Chrome을 찾지 못하면 기본 브라우저로 fallback한다.
+  - `README_RELEASE.md`에 exe 사용법과 unsigned 실행 파일이라 SmartScreen/보안 경고가 뜰 수 있음을 추가했다.
+- 검증:
+  - `release/WebGrok-v3-Hermes/WEBGROK_CHROME_APP.exe` 생성 확인.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - 공홈 quota/Usage/개인 경로 잔여 패턴 검색 통과.
+  - `release/WebGrok-v3-Hermes-20260611.zip`를 exe 포함 상태로 재생성했다.
