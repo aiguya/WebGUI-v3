@@ -96,8 +96,8 @@ const multiImageSources = new WeakMap();
 const multiVideoSources = new WeakMap();
 const jobQueue = [];
 let activeJobs = 0;
-const maxActiveJobs = 30;
-const maxQueueCopies = 20;
+const maxActiveJobs = Number.POSITIVE_INFINITY;
+const maxQueueCopies = 100;
 let mediaViewerContext = null;
 let lastQueuePreviewClosedAt = 0;
 const repeatableQueueEndpoints = new Set([
@@ -1126,15 +1126,87 @@ function formTemplateBlockConfig(form) {
 }
 
 function installFormTemplateBlockControl(form) {
-  if (!formTemplateBlockConfig(form) || form.querySelector("[data-save-form-template-block]")) return;
+  if (!formTemplateBlockConfig(form) || form.querySelector("[data-form-template-block-tools]")) return;
   const submitButton = form.querySelector("button[type='submit']");
   if (!submitButton) return;
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "secondary form-template-block-save";
-  button.dataset.saveFormTemplateBlock = "true";
-  button.textContent = "블록 저장";
-  submitButton.insertAdjacentElement("beforebegin", button);
+  const tools = document.createElement("div");
+  tools.className = "form-template-block-tools";
+  tools.dataset.formTemplateBlockTools = "true";
+  tools.innerHTML = `
+    <label>템플릿 블록</label>
+    <select data-form-template-block-select></select>
+    <button type="button" class="secondary" data-load-form-template-block>블록 불러오기</button>
+    <button type="button" class="secondary" data-save-form-template-block>블록 저장</button>`;
+  submitButton.insertAdjacentElement("beforebegin", tools);
+  syncFormTemplateBlockSelect(form);
+}
+
+function formTemplateBlocksForForm(form) {
+  const config = formTemplateBlockConfig(form);
+  if (!config) return [];
+  return templateBlocks
+    .filter(item => (item.method || "i2v") === config.method)
+    .sort((a, b) => Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+}
+
+function syncFormTemplateBlockSelect(form) {
+  const select = form?.querySelector("[data-form-template-block-select]");
+  if (!select) return;
+  const current = select.value;
+  const blocks = formTemplateBlocksForForm(form);
+  select.innerHTML = blocks.length
+    ? blocks.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title || "템플릿 블록")}</option>`).join("")
+    : `<option value="">저장된 블록 없음</option>`;
+  if (blocks.some(item => item.id === current)) select.value = current;
+}
+
+function syncAllFormTemplateBlockSelects() {
+  document.querySelectorAll("form[data-endpoint]").forEach(syncFormTemplateBlockSelect);
+}
+
+function setFormFieldValue(form, name, value) {
+  const field = form?.querySelector(`[name='${name}']`);
+  if (!field || value == null || value === "") return false;
+  field.value = String(value);
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+
+function applyTemplateBlockToForm(form, block) {
+  if (!form || !block) return;
+  setFormFieldValue(form, "request_provider", block.request_provider);
+  syncFormModelOptions(form);
+  setFormFieldValue(form, "image_model", block.image_model);
+  setFormFieldValue(form, "image_resolution", block.image_resolution);
+  setFormFieldValue(form, "edit_input_mode", block.edit_input_mode);
+  setFormFieldValue(form, "video_model", block.video_model);
+  setFormFieldValue(form, "duration", block.duration);
+  if (form.querySelector("[name='prompt']")) {
+    form.querySelector("[name='prompt']").value = block.prompt || "";
+  }
+  syncFormModelOptions(form);
+  updateGrokResolutionControls(form);
+  updateI2vReferenceHelp(form);
+}
+
+async function loadFormTemplateBlock(form, button) {
+  if (!templateBlocks.length) await loadTemplateBlocks(true);
+  syncFormTemplateBlockSelect(form);
+  const blocks = formTemplateBlocksForForm(form);
+  const select = form.querySelector("[data-form-template-block-select]");
+  const block = blocks.find(item => item.id === select?.value) || blocks[0];
+  if (!block) {
+    showToast("불러올 템플릿 블록이 없습니다.", true);
+    return;
+  }
+  const previousDisabled = button?.disabled;
+  if (button) button.disabled = true;
+  try {
+    applyTemplateBlockToForm(form, block);
+    showToast("템플릿 블록을 현재 탭에 불러왔습니다.");
+  } finally {
+    if (button) button.disabled = previousDisabled;
+  }
 }
 
 function currentProject() {
@@ -1315,6 +1387,7 @@ async function saveFormTemplateBlock(form, button) {
     if (existing >= 0) templateBlocks[existing] = data.item;
     else templateBlocks.unshift(data.item);
     renderTemplateBlocks();
+    syncAllFormTemplateBlockSelects();
     showToast("현재 설정을 템플릿 블록으로 저장했습니다.");
   } finally {
     if (button) {
@@ -1353,14 +1426,34 @@ function cloneJobOptions(options) {
   return cloned;
 }
 
-async function buildJobRequest(form) {
+function appendImageSourceToBody(body, source) {
+  if (source?.kind === "file") {
+    body.append("image_source_order", "file");
+    body.append("image", source.file, source.file.name);
+  }
+  if (source?.kind === "library") {
+    body.append("image_source_order", `library:${source.path}`);
+    body.append("library_image_paths", source.path);
+  }
+}
+
+function imageSourceReferenceUrl(source) {
+  return source?.src || source?.path || null;
+}
+
+function imageSourceJobLabel(source, index, total) {
+  const label = source?.label || source?.file?.name || source?.path || `이미지 ${index + 1}`;
+  return `${index + 1}/${total} ${compactText(label, 20)}`;
+}
+
+async function buildJobRequest(form, imageSourceOverride = null, planOverride = null) {
   let body;
-  let referenceUrl = null;
+  let referenceUrl = imageSourceReferenceUrl(imageSourceOverride);
   const endpoint = effectiveEndpointForForm(form);
   const requestProvider = effectiveRequestProviderForForm(form);
   const options = { method: "POST" };
   const originalPrompt = form.querySelector("[name='prompt']")?.value || form.querySelector("[name='title']")?.value || "";
-  const plan = await maybePlanPrompt(form, originalPrompt);
+  const plan = planOverride || await maybePlanPrompt(form, originalPrompt);
   const prompt = plan.prompt || originalPrompt;
   if (form.dataset.kind === "json") {
     body = JSON.stringify(appendCurrentProjectFields({
@@ -1373,29 +1466,21 @@ async function buildJobRequest(form) {
     }));
     options.headers = { "Content-Type": "application/json" };
   } else {
-    if (isMultiImageVideoForm(form)) enforceI2vReferenceLimit(form);
+    if (isMultiImageVideoForm(form) && !imageSourceOverride) enforceI2vReferenceLimit(form);
     if (isMultiImageSourceForm(form)) {
       body = new FormData();
       body.set("prompt", prompt);
       body.set("aspect_ratio", form.querySelector("[name='aspect_ratio']").value);
       form.querySelectorAll("input, select, textarea").forEach(field => {
-        if (!field.name || ["prompt", "aspect_ratio", "image", "library_image_path", "library_image_paths", "image_source_order", "queue_count"].includes(field.name)) return;
+        if (!field.name || ["prompt", "aspect_ratio", "image", "library_image_path", "library_image_paths", "image_source_order", "queue_count", "batch_per_image"].includes(field.name)) return;
         if (field.type === "checkbox") {
           if (field.checked) body.set(field.name, field.value || "true");
           return;
         }
         body.set(field.name, field.value);
       });
-      getMultiImageSources(form).forEach(source => {
-        if (source.kind === "file") {
-          body.append("image_source_order", "file");
-          body.append("image", source.file, source.file.name);
-        }
-        if (source.kind === "library") {
-          body.append("image_source_order", `library:${source.path}`);
-          body.append("library_image_paths", source.path);
-        }
-      });
+      const imageSources = imageSourceOverride ? [imageSourceOverride] : getMultiImageSources(form);
+      imageSources.forEach(source => appendImageSourceToBody(body, source));
     } else if (isVideoEditForm(form)) {
       body = new FormData(form);
       body.delete("videos");
@@ -1451,28 +1536,46 @@ async function enqueueForm(form) {
   button.textContent = "큐에 추가 중";
   try {
     const count = queueCopyCount(form);
-    const request = await buildJobRequest(form);
-    const type = endpointLabel(request.endpoint, request.requestProvider);
-    for (let index = 1; index <= count; index += 1) {
-      const jobType = count > 1 ? `${type} ${index}/${count}` : type;
-      const job = {
-        id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
-        type: jobType,
-        shortType: type.split(" ")[0],
-        status: "queued",
-        endpoint: request.endpoint,
-        previewSelector: form.dataset.preview,
-        referenceUrl: request.referenceUrl,
-        options: cloneJobOptions(request.options),
-        prompt: request.prompt,
-        result: null,
-        error: null,
-      };
-      jobQueue.unshift(job);
+    const requests = [];
+    if (isI2vBatchPerImageForm(form)) {
+      const sources = getMultiImageSources(form).slice();
+      if (!sources.length) throw new Error("영상으로 만들 이미지를 추가해 주세요.");
+      const originalPrompt = form.querySelector("[name='prompt']")?.value || "";
+      const plan = await maybePlanPrompt(form, originalPrompt);
+      for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
+        requests.push({
+          request: await buildJobRequest(form, sources[sourceIndex], plan),
+          sourceLabel: imageSourceJobLabel(sources[sourceIndex], sourceIndex, sources.length),
+        });
+      }
+    } else {
+      requests.push({ request: await buildJobRequest(form), sourceLabel: "" });
+    }
+    const totalJobs = count * requests.length;
+    for (const entry of requests) {
+      const type = endpointLabel(entry.request.endpoint, entry.request.requestProvider);
+      for (let index = 1; index <= count; index += 1) {
+        const repeatLabel = count > 1 ? `${index}/${count}` : "";
+        const jobType = [type, entry.sourceLabel, repeatLabel].filter(Boolean).join(" · ");
+        const job = {
+          id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+          type: jobType,
+          shortType: type.split(" ")[0],
+          status: "queued",
+          endpoint: entry.request.endpoint,
+          previewSelector: form.dataset.preview,
+          referenceUrl: entry.request.referenceUrl,
+          options: cloneJobOptions(entry.request.options),
+          prompt: entry.request.prompt,
+          result: null,
+          error: null,
+        };
+        jobQueue.unshift(job);
+      }
     }
     renderQueue();
     processQueue();
-    showToast(count > 1 ? `큐에 ${count}개 추가했습니다.` : "큐에 추가했습니다.");
+    showToast(totalJobs > 1 ? `큐에 ${totalJobs}개 추가했습니다.` : "큐에 추가했습니다.");
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -2779,11 +2882,19 @@ document.querySelectorAll("form[data-endpoint]").forEach(form => {
   updateI2vReferenceHelp(form);
   form.querySelector("[name='image_model']")?.addEventListener("change", () => updateGrokResolutionControls(form));
   form.querySelector("[name='video_model']")?.addEventListener("change", () => enforceI2vReferenceLimit(form, true));
+  form.querySelector("[data-i2v-batch-per-image]")?.addEventListener("change", () => {
+    updateI2vReferenceHelp(form);
+    enforceI2vReferenceLimit(form, true);
+    renderMultiImageSources(form);
+  });
   form.querySelector("[name='request_provider']")?.addEventListener("change", () => {
     syncFormModelOptions(form);
   });
   form.querySelector("[data-save-form-template-block]")?.addEventListener("click", event => {
     saveFormTemplateBlock(form, event.currentTarget).catch(error => showToast(error.message, true));
+  });
+  form.querySelector("[data-load-form-template-block]")?.addEventListener("click", event => {
+    loadFormTemplateBlock(form, event.currentTarget).catch(error => showToast(error.message, true));
   });
   form.addEventListener("submit", event => {
     event.preventDefault();
@@ -2850,6 +2961,10 @@ function isMultiImageVideoForm(form) {
   return form?.dataset.endpoint === "/api/i2v";
 }
 
+function isI2vBatchPerImageForm(form) {
+  return isMultiImageVideoForm(form) && Boolean(form?.querySelector("[data-i2v-batch-per-image]")?.checked);
+}
+
 function isMultiImageSourceForm(form) {
   return isMultiImageEditForm(form) || isMultiImageVideoForm(form);
 }
@@ -2866,12 +2981,16 @@ function isSingleReferenceI2vForm(form) {
 }
 
 function isSingleImageSourceForm(form) {
+  if (isI2vBatchPerImageForm(form)) return false;
   return (effectiveRequestProviderForForm(form) === "grok_official" && isMultiImageSourceForm(form))
     || isSingleReferenceI2vForm(form);
 }
 
 function i2vReferenceHelpText(form) {
   if (!isMultiImageVideoForm(form)) return "";
+  if (isI2vBatchPerImageForm(form)) {
+    return "이미지마다 별도 영상 요청을 만들고, 동시 생성 수를 이미지별로 적용합니다.";
+  }
   if (effectiveRequestProviderForForm(form) === "grok_official") {
     return "Grok 공식홈 경로는 첫 이미지를 시작 프레임으로 사용합니다.";
   }
@@ -5036,6 +5155,7 @@ async function loadTemplateManager(force = false) {
 async function loadTemplateBlocks(force = false) {
   if (templateBlocks.length && !force) {
     renderTemplateBlocks();
+    syncAllFormTemplateBlockSelects();
     return;
   }
   const response = await fetch("/api/video-template-blocks");
@@ -5043,6 +5163,7 @@ async function loadTemplateBlocks(force = false) {
   if (!data.ok) rememberApiError(data, "템플릿 블록 조회 실패");
   templateBlocks = data.items || [];
   renderTemplateBlocks();
+  syncAllFormTemplateBlockSelects();
 }
 
 async function saveTemplateEditor() {
@@ -5131,6 +5252,7 @@ async function saveTemplateShotBlock(index, button) {
     if (existing >= 0) templateBlocks[existing] = data.item;
     else templateBlocks.unshift(data.item);
     renderTemplateBlocks();
+    syncAllFormTemplateBlockSelects();
     showToast("컷 블록을 보관했습니다.");
   } finally {
     if (button) button.disabled = previousDisabled;
@@ -5147,12 +5269,14 @@ async function toggleTemplateBlockFavorite(id, button) {
   if (index >= 0) templateBlocks[index] = data.item;
   setFavoriteButtonState(button, Boolean(data.item.favorite), false);
   renderTemplateBlocks();
+  syncAllFormTemplateBlockSelects();
 }
 
 async function deleteTemplateBlock(id) {
   const data = await postJson("/api/video-template-blocks/delete", { ids: [id] });
   templateBlocks = templateBlocks.filter(item => item.id !== id);
   renderTemplateBlocks();
+  syncAllFormTemplateBlockSelects();
   showToast(`${data.deleted || 0}개 블록을 삭제했습니다.`);
 }
 

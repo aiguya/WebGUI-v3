@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260605-v3-65">
+  <link rel="stylesheet" href="/static/styles.css?v=20260605-v3-66">
 </head>
 <body>
   <header class="topbar">
@@ -246,6 +246,10 @@
             </div>
           </div>
           <div data-library-image-paths hidden></div>
+          <label class="check-row">
+            <input type="checkbox" name="batch_per_image" value="true" data-i2v-batch-per-image>
+            <span>여러 이미지를 각각 별도 영상 요청으로 큐에 등록</span>
+          </label>
           <label>영상 모델</label>
           <select name="video_model">
             <option value="grok-imagine-video">Grok 영상</option>
@@ -1233,6 +1237,6 @@
   <dialog class="media-viewer" id="mediaViewer">
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260605-v3-65"></script>
+  <script src="/static/app.js?v=20260605-v3-66"></script>
 </body>
 </html>

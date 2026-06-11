@@ -1141,3 +1141,23 @@
   - monkeypatch 테스트로 실제 외부 요청 없이 `/api/reverse-prompt` 호출 URL이 `http://127.0.0.1:8645/v1/responses`, provider가 `hermes_proxy`로 잡히는 것을 확인했다.
   - 실제 프롬프트 추출 요청은 크레딧/쿼터 사용 방지를 위해 실행하지 않았다.
 - 백업: `backups/before-reverse-prompt-hermes-20260609-163800`
+
+### 2026-06-11 14:36 KST - 템플릿 블록 불러오기와 이미지별 i2v 병렬 큐
+- 목표: 각 생성/편집/영상/연장 탭에서 템플릿 블록 저장뿐 아니라 불러오기도 가능하게 하고, 이미지→영상 탭에서 여러 이미지를 같은 프롬프트로 이미지별 병렬 큐 등록할 수 있게 했다.
+- 확인:
+  - 기존 큐는 `maxActiveJobs = 30`이라 동시 생성 수를 크게 잡아도 앱 레벨에서 30개씩만 병렬 실행했다.
+  - 기존 `queue_count` 최대값은 20이었다.
+  - 기존 이미지→영상 다중 이미지는 한 요청 안의 시작 이미지/추가 참조 묶음으로 처리되었다.
+- 변경:
+  - `static/app.js`: 큐 반복 수 최대를 100으로 올렸다.
+  - `static/app.js`: 앱 큐의 고정 병렬 cap을 제거해 대기 중인 작업을 가능한 즉시 모두 `fetch`로 시작하도록 했다.
+  - `templates/index.html`, `static/app.js`: 이미지→영상 폼에 `여러 이미지를 각각 별도 영상 요청으로 큐에 등록` 옵션을 추가했다.
+  - `static/app.js`: 해당 옵션이 켜지면 이미지 N개와 동시 생성 수 M개를 `N x M`개의 개별 i2v 작업으로 큐에 등록하도록 했다. 프롬프트 플래너는 한 번만 실행해 같은 프롬프트를 공유한다.
+  - `static/app.js`, `static/styles.css`: 각 기능 탭에 템플릿 블록 선택/불러오기/저장 컨트롤을 추가하고, 같은 method의 블록만 표시하도록 했다.
+  - `templates/index.html`, `static/service-worker.js`, `run_webgork_app.bat`: 정적 캐시 버전을 `20260605-v3-66` / `webgui-shell-v3-66`으로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
+  - 실제 생성 요청은 크레딧/쿼터 사용 방지를 위해 실행하지 않았다.
+- 백업: `backups/before-template-load-i2v-batch-queue-20260611-142737`

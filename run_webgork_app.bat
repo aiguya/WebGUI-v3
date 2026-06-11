@@ -66,9 +66,9 @@ if not defined CHROME_EXE if exist "%ProgramFiles(x86)%\Google\Chrome\Applicatio
 if not defined CHROME_EXE if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" set "CHROME_EXE=%LocalAppData%\Google\Chrome\Application\chrome.exe"
 
 if defined CHROME_EXE (
-  start "" "%CHROME_EXE%" --app=http://127.0.0.1:7863/?v=20260605-v3-65 --class=WebGUIv3
+  start "" "%CHROME_EXE%" --app=http://127.0.0.1:7863/?v=20260605-v3-66 --class=WebGUIv3
 ) else (
-  start "" http://127.0.0.1:7863/?v=20260605-v3-65
+  start "" http://127.0.0.1:7863/?v=20260605-v3-66
 )
 
 endlocal

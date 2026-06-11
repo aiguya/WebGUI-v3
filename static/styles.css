@@ -6076,11 +6076,34 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   font-weight: 950 !important;
 }
 
-.form-template-block-save {
-  width: 100%;
+.form-template-block-tools {
+  display: grid;
+  grid-template-columns: minmax(82px, .7fr) minmax(0, 1.8fr) minmax(120px, 1fr) minmax(110px, .9fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.form-template-block-tools label {
+  margin: 0;
+  color: rgba(245, 245, 242, .72);
+  font-size: 12px;
+}
+
+.form-template-block-tools select,
+.form-template-block-tools button {
   min-height: 36px !important;
-  margin-top: 10px !important;
-  font-weight: 850 !important;
+}
+
+@media (max-width: 780px) {
+  .form-template-block-tools {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .form-template-block-tools label,
+  .form-template-block-tools select {
+    grid-column: 1 / -1;
+  }
 }
 
 .queue-dock {
