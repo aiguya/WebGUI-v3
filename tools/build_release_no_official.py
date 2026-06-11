@@ -7,7 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
-STATIC_VERSION = "20260611-release-hermes-01"
+RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
+STATIC_VERSION = "20260611-release-hermes-02"
 
 
 def copy_tree(src, dst):
@@ -46,6 +47,7 @@ def strip_html_official_quota(html):
         flags=re.S,
     )
     html = html.replace("20260605-v3-68", STATIC_VERSION)
+    html = html.replace(r"C:\Users\aiguy\Pictures\WebGUI-v3", r"C:\WebGrok\media")
     return html
 
 
@@ -276,12 +278,13 @@ This release folder is a privacy-clean, one-click runnable package.
 
 Included:
 - Hermes Proxy based image generation, image editing, image-to-video, queue, templates, library, and local media tools.
+- A sanitized sample video template JSON. No sample image or video assets are bundled.
 - `RUN_WEBGROK_HERMES_ONLY.bat` one-click launcher.
 
 Excluded:
 - Homepage quota UI and related web-session routes.
 - Homepage Chrome profile, cookie, CDP, and browser-session launch data.
-- `.webgork-private`, `.chrome-*`, `media-library`, `backups`, local logs, git metadata, and local settings from the development workspace.
+- `.webgork-private`, `.chrome-*`, generated media-library images/videos, `backups`, local logs, git metadata, and local settings from the development workspace.
 
 First run:
 1. Start your Hermes proxy separately if it is not already running.
@@ -300,6 +303,26 @@ def write_clean_settings():
         "codex_proxy_base_url": "http://127.0.0.1:3333",
     }
     write(RELEASE_ROOT / "webgork-settings.json", json.dumps(settings, ensure_ascii=False, indent=2))
+
+
+def write_release_media_seed():
+    library = RELEASE_ROOT / "media-library"
+    library.mkdir(parents=True, exist_ok=True)
+    json_defaults = {
+        "metadata.json": [],
+        "prompts.json": [],
+        "projects.json": [],
+        "video-templates.json": [],
+        "video-template-blocks.json": [],
+    }
+    for filename, default in json_defaults.items():
+        seed = RELEASE_SEED_ROOT / filename
+        if seed.exists():
+            copy_file(seed, library / filename)
+        else:
+            write(library / filename, json.dumps(default, ensure_ascii=False, indent=2) + "\n")
+    usage = {"requests": 0, "tokens": 0, "cost_usd": 0, "last_usage": None}
+    write(library / "usage.json", json.dumps(usage, ensure_ascii=False, indent=2) + "\n")
 
 
 def main():
@@ -323,6 +346,7 @@ def main():
         .replace("webgui-shell-v3-68", f"webgui-shell-{STATIC_VERSION}"),
     )
     write_clean_settings()
+    write_release_media_seed()
     write_runner()
     write_release_notes()
     print(RELEASE_ROOT)

@@ -1,0 +1,335 @@
+[
+  {
+    "format_version": 1,
+    "id": "sample-template-01",
+    "title": "테스트용 템플릿",
+    "description": "",
+    "genre": "",
+    "tags": [
+      "sample"
+    ],
+    "favorite": true,
+    "global_prompt": "영화적인 조명",
+    "negative_prompt": "얼굴 변형, 다른 인물로 변경, 과도한 손가락 왜곡, 어색한 눈과 치아, 갑작스러운 의상 변경을 피한다.",
+    "variables": [
+      {
+        "key": "mood",
+        "label": "분위기",
+        "default": "몽환적인"
+      },
+      {
+        "key": "location",
+        "label": "장소",
+        "default": "네온이 비치는 밤거리"
+      }
+    ],
+    "slots": [
+      {
+        "key": "main_actor",
+        "label": "주연 배우",
+        "kind": "image",
+        "note": "얼굴과 헤어스타일 기준 사진",
+        "selected_path": "",
+        "selected_kind": "",
+        "selected_label": ""
+      },
+      {
+        "key": "location_ref",
+        "label": "장소 레퍼런스",
+        "kind": "image",
+        "note": "장소 분위기 참고 이미지",
+        "selected_path": "",
+        "selected_kind": "",
+        "selected_label": ""
+      },
+      {
+        "key": "base_img",
+        "label": "배우+장소",
+        "kind": "image",
+        "note": "배우+장소",
+        "selected_path": "",
+        "selected_kind": "",
+        "selected_label": ""
+      },
+      {
+        "key": "with_blade",
+        "label": "배우+장소+칼",
+        "kind": "image",
+        "note": "배우가 칼을 꺼내든다.",
+        "selected_path": "",
+        "selected_kind": "",
+        "selected_label": ""
+      },
+      {
+        "key": "blade",
+        "label": "카타나",
+        "kind": "image",
+        "note": "칼 이미지",
+        "selected_path": "",
+        "selected_kind": "",
+        "selected_label": ""
+      },
+      {
+        "key": "with_blade2",
+        "label": "칼집에 칼",
+        "kind": "image",
+        "note": "칼집에 들고있다.",
+        "selected_path": "",
+        "selected_kind": "",
+        "selected_label": ""
+      },
+      {
+        "key": "boss",
+        "label": "보스",
+        "kind": "image",
+        "note": "썬글라스+양복을 입고 도끼를 든 남자.",
+        "selected_path": "",
+        "selected_kind": "",
+        "selected_label": ""
+      }
+    ],
+    "shots": [
+      {
+        "id": "d7bd3c1d1a844d818af403fbca901220",
+        "order": 1,
+        "title": "네온 밤거리",
+        "method": "image",
+        "method_label": "이미지 생성",
+        "duration": 6.0,
+        "reference_slot": "",
+        "reference_slots": [],
+        "output_slot": "location_ref",
+        "image_model": "grok-imagine-image-pro",
+        "image_resolution": "2k",
+        "edit_input_mode": "multi",
+        "video_model": "grok-imagine-video",
+        "request_provider": "hermes_proxy",
+        "prompt": "사이버 펑크 분위기의 한국 도심 유흥가의 밤거리, 네온사인 간판들이 어지럽게 보인다.",
+        "camera": "",
+        "transition": "cut",
+        "retry_prompt": "",
+        "notes": ""
+      },
+      {
+        "id": "a769aaf8443a4c0881c344b07bff53f4",
+        "order": 2,
+        "title": "첫 시작 이미지 - 네온 밤거리의 주인공",
+        "method": "edit",
+        "method_label": "이미지 편집",
+        "duration": 6.0,
+        "reference_slot": "location_ref",
+        "reference_slots": [
+          "location_ref",
+          "main_actor"
+        ],
+        "output_slot": "base_img",
+        "image_model": "grok-imagine-image-quality",
+        "image_resolution": "2k",
+        "edit_input_mode": "multi",
+        "video_model": "grok-imagine-video",
+        "request_provider": "hermes_proxy",
+        "prompt": "{{location_ref}}에서 {{main_actor}}가 붉은색 미니스커트 원피스(고급스런 재질)을 입고 검정색 하이힐을 신고  검은 코트를 걸치고 거리 중앙에 서있다. 165cm 신장, 8등신 미녀, 긴 다리. 여성을 중심으로 주변 배경이 이질감 없이 보이도록. 주변 경관과 여성의 신체비율이 맞도록 카메라의 시점과 배경을 조율한다.",
+        "camera": "",
+        "transition": "cut",
+        "retry_prompt": "",
+        "notes": ""
+      },
+      {
+        "id": "c26f159bd16342b3a907319e6c39da1e",
+        "order": 3,
+        "title": "카타나",
+        "method": "image",
+        "method_label": "이미지 생성",
+        "duration": 6.0,
+        "reference_slot": "",
+        "reference_slots": [],
+        "output_slot": "blade",
+        "image_model": "grok-imagine-image-quality",
+        "image_resolution": "1k",
+        "edit_input_mode": "multi",
+        "video_model": "grok-imagine-video",
+        "request_provider": "hermes_proxy",
+        "prompt": "세련되고 약간 미래적인 얇고 날카로운 카타나. 배경 없이 칼 전체모습.",
+        "camera": "측면 트래킹 샷",
+        "transition": "crossfade",
+        "retry_prompt": "",
+        "notes": ""
+      },
+      {
+        "id": "f70d26d269e94e47a1ac05b30aaacff5",
+        "order": 4,
+        "title": "보스",
+        "method": "image",
+        "method_label": "이미지 생성",
+        "duration": 6.0,
+        "reference_slot": "",
+        "reference_slots": [],
+        "output_slot": "boss",
+        "image_model": "grok-imagine-image-quality",
+        "image_resolution": "2k",
+        "edit_input_mode": "multi",
+        "video_model": "grok-imagine-video",
+        "request_provider": "hermes_proxy",
+        "prompt": "선글라스와 검정색 양복을 입은 키가 큰 근육질의 영국 40대 남성, 사이버틱한 손도끼를 무장하고 있다.",
+        "camera": "측면 트래킹 샷",
+        "transition": "crossfade",
+        "retry_prompt": "",
+        "notes": ""
+      },
+      {
+        "id": "e40f60686dd2471eb12ff3852eb82bfa",
+        "order": 5,
+        "title": "두번째 신 -  칼 든 여성",
+        "method": "edit",
+        "method_label": "이미지 편집",
+        "duration": 6.0,
+        "reference_slot": "base_img",
+        "reference_slots": [
+          "base_img",
+          "blade"
+        ],
+        "output_slot": "with_blade",
+        "image_model": "grok-imagine-image-quality",
+        "image_resolution": "2k",
+        "edit_input_mode": "multi",
+        "video_model": "grok-imagine-video",
+        "request_provider": "hermes_proxy",
+        "prompt": "{{blade}}을 늘어트리듯 꺼내들고 정면으로 선 채, 옆을 노려보고 있는 여성의 옆모습.",
+        "camera": "측면 트래킹 샷",
+        "transition": "crossfade",
+        "retry_prompt": "",
+        "notes": ""
+      },
+      {
+        "id": "0c50c58b048d4d9eae4bc90c6381e825",
+        "order": 6,
+        "title": "두번째 신 -  칼집을 든 여성",
+        "method": "edit",
+        "method_label": "이미지 편집",
+        "duration": 6.0,
+        "reference_slot": "base_img",
+        "reference_slots": [
+          "base_img",
+          "blade"
+        ],
+        "output_slot": "with_blade2",
+        "image_model": "grok-imagine-image-quality",
+        "image_resolution": "2k",
+        "edit_input_mode": "multi",
+        "video_model": "grok-imagine-video",
+        "request_provider": "hermes_proxy",
+        "prompt": "{{blade}}를 칼집에서 뽑으며  {{base_img}}가 시선을 정면으로 고정한 자세.",
+        "camera": "측면 트래킹 샷",
+        "transition": "crossfade",
+        "retry_prompt": "",
+        "notes": ""
+      },
+      {
+        "id": "903d4613a15b4487a435b96d2c329614",
+        "order": 7,
+        "title": "오프닝 클로즈업",
+        "method": "i2v",
+        "method_label": "이미지→영상",
+        "duration": 10.0,
+        "reference_slot": "base_img",
+        "reference_slots": [
+          "base_img"
+        ],
+        "output_slot": "",
+        "image_model": "grok-imagine-image-quality",
+        "image_resolution": "auto",
+        "edit_input_mode": "multi",
+        "video_model": "grok-imagine-video-1.5-preview",
+        "request_provider": "hermes_proxy",
+        "prompt": "{{base_imgr}}가 카메라를 바라본다. {{mood}} 분위기,  천천히 주위를 둘러보고 무표정한 얼굴로 가벼운 한숨을 내 쉰다. 천천히 발걸음을 옮긴다. no bgm",
+        "camera": "천천히 여성을 중앙으로 두고 촬영하는 카메라. 여성의 각선미를 강조하는 카메라 워킹.",
+        "transition": "fade_in",
+        "retry_prompt": "",
+        "notes": ""
+      },
+      {
+        "id": "631c01c68a1a465295f3ee71d4798064",
+        "order": 8,
+        "title": "움직임 연결",
+        "method": "official",
+        "method_label": "공식 연장",
+        "duration": 10.0,
+        "reference_slot": "",
+        "reference_slots": [],
+        "output_slot": "",
+        "image_model": "grok-imagine-image-quality",
+        "image_resolution": "auto",
+        "edit_input_mode": "multi",
+        "video_model": "grok-imagine-video",
+        "request_provider": "hermes_proxy",
+        "prompt": "이전 장면의 감정과 자세를 이어서, {{main_actor}}가 천천히 걸어간다. 영상의 마지막 어딘가를 바라보는 여성 . no bgm",
+        "camera": "측면 트래킹 샷",
+        "transition": "crossfade",
+        "retry_prompt": "",
+        "notes": ""
+      },
+      {
+        "id": "73b5510547874a048296f822d12e4b38",
+        "order": 9,
+        "title": "이상한 낌새를 느껴 칼을 뽑아드는 주인공",
+        "method": "i2v",
+        "method_label": "이미지→영상",
+        "duration": 6.0,
+        "reference_slot": "with_blade2",
+        "reference_slots": [
+          "with_blade2",
+          "blade"
+        ],
+        "output_slot": "",
+        "image_model": "grok-imagine-image-quality",
+        "image_resolution": "auto",
+        "edit_input_mode": "multi",
+        "video_model": "grok-imagine-video",
+        "request_provider": "hermes_proxy",
+        "prompt": "{{with_blade2}} 뭔가를 느낀 듯 미간을 찌푸리며 천천히 칼집에서 {{blade}}를 꺼낸다.",
+        "camera": "여성의 주변을 돌면서 여성을 중심으로 촬영. 천천히 줌 인.",
+        "transition": "crossfade",
+        "retry_prompt": "",
+        "notes": ""
+      },
+      {
+        "id": "26279fa150914d0a8caa7a3c219c795a",
+        "order": 10,
+        "title": "남성을 발견 달려가는 여성.",
+        "method": "i2v",
+        "method_label": "이미지→영상",
+        "duration": 15,
+        "reference_slot": "with_blade",
+        "reference_slots": [
+          "with_blade"
+        ],
+        "output_slot": "",
+        "image_model": "grok-imagine-image-quality",
+        "image_resolution": "auto",
+        "edit_input_mode": "multi",
+        "video_model": "grok-imagine-video-1.5-preview",
+        "request_provider": "hermes_proxy",
+        "prompt": "{{with_blade}}의 시선이 무언가를 발견한듯 고정되며 혼잣말을 한다. \"타겟 발견, 제거한다.\" 대사 후 몸을 앞으로 숙이고 칼을 옆으로 늘어트린 채 인간을 초월한 속도로 질주한다. 빼어든 칼을 휘두를 준비를 한다. 달려가던 여성이 눈 앞에 boss(선글라스와 검정색 양복을 입은 키가 큰 근육질의 영국 40대 남성, 사이버틱한 손도끼를 무장하고 있다.)가 보인다. 여성은 남성에게 계속 칼을 휘두르고 남성이 손도끼를 꺼내 막으며 이를 드러낸채 악마같은 미소를 짓는다.",
+        "camera": "역동적인 드론 체이스캠. 여성을 비추다가 여성과 함께 여성의 시점을 비추며 따라다닌다. 자연스럽고 영화적인 액션 신.",
+        "transition": "crossfade",
+        "retry_prompt": "",
+        "notes": ""
+      }
+    ],
+    "settings": {
+      "target_duration": 60,
+      "aspect_ratio": "9:16",
+      "resolution": "720p",
+      "default_method": "i2v",
+      "default_shot_duration": 6.0,
+      "run_mode": "manual"
+    },
+    "stats": {
+      "shot_count": 10,
+      "total_duration": 77.0,
+      "request_count": 10
+    },
+    "created_at": "2026-06-11T11:30:00+00:00",
+    "updated_at": "2026-06-11T11:30:00+00:00"
+  }
+]

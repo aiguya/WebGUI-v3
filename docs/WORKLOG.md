@@ -1219,3 +1219,20 @@
 - 산출물:
   - `release/WebGrok-v3-Hermes/RUN_WEBGROK_HERMES_ONLY.bat`
   - `release/WebGrok-v3-Hermes-20260611.zip`
+
+### 2026-06-11 21:43 KST - Hermes-only 릴리즈 샘플 템플릿 포함
+- 목표: 릴리즈를 받은 사용자가 템플릿 탭에서 빈 목록만 보지 않도록, 현재 즐겨찾기된 `테스트용 템플릿`을 개인정보 없는 샘플로 포함한다.
+- 변경:
+  - `release_seed/library/video-templates.json`: 즐겨찾기 템플릿 1개를 샘플 seed로 추가했다.
+  - `release_seed/library/video-template-blocks.json`: 샘플 블록 목록은 빈 배열로 추가했다.
+  - 샘플 템플릿의 슬롯 `selected_path`, `selected_kind`, `selected_label`은 모두 비워 실제 작업 이미지/로컬 경로가 릴리즈에 포함되지 않도록 했다.
+  - `tools/build_release_no_official.py`: 릴리즈 빌드 시 `release_seed/library`의 JSON을 `release/WebGrok-v3-Hermes/media-library`에 심도록 추가했다.
+  - 릴리즈 안내문에서 개인 media-library 전체 제외 대신, 생성 이미지/영상은 제외하고 정리된 샘플 JSON만 포함한다고 정리했다.
+  - 릴리즈 HTML의 예시 경로에 남아 있던 `C:\Users\aiguy\...` placeholder를 `C:\WebGrok\media`로 치환하도록 했다.
+- 검증:
+  - 릴리즈 `/api/video-templates`가 `테스트용 템플릿` 1개를 반환하는 것을 Flask test client로 확인했다.
+  - 샘플 템플릿의 슬롯 선택 참조가 0개인 것을 확인했다.
+  - 릴리즈 폴더에서 공홈/쿠키/CSRF/OAuth token/개인 계정명/`C:\Users\` 패턴이 검색되지 않음을 확인했다.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `release/WebGrok-v3-Hermes-20260611.zip`를 샘플 템플릿 포함 상태로 재생성했다.
