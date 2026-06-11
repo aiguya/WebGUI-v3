@@ -1,36 +1,40 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Threading;
 using System.Windows.Forms;
 
 internal static class Program
 {
+    private const string Port = "7863";
+    private const string StaticVersion = "20260605-v3-68";
+    private const string HealthUrl = "http://127.0.0.1:" + Port + "/health";
+    private const string AppUrl = "http://127.0.0.1:" + Port + "/?v=" + StaticVersion;
+
     [STAThread]
     private static int Main()
     {
-        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        string launcherBat = Path.Combine(baseDir, "run_webgork_app.bat");
-
-        if (!File.Exists(launcherBat))
-        {
-            MessageBox.Show(
-                "run_webgork_app.bat was not found next to this launcher.",
-                "WebGUI.v3",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-            return 1;
-        }
-
+        string root = AppDomain.CurrentDomain.BaseDirectory;
         try
         {
-            ProcessStartInfo startInfo = new ProcessStartInfo
+            if (!HealthOk())
             {
-                FileName = launcherBat,
-                WorkingDirectory = baseDir,
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Minimized,
-            };
-            Process.Start(startInfo);
+                StartServer(root);
+            }
+
+            if (!WaitForHealth())
+            {
+                string logPath = Path.Combine(root, "work", "server-runner.log");
+                MessageBox.Show(
+                    "WebGUI.v3 server did not start.\r\n\r\nCheck the log:\r\n" + logPath + "\r\n\r\nIf this is the first run, run run_webgork_app.bat once to install dependencies.",
+                    "WebGUI.v3",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return 1;
+            }
+
+            OpenChromeApp();
             return 0;
         }
         catch (Exception ex)
@@ -42,5 +46,139 @@ internal static class Program
                 MessageBoxIcon.Error);
             return 1;
         }
+    }
+
+    private static bool HealthOk()
+    {
+        try
+        {
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(HealthUrl);
+            request.Method = "GET";
+            request.Timeout = 1500;
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            {
+                return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool WaitForHealth()
+    {
+        for (int i = 0; i < 80; i++)
+        {
+            if (HealthOk()) return true;
+            Thread.Sleep(500);
+        }
+        return false;
+    }
+
+    private static void StartServer(string root)
+    {
+        Directory.CreateDirectory(Path.Combine(root, "work"));
+        string python = FindPython();
+        if (String.IsNullOrEmpty(python))
+        {
+            throw new InvalidOperationException("Python was not found. Install Python 3.11+ or run run_webgork_app.bat for setup.");
+        }
+
+        string script = File.Exists(Path.Combine(root, "work", "run_server.py"))
+            ? "work\\run_server.py"
+            : "app.py";
+
+        ProcessStartInfo info = new ProcessStartInfo();
+        info.WorkingDirectory = root;
+        info.UseShellExecute = false;
+        info.CreateNoWindow = true;
+        info.WindowStyle = ProcessWindowStyle.Minimized;
+        info.EnvironmentVariables["WEBGORK_OPEN_BROWSER"] = "0";
+        info.EnvironmentVariables["WEBGORK_PORT"] = Port;
+
+        if (Path.GetFileName(python).Equals("py.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            info.FileName = python;
+            info.Arguments = "-3 " + script;
+        }
+        else
+        {
+            info.FileName = python;
+            info.Arguments = script;
+        }
+
+        Process.Start(info);
+    }
+
+    private static string FindPython()
+    {
+        string local = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Python",
+            "pythoncore-3.14-64",
+            "python.exe");
+        if (File.Exists(local)) return local;
+
+        string py = FindOnPath("py.exe");
+        if (!String.IsNullOrEmpty(py)) return py;
+
+        string python = FindOnPath("python.exe");
+        if (!String.IsNullOrEmpty(python)) return python;
+
+        return FindOnPath("python3.exe");
+    }
+
+    private static string FindChrome()
+    {
+        string[] candidates = new string[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Google", "Chrome", "Application", "chrome.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Google", "Chrome", "Application", "chrome.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Google", "Chrome", "Application", "chrome.exe")
+        };
+
+        foreach (string item in candidates)
+        {
+            if (File.Exists(item)) return item;
+        }
+
+        return FindOnPath("chrome.exe");
+    }
+
+    private static string FindOnPath(string fileName)
+    {
+        string path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (string dir in path.Split(Path.PathSeparator))
+        {
+            try
+            {
+                if (String.IsNullOrWhiteSpace(dir)) continue;
+                string full = Path.Combine(dir.Trim(), fileName);
+                if (File.Exists(full)) return full;
+            }
+            catch
+            {
+            }
+        }
+        return "";
+    }
+
+    private static void OpenChromeApp()
+    {
+        string chrome = FindChrome();
+        if (!String.IsNullOrEmpty(chrome))
+        {
+            ProcessStartInfo info = new ProcessStartInfo();
+            info.FileName = chrome;
+            info.Arguments = "--app=\"" + AppUrl + "\" --new-window --class=WebGUIv3";
+            info.UseShellExecute = false;
+            Process.Start(info);
+            return;
+        }
+
+        ProcessStartInfo fallback = new ProcessStartInfo(AppUrl);
+        fallback.UseShellExecute = true;
+        Process.Start(fallback);
     }
 }

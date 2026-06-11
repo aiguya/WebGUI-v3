@@ -1308,3 +1308,18 @@
   - 공홈 quota/Usage/official 관련 잔여 문자열 검색 통과.
   - 7863 릴리즈 서버로 `/health` 응답을 확인했고, 확인 후 서버를 다시 종료했다.
   - `release/WebGrok-v3-Hermes-20260611.zip`를 갱신했다.
+
+### 2026-06-12 02:20 KST - 원본 WebGUI.v3 EXE 서버 직접 기동화
+- 목표: 원본 앱에서 서버가 내려가 있을 때 `WebGUI.v3.exe`만 실행해도 서버가 뜨지 않는 문제를 해결한다.
+- 확인:
+  - 기존 `WebGUI.v3.exe`는 같은 폴더의 `run_webgork_app.bat`만 실행하는 래퍼였고, 실제 재현 시 새 서버 기동 로그가 남지 않았다.
+  - 서버 직접 기동 로직은 릴리즈 `WEBGROK_CHROME_APP.exe`에만 들어 있었다.
+- 변경:
+  - `tools/WebGuiLauncher.cs`: `/health` 확인 후 서버가 없으면 `work/run_server.py`를 `WEBGORK_PORT=7863`, `WEBGORK_OPEN_BROWSER=0` 환경으로 직접 시작하도록 교체했다.
+  - 서버 준비가 끝나면 Chrome `--app=http://127.0.0.1:7863/?v=20260605-v3-68` 모드로 앱을 연다.
+  - Python/Chrome 탐색 fallback과 서버 시작 실패 시 `work/server-runner.log` 안내 메시지를 추가했다.
+  - `WebGUI.v3.exe`를 새 런처 소스로 재빌드했다.
+- 검증:
+  - `python -m py_compile app.py work/run_server.py` 통과.
+  - `tools/build_webgui_launcher.ps1`로 `WebGUI.v3.exe` 재생성 확인.
+  - 서버가 내려간 상태에서 `WebGUI.v3.exe`만 실행해 7863 LISTENING 생성 및 `/health` 200 응답 확인.
