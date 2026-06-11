@@ -1200,3 +1200,22 @@
   - 인앱 브라우저 검증은 브라우저 연결 프로세스가 샌드박스에서 시작 중 종료되어 진행하지 못했고, HTTP/DOM 문자열 검증으로 대체했다.
   - 실제 생성/편집/영상 probe 요청은 쿼터/크레딧 보호를 위해 실행하지 않았다.
 - 백업: `backups/before-20260611-1500-model-discovery-ui`
+
+### 2026-06-11 20:13 KST - Hermes-only 개인정보 클린 릴리즈 폴더 생성
+- 목표: 공홈 quota를 사용하는 UI/라우트/웹 세션 루틴이 포함되지 않고, 개인 설정/쿠키/로그/라이브러리 파일이 빠진 원클릭 실행 릴리즈 폴더를 만든다.
+- 변경:
+  - `tools/build_release_no_official.py`: `release/WebGrok-v3-Hermes` 산출물을 재생성하는 빌드 스크립트를 추가했다.
+  - 릴리즈 산출물에는 `app.py`, `templates`, `static`, `requirements.txt`, `work/run_server.py`, `webgork-settings.json`, `RUN_WEBGROK_HERMES_ONLY.bat`, `README_RELEASE.md`만 포함한다.
+  - 빌드 과정에서 공홈 quota provider 옵션, 공홈 사용량 카드, 직접 OAuth 로그인 카드, 공홈 quota endpoint/모델/Chrome 세션 문자열을 제거하거나 비활성화한다.
+  - 릴리즈 기본 설정은 `provider: hermes_proxy`, `hermes_base_url: http://127.0.0.1:8645/v1`로 생성한다.
+  - `.webgork-private`, `.chrome-*`, `media-library`, `backups`, 로그, git 메타데이터, 기존 `webgork-settings.json`은 복사하지 않는다.
+  - 공유용 압축본 `release/WebGrok-v3-Hermes-20260611.zip`을 생성했다.
+- 검증:
+  - 릴리즈 폴더 기준 `python -m py_compile app.py` 통과.
+  - 릴리즈 폴더 기준 `node --check static/app.js` 통과.
+  - Flask test client에서 `/health`와 `/` 200, 공홈 quota 관련 route 없음 확인.
+  - `rg`로 `grok-official`, `grok_official`, `GROK_OFFICIAL`, `official:imagine`, `grok.com/rest/app-chat`, `Cookie`, `csrf`, 개인 이메일/계정 문자열, OAuth token 파일명 패턴이 릴리즈 폴더에 남지 않았는지 확인했다.
+  - 테스트 중 생성된 빈 `.webgork-private`, `media-library`, `__pycache__`는 릴리즈 폴더 내부 경로를 확인한 뒤 삭제하고 zip을 다시 만들었다.
+- 산출물:
+  - `release/WebGrok-v3-Hermes/RUN_WEBGROK_HERMES_ONLY.bat`
+  - `release/WebGrok-v3-Hermes-20260611.zip`
