@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260605-v3-68">
+  <link rel="stylesheet" href="/static/styles.css?v=20260612-v3-69">
 </head>
 <body>
   <header class="topbar">
@@ -1188,6 +1188,7 @@
   <dialog class="picker-modal" id="libraryPickerModal">
     <div class="modal-head">
       <h2 id="libraryPickerTitle">라이브러리 이미지 선택</h2>
+      <button type="button" id="libraryPickerDone" class="secondary" hidden>선택 완료</button>
       <button type="button" id="closeLibraryPicker" class="icon-button">×</button>
     </div>
     <div class="picker-toolbar">
@@ -1256,8 +1257,13 @@
     </div>
   </div>
   <dialog class="media-viewer" id="mediaViewer">
+    <div class="media-viewer-actions" data-media-viewer-actions hidden>
+      <button type="button" data-media-viewer-send="edit">편집</button>
+      <button type="button" data-media-viewer-send="video">영상</button>
+      <button type="button" class="secondary" data-media-viewer-close>닫기</button>
+    </div>
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260605-v3-68"></script>
+  <script src="/static/app.js?v=20260612-v3-69"></script>
 </body>
 </html>

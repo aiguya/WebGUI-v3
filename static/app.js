@@ -98,6 +98,7 @@ const jobQueue = [];
 let activeJobs = 0;
 const maxActiveJobs = Number.POSITIVE_INFINITY;
 const maxQueueCopies = 100;
+const maxI2vBatchLibraryImages = 10;
 let mediaViewerContext = null;
 let lastQueuePreviewClosedAt = 0;
 const repeatableQueueEndpoints = new Set([
@@ -282,8 +283,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-68";
-const appShellCacheName = "webgui-shell-v3-68";
+const appStaticVersion = "20260612-v3-69";
+const appShellCacheName = "webgui-shell-v3-69";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -718,8 +719,8 @@ function previewItem(target, item) {
   const path = item.file_path;
   const isVideo = item.kind === "video" && path.toLowerCase().endsWith(".mp4");
   box.innerHTML = isVideo
-    ? `<video src="${path}" controls playsinline loop></video>`
-    : `<img src="${path}" alt="generated result">`;
+    ? `<video src="${path}" data-file-path="${escapeHtml(path)}" controls playsinline loop></video>`
+    : `<img src="${path}" data-file-path="${escapeHtml(path)}" alt="generated result">`;
 }
 
 function previewBatchItems(target, items = []) {
@@ -732,7 +733,7 @@ function previewBatchItems(target, items = []) {
   box.innerHTML = `
     <div class="batch-result-grid">
       ${items.slice(0, 40).map(item => `
-        <button type="button" class="batch-result-item" data-src="${item.file_path}">
+        <button type="button" class="batch-result-item" data-src="${escapeHtml(item.file_path)}" data-kind="${escapeHtml(item.kind || "image")}">
           <img src="${item.file_path}" alt="" loading="lazy" decoding="async">
         </button>`).join("")}
     </div>`;
@@ -805,15 +806,60 @@ function setReverseOutput(prompt) {
   output.value = prompt || "";
 }
 
+function publicMediaPathFromSrc(src) {
+  const value = String(src || "").trim();
+  if (!value) return "";
+  if (value.startsWith("/media-library/")) return value.split(/[?#]/)[0];
+  try {
+    const url = new URL(value, window.location.href);
+    if (url.origin === window.location.origin && url.pathname.startsWith("/media-library/")) {
+      return url.pathname;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+function mediaViewerTargetForm(target) {
+  const selector = target === "edit"
+    ? "#i2i form[data-endpoint='/api/i2i']"
+    : "#i2v form[data-endpoint='/api/i2v']";
+  return document.querySelector(selector);
+}
+
+function sendMediaViewerImageTo(target) {
+  const path = publicMediaPathFromSrc(mediaViewerContext?.src);
+  if (!path) {
+    showToast("라이브러리에 저장된 이미지 결과만 바로 보낼 수 있습니다.", true);
+    return;
+  }
+  const form = mediaViewerTargetForm(target);
+  if (!form) {
+    showToast("대상 탭을 찾지 못했습니다.", true);
+    return;
+  }
+  replaceMultiImageLibrarySource(form, path, mediaViewerContext?.label || path);
+  closeMediaViewer();
+  activateTab(target === "edit" ? "i2i" : "i2v");
+  form.scrollIntoView({ block: "center", behavior: "smooth" });
+  const prompt = form.querySelector("[name='prompt']");
+  if (prompt) prompt.focus({ preventScroll: true });
+  showToast(target === "edit" ? "이미지 편집 레퍼런스로 교체했습니다." : "이미지→영상 레퍼런스로 교체했습니다.");
+}
+
 function openMediaViewer(src, mediaType = "image", context = null) {
   const viewer = document.querySelector("#mediaViewer");
   const stage = viewer.querySelector(".media-viewer-stage");
-  mediaViewerContext = context || null;
+  const actions = viewer.querySelector("[data-media-viewer-actions]");
+  mediaViewerContext = { ...(context || {}), src, mediaType };
   viewer.dataset.context = mediaViewerContext?.source || "";
   viewer.dataset.jobId = mediaViewerContext?.jobId || "";
+  viewer.dataset.mediaType = mediaType;
   stage.innerHTML = mediaType === "video"
     ? `<video src="${src}" controls autoplay playsinline loop></video>`
     : `<img src="${src}" alt="">`;
+  if (actions) actions.hidden = !(mediaType === "image" && publicMediaPathFromSrc(src));
   viewer.classList.add("open");
   if (!viewer.open) viewer.showModal();
 }
@@ -827,6 +873,9 @@ function noteMediaViewerClosed() {
   if (viewer) {
     viewer.dataset.context = "";
     viewer.dataset.jobId = "";
+    viewer.dataset.mediaType = "";
+    const actions = viewer.querySelector("[data-media-viewer-actions]");
+    if (actions) actions.hidden = true;
   }
 }
 
@@ -1001,16 +1050,17 @@ function tabIdForEndpoint(endpoint) {
 
 function showJobResult(job) {
   if (!job?.result) return false;
-  if (!job.previewSelector) {
-    const item = job.result?.item || job.result?.items?.[0];
-    if (!item?.file_path) return false;
+  const item = job.result?.item || job.result?.items?.[0];
+  if (item?.file_path) {
     openMediaViewer(item.file_path, item.kind === "video" ? "video" : "image", {
       source: "queue-preview",
       jobId: job.id,
       status: job.status,
+      label: item.prompt || job.prompt || item.file_path,
     });
     return true;
   }
+  if (!job.previewSelector) return false;
   if (job.result?.items?.length) {
     previewBatchItems(job.previewSelector, job.result.items);
   } else if (job.result?.item) {
@@ -2884,6 +2934,7 @@ document.querySelectorAll("form[data-endpoint]").forEach(form => {
   form.querySelector("[data-i2v-batch-per-image]")?.addEventListener("change", () => {
     updateI2vReferenceHelp(form);
     enforceI2vReferenceLimit(form, true);
+    enforceMultiImageSourceLimit(form, true);
     renderMultiImageSources(form);
   });
   form.querySelector("[name='request_provider']")?.addEventListener("change", () => {
@@ -3052,6 +3103,21 @@ function releaseImageSource(source) {
   if (source?.kind === "file" && source.src?.startsWith("blob:")) URL.revokeObjectURL(source.src);
 }
 
+function maxMultiImageSourcesForForm(form) {
+  if (isSingleImageSourceForm(form)) return 1;
+  return isI2vBatchPerImageForm(form) ? maxI2vBatchLibraryImages : 3;
+}
+
+function enforceMultiImageSourceLimit(form, notify = false) {
+  const sources = getMultiImageSources(form);
+  const max = maxMultiImageSourcesForForm(form);
+  if (sources.length <= max) return;
+  sources.slice(max).forEach(releaseImageSource);
+  sources.splice(max);
+  renderMultiImageSources(form);
+  if (notify) showToast(`이미지는 최대 ${max}개까지 사용할 수 있습니다.`);
+}
+
 function enforceI2vReferenceLimit(form, notify = false) {
   updateI2vReferenceHelp(form);
   if (!isSingleImageSourceForm(form)) return;
@@ -3099,6 +3165,7 @@ function renderMultiImageSources(form) {
 function addMultiImageFiles(form, files) {
   const sources = getMultiImageSources(form);
   const imageFiles = [...files].filter(file => file.type.startsWith("image/"));
+  const max = maxMultiImageSourcesForForm(form);
   if (isSingleImageSourceForm(form)) {
     const file = imageFiles[0];
     if (!file) return;
@@ -3107,23 +3174,34 @@ function addMultiImageFiles(form, files) {
     renderMultiImageSources(form);
     return;
   }
+  let added = 0;
   imageFiles.forEach(file => {
-    if (sources.length >= 3) return;
+    if (sources.length >= max) return;
     sources.push({ kind: "file", file, src: URL.createObjectURL(file), label: file.name });
+    added += 1;
   });
+  renderMultiImageSources(form);
+  if (imageFiles.length > added) showToast(`이미지는 최대 ${max}개까지 사용할 수 있습니다.`);
+}
+
+function replaceMultiImageLibrarySource(form, path, label = path) {
+  const sources = getMultiImageSources(form);
+  sources.forEach(releaseImageSource);
+  sources.splice(0, sources.length, { kind: "library", path, src: path, label });
+  const input = form.querySelector("input[type='file']");
+  if (input) input.value = "";
   renderMultiImageSources(form);
 }
 
 function addMultiImageLibrarySource(form, path, label = path) {
   const sources = getMultiImageSources(form);
+  const max = maxMultiImageSourcesForForm(form);
   if (isSingleImageSourceForm(form)) {
-    sources.forEach(releaseImageSource);
-    sources.splice(0, sources.length, { kind: "library", path, src: path, label });
-    renderMultiImageSources(form);
+    replaceMultiImageLibrarySource(form, path, label);
     return;
   }
-  if (sources.length >= 3) {
-    showToast("이미지는 최대 3개까지 사용할 수 있습니다.", true);
+  if (sources.length >= max) {
+    showToast(`이미지는 최대 ${max}개까지 사용할 수 있습니다.`, true);
     return;
   }
   sources.push({ kind: "library", path, src: path, label });
@@ -3432,7 +3510,12 @@ document.querySelectorAll("[data-file-drop]").forEach(zone => {
 document.addEventListener("click", event => {
   const image = event.target.closest(".selected-preview img, .result-panel img, .batch-result-item img");
   if (image) {
-    openMediaViewer(image.currentSrc || image.src, "image");
+    const batch = image.closest(".batch-result-item");
+    const path = batch?.dataset.src || image.dataset.filePath || publicMediaPathFromSrc(image.currentSrc || image.src) || image.currentSrc || image.src;
+    openMediaViewer(path, "image", {
+      source: batch ? "batch-result-preview" : "result-preview",
+      label: batch ? "batch result" : "preview image",
+    });
     return;
   }
   const video = event.target.closest(".selected-preview video");
@@ -3493,7 +3576,14 @@ document.addEventListener("click", event => {
   const thumb = event.target.closest(".source-thumb");
   if (thumb) {
     const image = thumb.querySelector("img");
-    if (image) openMediaViewer(image.currentSrc || image.src, "image");
+    if (image) {
+      const form = thumb.closest("form");
+      const source = getMultiImageSources(form)[Number(thumb.dataset.sourceIndex || "0")];
+      openMediaViewer(source?.path || image.currentSrc || image.src, "image", {
+        source: "source-preview",
+        label: source?.label || "reference image",
+      });
+    }
   }
 });
 
@@ -6521,12 +6611,18 @@ document.querySelector("#libraryGrid").addEventListener("click", async event => 
   }
   const thumb = event.target.closest(".thumb");
   if (thumb && item.dataset.kind === "video") {
-    openMediaViewer(item.dataset.filePath, "video");
+    openMediaViewer(item.dataset.filePath, "video", {
+      source: "library",
+      label: item.dataset.prompt || item.dataset.filePath,
+    });
     return;
   }
   const thumbImage = event.target.closest(".thumb img");
   if (thumbImage) {
-    openMediaViewer(thumbImage.currentSrc || thumbImage.src, "image");
+    openMediaViewer(item.dataset.filePath || thumbImage.currentSrc || thumbImage.src, "image", {
+      source: "library",
+      label: item.dataset.prompt || item.dataset.filePath,
+    });
     return;
   }
   if (event.target.matches(".item-select")) {
@@ -6720,6 +6816,27 @@ function applyPickerFilters() {
   return filtered;
 }
 
+function pickerAllowsMultiImageSelect() {
+  return pickerMediaType === "image" && isI2vBatchPerImageForm(pickerTargetForm);
+}
+
+function pickerSelectedImagePaths() {
+  if (!pickerAllowsMultiImageSelect()) return new Set();
+  return new Set(getMultiImageSources(pickerTargetForm)
+    .filter(source => source.kind === "library")
+    .map(source => source.path));
+}
+
+function syncPickerDoneButton() {
+  const button = document.querySelector("#libraryPickerDone");
+  if (!button) return;
+  button.hidden = !pickerAllowsMultiImageSelect();
+  if (!button.hidden) {
+    const count = getMultiImageSources(pickerTargetForm).length;
+    button.textContent = `선택 완료 (${count}/${maxI2vBatchLibraryImages})`;
+  }
+}
+
 function pickerMediaHtml(item) {
   if (pickerMediaType === "video") return videoPickerThumbHtml(item.file_path);
   return `
@@ -6735,11 +6852,13 @@ function renderLibraryPicker() {
   if (!grid) return;
   const items = applyPickerFilters();
   const visibleItems = items.slice(0, pickerVisibleCount);
+  const selectedPaths = pickerSelectedImagePaths();
   grid.className = `picker-grid picker-thumb-${pickerThumbSize}`;
   grid.innerHTML = items.length ? "" : `<p>${pickerItems.length ? "필터에 맞는 항목이 없습니다." : `불러올 ${pickerMediaType === "video" ? "영상" : "이미지"}이 없습니다.`}</p>`;
   for (const item of visibleItems) {
     const node = document.createElement("article");
-    node.className = "picker-item";
+    const selected = selectedPaths.has(item.file_path);
+    node.className = `picker-item${selected ? " is-selected" : ""}`;
     node.dataset.id = item.id;
     node.dataset.path = item.file_path;
     node.dataset.mediaType = pickerMediaType;
@@ -6749,6 +6868,7 @@ function renderLibraryPicker() {
     const favoritePressed = item.favorite ? "true" : "false";
     node.innerHTML = `
       <button type="button" class="favorite-button picker-favorite${favoriteClass}" data-picker-favorite aria-label="즐겨찾기" aria-pressed="${favoritePressed}"></button>
+      ${pickerAllowsMultiImageSelect() && selected ? `<span class="picker-selected-mark">선택됨</span>` : ""}
       ${resolution ? `<span class="resolution-badge picker-resolution">${escapeHtml(resolution)}</span>` : ""}
       ${pickerMediaHtml(item)}
       <span class="picker-label">${escapeHtml(item.prompt || item.file_path)}</span>`;
@@ -6766,6 +6886,7 @@ function renderLibraryPicker() {
     const rendered = Math.min(items.length, pickerVisibleCount);
     stats.textContent = `${items.length} / ${pickerItems.length}${items.length > rendered ? ` · ${rendered}개 표시` : ""}`;
   }
+  syncPickerDoneButton();
 }
 
 function rerenderPicker(resetVisible = true) {
@@ -6809,7 +6930,10 @@ async function openLibraryPicker(form, options = {}) {
   templatePickerSlotKey = options.templateSlotKey || "";
   pickerMediaType = options.mediaType || mediaTypeForForm(form);
   resetPickerControls();
-  document.querySelector("#libraryPickerTitle").textContent = pickerMediaType === "video" ? "라이브러리 영상 선택" : "라이브러리 이미지 선택";
+  document.querySelector("#libraryPickerTitle").textContent = pickerAllowsMultiImageSelect()
+    ? `라이브러리 이미지 선택 · 최대 ${maxI2vBatchLibraryImages}개`
+    : (pickerMediaType === "video" ? "라이브러리 영상 선택" : "라이브러리 이미지 선택");
+  syncPickerDoneButton();
   grid.innerHTML = "<p>불러오는 중입니다.</p>";
   const response = await fetch("/api/library");
   const data = await readJsonResponse(response, "요청 실패");
@@ -6842,6 +6966,10 @@ document.querySelector("#closeLibraryPicker").addEventListener("click", () => {
   document.querySelector("#libraryPickerModal").close();
 });
 
+document.querySelector("#libraryPickerDone")?.addEventListener("click", () => {
+  document.querySelector("#libraryPickerModal").close();
+});
+
 document.querySelector("#libraryPickerModal")?.addEventListener("click", event => {
   if (event.target.id === "libraryPickerModal") {
     event.currentTarget.close();
@@ -6852,6 +6980,8 @@ document.querySelector("#libraryPickerModal")?.addEventListener("close", () => {
   pickerTargetForm = null;
   pickerItems = [];
   templatePickerSlotKey = "";
+  const done = document.querySelector("#libraryPickerDone");
+  if (done) done.hidden = true;
 });
 
 document.querySelector("#pickerSearch")?.addEventListener("input", event => {
@@ -6932,6 +7062,27 @@ document.querySelector("#clearMangaBuiltinPrompt")?.addEventListener("click", ()
 });
 syncMangaBuiltinPromptControls();
 
+function togglePickerBatchImage(item) {
+  const form = pickerTargetForm;
+  const path = item.dataset.path;
+  const sources = getMultiImageSources(form);
+  const existing = sources.findIndex(source => source.kind === "library" && source.path === path);
+  if (existing >= 0) {
+    sources.splice(existing, 1);
+    renderMultiImageSources(form);
+    renderLibraryPicker();
+    showToast("선택에서 제거했습니다.");
+    return;
+  }
+  if (sources.length >= maxI2vBatchLibraryImages) {
+    showToast(`이미지는 최대 ${maxI2vBatchLibraryImages}개까지 선택할 수 있습니다.`, true);
+    return;
+  }
+  addMultiImageLibrarySource(form, path, item.querySelector(".picker-label")?.textContent || path);
+  renderLibraryPicker();
+  showToast(`이미지 ${getMultiImageSources(form).length}/${maxI2vBatchLibraryImages}개를 선택했습니다.`);
+}
+
 document.querySelector("#libraryPickerGrid").addEventListener("click", async event => {
   const loadMore = event.target.closest("[data-load-more-picker]");
   if (loadMore) {
@@ -6955,6 +7106,10 @@ document.querySelector("#libraryPickerGrid").addEventListener("click", async eve
   }
   if (mediaType !== "video" && event.target.closest(".picker-zoom-symbol")) {
     previewPickerMedia(item.dataset.path, "image");
+    return;
+  }
+  if (pickerAllowsMultiImageSelect() && mediaType === "image") {
+    togglePickerBatchImage(item);
     return;
   }
   if (templatePickerSlotKey) {
@@ -7640,6 +7795,20 @@ document.querySelector("#copyErrorLog").addEventListener("click", async () => {
   showToast("오류 로그를 복사했습니다.");
 });
 document.querySelector("#mediaViewer")?.addEventListener("click", event => {
+  const send = event.target.closest("[data-media-viewer-send]");
+  if (send) {
+    event.preventDefault();
+    event.stopPropagation();
+    sendMediaViewerImageTo(send.dataset.mediaViewerSend);
+    return;
+  }
+  if (event.target.closest("[data-media-viewer-close]")) {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMediaViewer();
+    return;
+  }
+  if (event.target.closest(".media-viewer-actions")) return;
   if (event.target.closest("video")) return;
   event.preventDefault();
   event.stopPropagation();
