@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260611-release-hermes-02"
+STATIC_VERSION = "20260611-release-hermes-03"
 
 
 def copy_tree(src, dst):
@@ -41,19 +41,34 @@ def strip_html_official_quota(html):
         flags=re.S,
     )
     html = re.sub(
-        r'\n\s*<div class="settings-card">\s*<h2>직접 OAuth 로그인</h2>.*?</div>',
+        r'\n\s*<div class="settings-card">\s*<h2>무료 크레딧·토큰</h2>.*?</div>',
         "",
         html,
         flags=re.S,
     )
+    html = re.sub(
+        r'\n\s*<div class="settings-card">\s*<h2>직접 OAuth 로그인</h2>[\s\S]*?</form>\s*</div>',
+        "",
+        html,
+    )
+    html = re.sub(
+        r'\n\s*<div class="quota-pill is-empty" id="quotaPill"[\s\S]*?</div>',
+        "",
+        html,
+        count=1,
+    )
     html = html.replace("20260605-v3-68", STATIC_VERSION)
     html = html.replace(r"C:\Users\aiguy\Pictures\WebGUI-v3", r"C:\WebGrok\media")
+    html = html.replace("실행 시 Hermes/Grok 쿼터가 사용될 수 있습니다.", "실행 시 Hermes 요청량이 사용될 수 있습니다.")
     return html
 
 
 def strip_js_official_quota(js):
     js = js.replace("20260605-v3-68", STATIC_VERSION)
     js = js.replace("webgui-shell-v3-68", f"webgui-shell-{STATIC_VERSION}")
+    js = js.replace("let lastQuotaRefresh = 0;\n", "")
+    js = js.replace("  refreshQuota();\n", "")
+    js = js.replace("    refreshQuota(true);\n", "")
     js = re.sub(
         r"const grokOfficialEndpointByBase = \{.*?\};",
         "const grokOfficialEndpointByBase = {};",
@@ -86,10 +101,35 @@ def strip_js_official_quota(js):
         flags=re.S,
     )
     js = re.sub(
-        r"async function refreshQuota\(force = false\) \{.*?\n\}",
-        "async function refreshQuota(force = false) {\n  renderQuota(null, \"Hermes-only release\");\n}",
+        r"\nfunction formatQuotaValue\(value\) \{[\s\S]*?\nfunction ensureModelOption\(",
+        "\nfunction ensureModelOption(",
+        js,
+    )
+    js = js.replace('  const grokReady = Boolean(data.grok_official?.chrome_running);\n', "")
+    js = js.replace("hermesReady || codexReady || grokReady", "hermesReady || codexReady")
+    js = js.replace("!(hermesReady || codexReady || grokReady)", "!(hermesReady || codexReady)")
+    js = js.replace(
+        '''    <span class="mini-service ${grokReady ? "is-live" : "is-off"}" title="Grok Official ${grokReady ? "Chrome ready" : "not ready"}">
+      <span class="status-dot"></span><span>G</span>
+    </span>
+''',
+        "",
+    )
+    js = js.replace(
+        '''    <dt>Grok Official</dt><dd>${data.grok_official?.chrome_running ? `Chrome ${data.grok_official.chrome_port}` : "없음"}</dd>
+''',
+        "",
+    )
+    js = re.sub(
+        r"function installQuotaPanel\(\) \{.*?\n\}",
+        "",
         js,
         flags=re.S,
+    )
+    js = re.sub(
+        r'\n\s*const oldUsageLink = document\.querySelector\("a\[href=\'https://grok\.com/\?_s=usage\'\]"\);[\s\S]*?oldUsageCard\.remove\(\);\n',
+        "\n",
+        js,
     )
     js = re.sub(
         r"function installGrokOfficialPanel\(\) \{.*?\n\}",
@@ -103,12 +143,54 @@ def strip_js_official_quota(js):
         js,
         flags=re.S,
     )
+    js = re.sub(
+        r'\n\s*<div class="connection-row is-disconnected" data-connection-service="grokOfficial">[\s\S]*?</div>\s*(?=\n\s*<div class="connection-row is-disconnected" data-connection-service="codex">)',
+        "\n      ",
+        js,
+    )
+    js = js.replace("    bindGrokOfficialPanel();\n", "")
+    js = re.sub(
+        r"\nfunction setGrokOfficialStatus\(message, isError = false\) \{[\s\S]*?\nasync function refreshCodexProxyPanel\(",
+        "\nasync function refreshCodexProxyPanel(",
+        js,
+    )
+    js = js.replace("installQuotaPanel();\n", "")
     js = js.replace("/api/grok-official", "/disabled-home-quota")
     js = js.replace("grok_official", "home_quota_disabled")
     js = js.replace("grokOfficial", "homeQuotaDisabled")
     js = js.replace("Grok Official", "Homepage quota disabled")
     js = js.replace("Grok 공식홈", "공홈 쿼타 제거됨")
     js = js.replace("official:imagine", "disabled-home-image")
+    js = js.replace("home_quota_disabled", "disabled_web_provider")
+    js = js.replace("homeQuotaDisabled", "disabledWebProvider")
+    js = js.replace("disabled-home-quota", "disabled-web-route")
+    js = js.replace("Homepage quota disabled", "Disabled web provider")
+    js = js.replace("공홈 쿼타 제거됨", "비활성화된 웹 경로")
+    js = js.replace("disabled_web_provider", "release_removed_provider")
+    js = js.replace("disabledWebProvider", "releaseRemovedProvider")
+    js = js.replace("disabled-web-route", "release-disabled-route")
+    js = js.replace("Disabled web provider", "Release removed route")
+    js = js.replace("비활성화된 웹 경로", "릴리즈 제외 경로")
+    js = js.replace("const releaseRemovedProviderEndpointByBase = {};\n\n", "")
+    js = re.sub(
+        r"function effectiveEndpointForForm\(form\) \{[\s\S]*?\n\}",
+        'function effectiveEndpointForForm(form) {\n  return form?.dataset.endpoint || "";\n}',
+        js,
+        count=1,
+    )
+    js = js.replace('  if (String(imageModel || "").startsWith("official:")) return "release_removed_provider";\n', "")
+    js = js.replace(
+        '  return method === "official" || method === "frame" ? "release_removed_provider" : "hermes_proxy";',
+        '  return "hermes_proxy";',
+    )
+    js = js.replace('provider === "release_removed_provider"', "false")
+    js = js.replace('provider !== "release_removed_provider"', "true")
+    js = re.sub(r'\n\s*"/release-disabled-route-[^"]+": [^,\n]+,?', "", js)
+    js = js.replace('"release_removed_provider"', '"hermes_proxy"')
+    js = js.replace("releaseRemovedProvider", "hermesProxy")
+    js = js.replace("release-disabled-route", "removed-route")
+    js = js.replace("릴리즈 제외 경로", "제외된 경로")
+    js = re.sub(r'\n\s*release_removed_provider: "[^"]*",', "", js)
     return js
 
 
@@ -133,7 +215,7 @@ def strip_app_official_quota(py):
 def _disable_grok_official_release_routes():
     blocked = []
     for rule in list(app.url_map.iter_rules()):
-        if rule.rule.startswith("/api/grok-official") or rule.rule == "/api/oauth/quota":
+        if rule.rule.startswith("/api/grok-official"):
             blocked.append(rule)
     for rule in blocked:
         try:
@@ -164,6 +246,20 @@ _disable_grok_official_release_routes()
     py = py.replace("webgork-oauth-token.json", "release-disabled-web-token.json")
     py = py.replace("Grok 공식홈 Quota", "공홈 쿼타 제거됨")
     py = py.replace("Grok 공식홈", "공홈 쿼타 제거됨")
+    py = py.replace("HOME_QUOTA_DISABLED", "DISABLED_WEB_PROVIDER")
+    py = py.replace("home_quota_disabled", "disabled_web_provider")
+    py = py.replace("home-quota-disabled", "disabled-web-route")
+    py = py.replace("공홈 쿼타 제거됨", "비활성화된 웹 경로")
+    py = py.replace("DISABLED_WEB_PROVIDER", "RELEASE_REMOVED_PROVIDER")
+    py = py.replace("disabled_web_provider", "release_removed_provider")
+    py = py.replace("disabled-web-route", "release-disabled-route")
+    py = py.replace("비활성화된 웹 경로", "릴리즈 제외 경로")
+    py = py.replace('provider == "release_removed_provider"', "False")
+    py = py.replace('cfg["provider"] == "release_removed_provider"', "False")
+    py = py.replace('"release_removed_provider"', '"removed_provider_unreachable"')
+    py = py.replace("release_removed_provider", "removed_provider_unreachable")
+    py = py.replace("release-disabled-route", "removed-route")
+    py = py.replace("릴리즈 제외 경로", "제외된 경로")
     return py
 
 

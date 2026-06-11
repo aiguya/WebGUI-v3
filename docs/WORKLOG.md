@@ -1236,3 +1236,18 @@
   - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
   - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
   - `release/WebGrok-v3-Hermes-20260611.zip`를 샘플 템플릿 포함 상태로 재생성했다.
+
+### 2026-06-11 21:57 KST - 릴리즈 공홈 쿼타 잔여 UI/루틴 제거 보강
+- 목표: Hermes-only 릴리즈 전달본에서 상단 `G` 상태 표시, credit 배터리, 무료 크레딧/Usage 카드, 공홈 quota 대체 provider 잔여 문자열이 보이지 않도록 정리한다.
+- 변경:
+  - `tools/build_release_no_official.py`: 릴리즈 HTML에서 `quotaPill`과 `무료 크레딧·토큰` 카드를 제거하도록 보강했다.
+  - 직접 OAuth 카드 제거 regex가 nested `div` 때문에 닫힘 태그를 남기던 문제를 수정했다.
+  - 릴리즈 JS에서 `refreshQuota`, `/api/oauth/quota`, `installQuotaPanel`, Usage 링크 제거 루틴, 상단 `G` mini-service를 제거했다.
+  - 공홈 quota 대체명으로 남던 `home_quota_disabled`, `disabled_web_provider`, `release_removed_provider` 관련 문자열이 릴리즈 산출물에 남지 않도록 후처리를 추가했다.
+  - 모델 검색 안내 문구를 `Hermes 요청량` 기준으로 조정했다.
+- 검증:
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - 릴리즈 폴더에서 `Grok 공식홈`, `grok_official`, `grok-official`, `home_quota`, `disabled_web_provider`, `release_removed_provider`, `quotaPill`, `refreshQuota`, `/api/oauth/quota`, `grok.com/?_s=usage`, `C:\Users\` 패턴이 검색되지 않음을 확인했다.
+  - Flask test client에서 `/health` 200, provider `hermes_proxy`, UI에 `quotaPill`/`무료 크레딧`/`Grok 공식홈`/`C:\Users\` 미포함, 샘플 템플릿 1개 유지 확인.
+  - `release/WebGrok-v3-Hermes-20260611.zip`를 갱신했다.
