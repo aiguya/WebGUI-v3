@@ -1295,3 +1295,16 @@
   - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
   - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
   - `release/WebGrok-v3-Hermes-20260611.zip`를 갱신했다.
+
+### 2026-06-12 01:43 KST - 릴리즈 상단 연결 배지 기준 일치
+- 목표: 연결 상태 카드에서는 끊김으로 보이는데 화면 상단 H/C 배지는 초록으로 표시되는 불일치를 제거한다.
+- 변경:
+  - `tools/build_release_no_official.py`: 릴리즈 `renderStatus()`에서 Codex 상단 배지가 `/health`의 `codex_proxy_running`만 보고 초록이 되지 않도록 초기값을 끊김으로 변경했다.
+  - 상단 H/C 미니 배지에 `data-top-service` 식별자를 추가하고, `setTopServiceBadge()` 헬퍼로 연결 카드 갱신 결과와 같은 기준을 반영하도록 했다.
+  - Hermes는 `logged_in && proxy_running`, Codex는 `/api/codex-proxy/status`의 `running && oauth_status === "ready"`일 때만 상단 배지가 초록으로 바뀌도록 맞췄다.
+- 검증:
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - 공홈 quota/Usage/official 관련 잔여 문자열 검색 통과.
+  - 7863 릴리즈 서버로 `/health` 응답을 확인했고, 확인 후 서버를 다시 종료했다.
+  - `release/WebGrok-v3-Hermes-20260611.zip`를 갱신했다.

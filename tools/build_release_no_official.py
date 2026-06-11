@@ -152,6 +152,7 @@ def strip_js_official_quota(js):
         js,
     )
     js = js.replace('  const grokReady = Boolean(data.grok_official?.chrome_running);\n', "")
+    js = js.replace('  const codexReady = Boolean(data.codex_proxy_running);\n', '  const codexReady = false;\n')
     js = js.replace("hermesReady || codexReady || grokReady", "hermesReady || codexReady")
     js = js.replace("!(hermesReady || codexReady || grokReady)", "!(hermesReady || codexReady)")
     js = js.replace(
@@ -161,6 +162,37 @@ def strip_js_official_quota(js):
 ''',
         "",
     )
+    js = re.sub(
+        r'    <span class="mini-service \$\{hermesReady \? "is-live" : "is-off"\}" title="Hermes \$\{hermesReady \? "[^"]*" : "[^"]*"\}">',
+        '    <span data-top-service="hermes" class="mini-service ${hermesReady ? "is-live" : "is-off"}" title="Hermes ${hermesReady ? "connected" : "disconnected"}">',
+        js,
+    )
+    js = re.sub(
+        r'    <span class="mini-service \$\{codexReady \? "is-live" : "is-off"\}" title="Codex \$\{codexReady \? "[^"]*" : "[^"]*"\}">',
+        '    <span data-top-service="codex" class="mini-service ${codexReady ? "is-live" : "is-off"}" title="Codex ${codexReady ? "connected" : "disconnected"}">',
+        js,
+    )
+    if "function setTopServiceBadge(" not in js:
+        js = js.replace(
+            "\nfunction renderStatus(data) {\n",
+            """
+function setTopServiceBadge(service, connected, title) {
+  const item = document.querySelector(`[data-top-service="${service}"]`);
+  if (!item) return;
+  item.classList.toggle("is-live", Boolean(connected));
+  item.classList.toggle("is-off", !connected);
+  if (title) item.title = title;
+  const statusPill = document.querySelector("#statusPill");
+  if (!statusPill) return;
+  const live = Boolean(statusPill.querySelector(".mini-service.is-live"));
+  statusPill.classList.toggle("is-live", live);
+  statusPill.classList.toggle("is-mock", !live);
+}
+
+function renderStatus(data) {
+""",
+            1,
+        )
     js = js.replace(
         '''    <dt>Grok Official</dt><dd>${data.grok_official?.chrome_running ? `Chrome ${data.grok_official.chrome_port}` : "없음"}</dd>
 ''',
@@ -199,6 +231,31 @@ def strip_js_official_quota(js):
         r"\nfunction setGrokOfficialStatus\(message, isError = false\) \{[\s\S]*?\nasync function refreshCodexProxyPanel\(",
         "\nasync function refreshCodexProxyPanel(",
         js,
+    )
+    js = js.replace(
+        '      setConnectionBadge("hermes", Boolean(data.proxy_running),',
+        '      setTopServiceBadge("hermes", Boolean(data.proxy_running), Boolean(data.proxy_running) ? "Hermes connected" : "Hermes proxy off");\n      setConnectionBadge("hermes", Boolean(data.proxy_running),',
+        1,
+    )
+    js = js.replace(
+        '    setConnectionBadge("hermes", false, data.running ?',
+        '    setTopServiceBadge("hermes", false, data.running ? "Hermes auth pending" : "Hermes disconnected");\n    setConnectionBadge("hermes", false, data.running ?',
+        1,
+    )
+    js = js.replace(
+        '  } catch (error) {\n    setConnectionBadge("hermes", false,',
+        '  } catch (error) {\n    setTopServiceBadge("hermes", false, "Hermes check failed");\n    setConnectionBadge("hermes", false,',
+        1,
+    )
+    js = js.replace(
+        '    const connected = Boolean(data.running && data.oauth_status === "ready");\n',
+        '    const connected = Boolean(data.running && data.oauth_status === "ready");\n    setTopServiceBadge("codex", connected, connected ? "Codex connected" : (data.running ? "Codex OAuth checking" : "Codex disconnected"));\n',
+        1,
+    )
+    js = js.replace(
+        '    setConnectionBadge("codex", false,',
+        '    setTopServiceBadge("codex", false, "Codex check failed");\n    setConnectionBadge("codex", false,',
+        1,
     )
     js = re.sub(r"\n\s*compactSettingsLayout\(\);", "", js)
     js = re.sub(r"\n\s*installQuotaPanel\(\);", "", js)
