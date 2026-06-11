@@ -303,6 +303,31 @@ MANGA_BATCH_MAX_UPLOADS = 500
 MANGA_BATCH_MAX_PARALLEL = 50
 MANGA_PANEL_REFERENCE_LIMIT = 2
 MANGA_PANEL_MAX_CROPS = 1000
+LIBRARY_CACHE_LOCK = Lock()
+LIBRARY_CACHE_TTL_SECONDS = 30
+LIBRARY_CACHE = {}
+COMPACT_LIBRARY_EXTRA_KEYS = {
+    "generation_type",
+    "template_result",
+    "template_title",
+    "template_shot_title",
+    "template_shot_method",
+    "generation_origin",
+    "project_id",
+    "project_title",
+    "batch_mode",
+    "source_original_name",
+    "source_page_name",
+    "resolution",
+    "requested_resolution",
+    "original_start_image_path",
+    "start_image_path",
+    "source_image_path",
+    "source_video_path",
+    "source_page_path",
+    "scanned",
+    "promoted_from_scan",
+}
 
 
 def config():
@@ -601,10 +626,36 @@ def normalize_metadata_item(item):
     return item
 
 
-def scanned_library_items():
+def normalize_library_media_type(value):
+    value = str(value or "").strip().lower()
+    if value in {"image", "images"}:
+        return "image"
+    if value in {"video", "videos"}:
+        return "video"
+    return "all"
+
+
+def library_item_matches_media_type(item, media_type):
+    media_type = normalize_library_media_type(media_type)
+    if media_type == "video":
+        return item.get("kind") == "video"
+    if media_type == "image":
+        return item.get("kind") in {"image", "edit"}
+    return True
+
+
+def invalidate_library_cache():
+    with LIBRARY_CACHE_LOCK:
+        LIBRARY_CACHE.clear()
+
+
+def scanned_library_items(media_type=None, include_scanned=True):
+    media_type = normalize_library_media_type(media_type)
     metadata = []
     for item in read_metadata():
         if not isinstance(item, dict):
+            continue
+        if not library_item_matches_media_type(item, media_type):
             continue
         rel = item.get("file_path")
         if not rel:
@@ -613,11 +664,16 @@ def scanned_library_items():
             metadata.append(normalize_metadata_item(item))
     known_paths = {item.get("file_path") for item in metadata}
     scanned = []
-    roots = [
-        ("image", "image", {".png", ".jpg", ".jpeg", ".webp", ".svg"}),
-        ("video", "video", {".mp4", ".webm", ".mov"}),
-        ("manga_trans", "edit", {".png", ".jpg", ".jpeg", ".webp", ".svg"}),
-    ]
+    if not include_scanned:
+        return sorted(metadata, key=lambda item: item.get("created_at") or "", reverse=True)
+    roots = []
+    if media_type in {"all", "image"}:
+        roots.extend([
+            ("image", "image", {".png", ".jpg", ".jpeg", ".webp", ".svg"}),
+            ("manga_trans", "edit", {".png", ".jpg", ".jpeg", ".webp", ".svg"}),
+        ])
+    if media_type in {"all", "video"}:
+        roots.append(("video", "video", {".mp4", ".webm", ".mov"}))
     for folder, kind, extensions in roots:
         directory = media_path(folder)
         if not directory.exists():
@@ -640,6 +696,36 @@ def scanned_library_items():
                 "extra": {"scanned": True},
             })
     return sorted(metadata + scanned, key=lambda item: item.get("created_at") or "", reverse=True)
+
+
+def cached_library_items(media_type=None, include_scanned=True, force=False):
+    media_type = normalize_library_media_type(media_type)
+    cache_key = (media_type, bool(include_scanned))
+    now = time.monotonic()
+    with LIBRARY_CACHE_LOCK:
+        cached = LIBRARY_CACHE.get(cache_key)
+        if not force and cached and now - cached["created_at"] < LIBRARY_CACHE_TTL_SECONDS:
+            return cached["items"]
+    items = scanned_library_items(media_type=media_type, include_scanned=include_scanned)
+    with LIBRARY_CACHE_LOCK:
+        LIBRARY_CACHE[cache_key] = {"created_at": time.monotonic(), "items": items}
+    return items
+
+
+def compact_library_item(item):
+    extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
+    compact_extra = {key: extra[key] for key in COMPACT_LIBRARY_EXTRA_KEYS if key in extra}
+    return {
+        "id": item.get("id"),
+        "kind": item.get("kind"),
+        "prompt": item.get("prompt") or "",
+        "created_at": item.get("created_at"),
+        "model": item.get("model"),
+        "file_path": item.get("file_path"),
+        "source_path": item.get("source_path"),
+        "favorite": bool(item.get("favorite")),
+        "extra": compact_extra,
+    }
 
 
 def video_thumbnail_public_path(rel):
@@ -716,6 +802,7 @@ def write_metadata(items):
     temp = target.with_name(f"{target.name}.tmp")
     temp.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(target)
+    invalidate_library_cache()
 
 
 def normalize_project(item):
@@ -1671,7 +1758,7 @@ def local_media_path_from_public(rel):
 def find_library_item_by_id(item_id):
     if not item_id:
         return None
-    for item in scanned_library_items():
+    for item in cached_library_items():
         if item.get("id") == item_id:
             return item
     return None
@@ -9348,7 +9435,37 @@ def reverse_prompt():
 
 @app.get("/api/library")
 def library():
-    return jsonify({"ok": True, "items": scanned_library_items()})
+    media_type = normalize_library_media_type(request.args.get("media_type") or request.args.get("kind"))
+    include_scanned = parse_request_bool(request.args.get("scan", "1"))
+    force_refresh = parse_request_bool(request.args.get("refresh"))
+    compact = parse_request_bool(request.args.get("compact") or request.args.get("picker"))
+    try:
+        offset = max(0, int(request.args.get("offset") or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = int(request.args.get("limit") or 0)
+        limit = max(0, min(2000, limit))
+    except (TypeError, ValueError):
+        limit = 0
+    items = cached_library_items(media_type=media_type, include_scanned=include_scanned, force=force_refresh)
+    total = len(items)
+    if limit:
+        items = items[offset:offset + limit]
+    elif offset:
+        items = items[offset:]
+    if compact:
+        items = [compact_library_item(item) for item in items]
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "total": total,
+        "offset": offset,
+        "limit": limit or total,
+        "media_type": media_type,
+        "include_scanned": include_scanned,
+        "compact": compact,
+    })
 
 
 @app.post("/api/library/favorite")

@@ -1339,3 +1339,24 @@
   - 원본 서버를 재시작해 `/`, `/static/app.js`, `/static/styles.css` 응답에 새 버튼/선택 로직/캐시 버전이 포함됨을 확인했다.
   - `/health` 200 응답 확인.
   - 브라우저 자동 확인 도구는 `spawn setup refresh` 오류로 사용하지 못했다.
+
+### 2026-06-12 03:25 KST - 라이브러리 불러오기 응답 지연 개선
+- 목표: 이미지/영상 탭의 `라이브러리에서 불러오기` 선택창이 전체 라이브러리 스캔과 20MB대 JSON 응답 때문에 10초 이상 멈추는 문제를 줄인다.
+- 확인:
+  - 기존 `/api/library`는 3,200개 이상 항목과 약 21MB 응답을 매번 만들고, `metadata.json` 전체 읽기/파일 존재 확인/이미지·영상 폴더 재귀 스캔/정렬을 수행했다.
+  - 선택창은 실제로 이미지 또는 영상 한쪽만 필요하지만 기존에는 전체 목록을 받은 뒤 프론트에서 필터링했다.
+- 변경:
+  - `app.py`: 라이브러리 조회 캐시를 추가하고, `media_type`, `scan`, `compact`, `limit`, `offset`, `refresh` 파라미터를 지원하도록 `/api/library`를 확장했다.
+  - `app.py`: 선택창/라이브러리 화면에 필요한 필드만 반환하는 compact item 응답을 추가해 큰 `extra` payload 전송을 줄였다.
+  - `app.py`: 새 결과 저장, 즐겨찾기, 삭제처럼 `write_metadata()`를 거치는 변경 후 라이브러리 캐시를 무효화하도록 했다.
+  - `static/app.js`: 라이브러리 선택창을 누르면 모달을 즉시 열고, `/api/library?media_type=...&scan=0&compact=1&limit=...` 경량 조회로 필요한 타입만 불러오도록 변경했다.
+  - `static/app.js`: 앱 시작 시 전체 라이브러리 자동 로드를 제거하고, 라이브러리 탭이 활성화된 경우에만 전체 라이브러리 갱신을 수행하도록 했다.
+  - 정적 캐시 버전을 `20260612-v3-70` / `webgui-shell-v3-70`으로 갱신하고 `WebGUI.v3.exe`를 재빌드했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py work/run_server.py` 통과.
+  - Flask test client 기준 선택창용 image compact 요청: 첫 호출 약 1.26초, 캐시 재호출 약 0.003초, 응답 약 392KB.
+  - 실행 서버 기준 `curl`: 선택창용 image compact 첫 호출 1.52초, 캐시 재호출 0.006초, 응답 392,022 bytes.
+  - 실행 서버 기준 전체 라이브러리 compact 첫 호출 5.97초, 캐시 재호출 0.052초, 응답 2,547,789 bytes.
+  - 서버를 새 코드로 재시작했고 `/health` 200 및 7863 LISTENING PID 32736 확인.
+  - Browser 플러그인 검증은 기존과 같은 `spawn setup refresh` 오류로 진행하지 못했다.

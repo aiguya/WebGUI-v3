@@ -43,6 +43,7 @@ let dragSelectMode = true;
 let libraryBoxSelect = null;
 let pickerTargetForm = null;
 let pickerItems = [];
+let pickerItemsTotal = 0;
 let pickerMediaType = "image";
 let pickerFavoriteFilter = "all";
 let pickerOperationFilter = "all";
@@ -283,8 +284,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260612-v3-69";
-const appShellCacheName = "webgui-shell-v3-69";
+const appStaticVersion = "20260612-v3-70";
+const appShellCacheName = "webgui-shell-v3-70";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -5893,7 +5894,7 @@ document.querySelector("#templatePreview")?.addEventListener("dragend", event =>
 
 async function loadLibrary(resetVisible = true) {
   const grid = document.querySelector("#libraryGrid");
-  const response = await fetch("/api/library");
+  const response = await fetch("/api/library?compact=1");
   const data = await readJsonResponse(response, "요청 실패");
   if (!data.ok) {
     pendingErrorLog = {
@@ -5919,8 +5920,9 @@ async function loadLibrary(resetVisible = true) {
 async function loadLibrary(resetVisible = true, useCache = false) {
   const grid = document.querySelector("#libraryGrid");
   if (!grid) return;
+  if (!useCache && !document.querySelector("#library")?.classList.contains("active")) return;
   if (!useCache) {
-    const response = await fetch("/api/library");
+    const response = await fetch("/api/library?compact=1");
     const data = await readJsonResponse(response, "라이브러리 조회 실패");
     if (!data.ok) {
       pendingErrorLog = {
@@ -6884,7 +6886,8 @@ function renderLibraryPicker() {
   }
   if (stats) {
     const rendered = Math.min(items.length, pickerVisibleCount);
-    stats.textContent = `${items.length} / ${pickerItems.length}${items.length > rendered ? ` · ${rendered}개 표시` : ""}`;
+    const total = Math.max(pickerItemsTotal || 0, pickerItems.length);
+    stats.textContent = `${items.length} / ${total}${items.length > rendered ? ` · ${rendered}개 표시` : ""}`;
   }
   syncPickerDoneButton();
 }
@@ -6923,27 +6926,56 @@ async function togglePickerFavorite(node, button) {
   }
 }
 
+function filterPickerMediaItems(items, mediaType = pickerMediaType) {
+  return (items || []).filter(item => {
+    if (mediaType === "video") return item.kind === "video";
+    return item.kind === "image" || item.kind === "edit";
+  });
+}
+
+function setPickerItems(items, total = 0) {
+  pickerItems = filterPickerMediaItems(items);
+  pickerItemsTotal = Math.max(Number(total) || 0, pickerItems.length);
+  populatePickerOperationFilter(pickerItems);
+  renderLibraryPicker();
+}
+
+async function fetchPickerItems(mediaType) {
+  const params = new URLSearchParams({
+    media_type: mediaType,
+    scan: "0",
+    compact: "1",
+    limit: String(Math.max(500, Math.min(2000, pickerPageSize * 12))),
+  });
+  const response = await fetch(`/api/library?${params.toString()}`);
+  return readJsonResponse(response, "요청 실패");
+}
+
 async function openLibraryPicker(form, options = {}) {
   pickerTargetForm = form;
   const modal = document.querySelector("#libraryPickerModal");
   const grid = document.querySelector("#libraryPickerGrid");
   templatePickerSlotKey = options.templateSlotKey || "";
   pickerMediaType = options.mediaType || mediaTypeForForm(form);
+  pickerItems = [];
+  pickerItemsTotal = 0;
   resetPickerControls();
   document.querySelector("#libraryPickerTitle").textContent = pickerAllowsMultiImageSelect()
     ? `라이브러리 이미지 선택 · 최대 ${maxI2vBatchLibraryImages}개`
     : (pickerMediaType === "video" ? "라이브러리 영상 선택" : "라이브러리 이미지 선택");
   syncPickerDoneButton();
   grid.innerHTML = "<p>불러오는 중입니다.</p>";
-  const response = await fetch("/api/library");
-  const data = await readJsonResponse(response, "요청 실패");
-  pickerItems = (data.items || []).filter(item => {
-    if (pickerMediaType === "video") return item.kind === "video";
-    return item.kind === "image" || item.kind === "edit";
-  });
-  populatePickerOperationFilter(pickerItems);
-  renderLibraryPicker();
-  modal.showModal();
+  const cachedItems = filterPickerMediaItems(libraryCachedItems);
+  if (cachedItems.length) setPickerItems(cachedItems, cachedItems.length);
+  if (!modal.open) modal.showModal();
+  try {
+    const data = await fetchPickerItems(pickerMediaType);
+    if (!data.ok) throw new Error(data.error || "요청 실패");
+    setPickerItems(data.items || [], data.total || 0);
+  } catch (error) {
+    if (!cachedItems.length) grid.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+    showToast(error.message, true);
+  }
 }
 
 function previewPickerMedia(path, mediaType) {
@@ -6979,6 +7011,7 @@ document.querySelector("#libraryPickerModal")?.addEventListener("click", event =
 document.querySelector("#libraryPickerModal")?.addEventListener("close", () => {
   pickerTargetForm = null;
   pickerItems = [];
+  pickerItemsTotal = 0;
   templatePickerSlotKey = "";
   const done = document.querySelector("#libraryPickerDone");
   if (done) done.hidden = true;
@@ -8410,4 +8443,3 @@ syncLibraryPreferenceControls();
 renderQueue();
 loadHealth();
 loadProjects().catch(error => showToast(error.message, true));
-loadLibrary();

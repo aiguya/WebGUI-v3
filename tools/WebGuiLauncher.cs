@@ -8,7 +8,7 @@ using System.Windows.Forms;
 internal static class Program
 {
     private const string Port = "7863";
-    private const string StaticVersion = "20260612-v3-69";
+    private const string StaticVersion = "20260612-v3-70";
     private const string HealthUrl = "http://127.0.0.1:" + Port + "/health";
     private const string AppUrl = "http://127.0.0.1:" + Port + "/?v=" + StaticVersion;
 
