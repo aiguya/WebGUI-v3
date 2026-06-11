@@ -1265,3 +1265,19 @@
   - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
   - 공홈 quota/Usage/개인 경로 잔여 패턴 검색 통과.
   - `release/WebGrok-v3-Hermes-20260611.zip`를 exe 포함 상태로 재생성했다.
+
+### 2026-06-12 00:05 KST - 릴리즈 설정 연결 상태 패널 복원
+- 목표: Hermes-only 릴리즈 설정 화면에서 원본 앱의 `연결 상태` 패널을 유지하되, `Grok 공식홈` quota 연결 행만 제외한다.
+- 변경:
+  - `tools/build_release_no_official.py`: 릴리즈 JS에서 `compactSettingsLayout()` 호출을 제거해 `Provider` 설정 카드를 유지하도록 했다.
+  - `installConnectionStatusPanel()`은 유지하고, 패널 내부에는 `Hermes xAI`와 `Codex / ChatGPT` 행만 남도록 정리했다.
+  - 남아 있던 `bindGrokOfficialPanel()` 호출을 제거해 설정 스크립트가 끊기지 않도록 했다.
+  - `installQuotaPanel()` 호출은 제거해 공홈 quota/Usage UI는 계속 제외했다.
+- 검증:
+  - 릴리즈 HTML에 `providerForm` 포함, `quotaPill`/`무료 크레딧`/`Grok 공식홈` 미포함 확인.
+  - 릴리즈 JS에 `connectionStatusPanel`, `Hermes xAI`, `Codex / ChatGPT` 포함, `Grok 공식홈` 미포함 확인.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - 공홈 quota/Usage/개인 경로 잔여 패턴 검색 통과.
+  - `WEBGROK_CHROME_APP.exe`와 샘플 템플릿 1개 유지 확인.
+  - `release/WebGrok-v3-Hermes-20260611.zip`를 갱신했다.

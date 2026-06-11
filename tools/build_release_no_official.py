@@ -69,7 +69,7 @@ def strip_js_official_quota(js):
     js = js.replace("webgui-shell-v3-68", f"webgui-shell-{STATIC_VERSION}")
     js = js.replace("let lastQuotaRefresh = 0;\n", "")
     js = js.replace("  refreshQuota();\n", "")
-    js = js.replace("    refreshQuota(true);\n", "")
+    js = re.sub(r"\n\s*refreshQuota\(true\);", "", js)
     js = re.sub(
         r"const grokOfficialEndpointByBase = \{.*?\};",
         "const grokOfficialEndpointByBase = {};",
@@ -149,13 +149,14 @@ def strip_js_official_quota(js):
         "\n      ",
         js,
     )
-    js = js.replace("    bindGrokOfficialPanel();\n", "")
+    js = re.sub(r"\n\s*bindGrokOfficialPanel\(\);", "", js)
     js = re.sub(
         r"\nfunction setGrokOfficialStatus\(message, isError = false\) \{[\s\S]*?\nasync function refreshCodexProxyPanel\(",
         "\nasync function refreshCodexProxyPanel(",
         js,
     )
-    js = js.replace("installQuotaPanel();\n", "")
+    js = re.sub(r"\n\s*compactSettingsLayout\(\);", "", js)
+    js = re.sub(r"\n\s*installQuotaPanel\(\);", "", js)
     js = js.replace("/api/grok-official", "/disabled-home-quota")
     js = js.replace("grok_official", "home_quota_disabled")
     js = js.replace("grokOfficial", "homeQuotaDisabled")
