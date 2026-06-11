@@ -1161,3 +1161,19 @@
   - `git diff --check` 통과. Windows CRLF 안내 경고만 출력됨.
   - 실제 생성 요청은 크레딧/쿼터 사용 방지를 위해 실행하지 않았다.
 - 백업: `backups/before-template-load-i2v-batch-queue-20260611-142737`
+
+### 2026-06-11 14:55 KST - Hermes 영상 모델 라우팅 엄격화
+- 목표: Hermes Proxy 영상 생성에서 존재하지 않는 모델을 선택해도 기본 모델로 조용히 폴백되어 영상이 생성되는 문제와, Hermes 목록에 공식홈 쿼타 라벨이 섞여 보이는 문제를 정리했다.
+- 변경:
+  - `app.py`: Hermes 영상 후보를 실제 이미지->영상 probe에서 확인된 `grok-imagine-video`, `grok-imagine-video-1.5-preview` 두 개로 제한했다.
+  - `app.py`: `video_model_retry_candidates()`의 무조건 기본 모델 재시도 경로를 제거했다. 이제 임의/미지원 모델은 선택값 그대로 실패하며, `latest` 계열 alias만 명시된 호환 후보로 재시도한다.
+  - `static/app.js`: 같은 모델 ID가 Hermes/공식홈에 동시에 있을 때 현재 요청 경로 기준으로 옵션 라벨을 다시 적용하도록 `modelOptionLabelForRoute()`를 추가했다.
+  - `static/app.js`, `templates/index.html`, `static/service-worker.js`, `run_webgork_app.bat`: 정적 캐시 버전을 `20260605-v3-67` / `webgui-shell-v3-67`로 갱신했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `python -m py_compile app.py` 통과.
+  - `video_model_retry_candidates()`에서 `grok-imagine-video-v2`, `grok-imagine-video-fast`가 더 이상 `grok-imagine-video`로 폴백하지 않는 것을 확인했다.
+  - Flask test client `/api/auth/status`에서 `models.hermes_video_candidates`가 `grok-imagine-video`, `grok-imagine-video-1.5-preview` 두 개로 내려오는 것을 확인했다.
+  - 실제 서버를 `http://127.0.0.1:7863`에 재시작하고 `/health`, `/?v=20260605-v3-67`, `/static/app.js?v=20260605-v3-67` 응답을 확인했다.
+  - 실제 영상 생성 요청은 쿼터/크레딧 보호를 위해 실행하지 않았다.
+- 백업: `backups/before-video-model-route-strict-20260611-145244`

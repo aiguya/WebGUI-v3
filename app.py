@@ -57,13 +57,7 @@ HERMES_IMAGE_MODEL_CANDIDATES = [
 ]
 HERMES_VIDEO_MODEL_CANDIDATES = [
     "grok-imagine-video",
-    "grok-imagine-video-fast",
     "grok-imagine-video-1.5-preview",
-    "grok-imagine-video-1.5",
-    "grok-imagine-video-v2",
-    "grok-imagine-video-v3",
-    "imagine-video",
-    "video-gen",
 ]
 GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES = [
     "official:imagine-x-1",
@@ -515,7 +509,6 @@ def video_model_retry_candidates(model, cfg=None):
     candidates = [requested, *fallbacks.get(requested, [])]
     if requested.endswith("-latest"):
         candidates.append(requested[:-7])
-    candidates.extend([cfg.get("video_model"), "grok-imagine-video"])
     return unique_model_ids(candidates)
 
 

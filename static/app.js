@@ -283,8 +283,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260605-v3-65";
-const appShellCacheName = "webgui-shell-v3-65";
+const appStaticVersion = "20260605-v3-67";
+const appShellCacheName = "webgui-shell-v3-67";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -7117,12 +7117,26 @@ function firstVisibleOption(select) {
   return [...select.options].find(option => !option.hidden && !option.disabled);
 }
 
+function modelOptionLabelForRoute(value, kind, provider) {
+  if (kind === "video") {
+    if (provider === "grok_official") return officialVideoModelLabels[value] || `Grok Official · ${value}`;
+    return templateVideoModelLabels[value] || `Hermes · ${value}`;
+  }
+  if (kind === "image") {
+    if (provider === "grok_official") return officialImageModelLabels[value] || `Grok Official · ${value}`;
+    if (provider === "codex_proxy") return codexImageModelLabels[value] || `Codex/ChatGPT · ${value}`;
+    return templateImageModelLabels[value] || `Hermes · ${value}`;
+  }
+  return value;
+}
+
 function syncModelSelectForRoute(select, kind, provider) {
   if (!select) return;
   [...select.options].forEach(option => {
     const allowed = optionAllowedForRoute(option, kind, provider);
     option.disabled = !allowed;
     option.hidden = !allowed;
+    if (allowed) option.textContent = modelOptionLabelForRoute(option.value, kind, provider);
   });
   if (select.selectedOptions[0]?.hidden || select.selectedOptions[0]?.disabled) {
     const fallback = firstVisibleOption(select);
