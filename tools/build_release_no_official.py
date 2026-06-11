@@ -58,6 +58,51 @@ def strip_html_official_quota(html):
         html,
         count=1,
     )
+    connection_card = '''
+        <div class="settings-card connection-card" id="connectionStatusPanel">
+          <h2>연결 상태</h2>
+          <div class="connection-list">
+            <div class="connection-row is-disconnected" data-connection-service="hermes">
+              <span class="connection-icon" aria-hidden="true"></span>
+              <div class="connection-main">
+                <strong>Hermes xAI</strong>
+                <small id="hermesAuthStatus">상태 확인 전</small>
+              </div>
+              <span class="connection-state" data-connection-label>연결안됨</span>
+              <div class="connection-actions">
+                <button type="button" id="startHermesAuth" class="secondary">인증</button>
+                <button type="button" id="startHermesProxy" class="secondary">Proxy</button>
+                <button type="button" id="resetHermesAuth" class="secondary">리셋</button>
+                <button type="button" id="logoutHermesAuth" class="secondary danger-btn">로그아웃</button>
+              </div>
+            </div>
+            <div id="hermesAuthBox" class="auth-code-box compact-auth" hidden>
+              <a id="hermesAuthUrl" class="button-link login-wide secondary" href="#" target="_blank" rel="noreferrer">xAI 인증 페이지 열기</a>
+              <label>인증 코드</label>
+              <input type="text" id="hermesAuthCode" autocomplete="off" placeholder="xAI 화면의 코드를 붙여넣기">
+              <button type="button" id="submitHermesCode">코드로 로그인 완료</button>
+            </div>
+            <div class="connection-row is-disconnected" data-connection-service="codex">
+              <span class="connection-icon" aria-hidden="true"></span>
+              <div class="connection-main">
+                <strong>Codex / ChatGPT</strong>
+                <small id="codexProxyStatusText">상태 확인 전</small>
+              </div>
+              <span class="connection-state" data-connection-label>연결안됨</span>
+              <div class="connection-actions">
+                <button type="button" id="codexProxyStartPanel" class="secondary">시작</button>
+                <button type="button" id="codexProxyRefresh" class="secondary">새로고침</button>
+              </div>
+            </div>
+            <dl class="status-list visually-hidden" id="codexProxyStatusList"></dl>
+          </div>
+        </div>'''
+    html = re.sub(
+        r'(\n\s*<div class="settings-grid">)',
+        r'\1' + connection_card,
+        html,
+        count=1,
+    )
     html = html.replace("20260605-v3-68", STATIC_VERSION)
     html = html.replace(r"C:\Users\aiguy\Pictures\WebGUI-v3", r"C:\WebGrok\media")
     html = html.replace("실행 시 Hermes/Grok 쿼터가 사용될 수 있습니다.", "실행 시 Hermes 요청량이 사용될 수 있습니다.")

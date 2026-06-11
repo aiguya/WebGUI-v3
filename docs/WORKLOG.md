@@ -1281,3 +1281,17 @@
   - 공홈 quota/Usage/개인 경로 잔여 패턴 검색 통과.
   - `WEBGROK_CHROME_APP.exe`와 샘플 템플릿 1개 유지 확인.
   - `release/WebGrok-v3-Hermes-20260611.zip`를 갱신했다.
+
+### 2026-06-12 00:31 KST - 릴리즈 연결 상태 카드 HTML 기본 삽입
+- 목표: 릴리즈 설정 화면에서 JS 삽입 실패나 브라우저 캐시가 있어도 사용자가 원본 스타일의 `연결 상태` 카드를 바로 볼 수 있게 한다.
+- 변경:
+  - `tools/build_release_no_official.py`: `settings-grid` 시작 직후에 `connectionStatusPanel` HTML을 직접 삽입하도록 변경했다.
+  - 삽입 카드에는 `Hermes xAI`와 `Codex / ChatGPT` 연결 행만 포함하고, `Grok 공식홈` 행은 포함하지 않는다.
+  - 기존 `installConnectionStatusPanel()`은 이미 존재하는 패널에 Hermes/Codex 버튼 동작만 바인딩하도록 유지했다.
+- 검증:
+  - 릴리즈 HTML에 `connectionStatusPanel`, `Hermes xAI`, `Codex / ChatGPT` 포함 확인.
+  - 릴리즈 HTML/JS에 `Grok 공식홈`, quota/Usage/credit 관련 문자열 미포함 확인.
+  - 릴리즈 JS에 `bindGrokOfficialPanel`, `installQuotaPanel();`, `compactSettingsLayout();` 호출이 남지 않음을 확인했다.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - `release/WebGrok-v3-Hermes-20260611.zip`를 갱신했다.
