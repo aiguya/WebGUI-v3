@@ -1385,3 +1385,15 @@
   - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
   - 릴리즈 Flask test client로 `/`, `/health`, `/api/library?media_type=image&scan=0&compact=1&limit=20` 응답을 확인했다.
   - zip 내부에 `README_RELEASE.md`와 `USER_MANUAL.md`가 포함되고, `__pycache__`, `.webgork-private`, `.chrome`, OAuth token류가 포함되지 않았음을 확인했다.
+
+### 2026-06-12 22:35 KST - 릴리즈 사용자 매뉴얼 공홈 관련 문구 제거
+- 목표: Hermes-only 릴리즈 사용자 매뉴얼에서 릴리즈 사용자에게 필요 없는 공홈/quota/쿠키/CDP/웹 세션 관련 설명을 완전히 제거한다.
+- 변경:
+  - `docs/USER_MANUAL_HERMES_RELEASE.md`: 도입부의 공홈 quota/쿠키/Chrome 세션 문구, 영상 연장 설명의 공홈 quota 문구, 릴리즈 제외 기능 섹션을 제거했다.
+  - `release/WebGrok-v3-Hermes`: 빌드 스크립트로 릴리즈 폴더를 재생성해 `USER_MANUAL.md`에 수정 내용을 반영했다.
+  - `release/WebGrok-v3-Hermes-20260611.zip`: 최신 릴리즈 폴더 기준으로 다시 압축했다.
+- 검증:
+  - 원본/릴리즈/zip 내부 `USER_MANUAL.md`에서 `공식홈`, `공홈`, `quota`, `쿠키`, `CDP`, `웹 세션`, `브라우저 자동화`, `Chrome 세션`, `Chrome 프로필` 검색 결과가 없음을 확인했다.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - 릴리즈 Flask test client로 `/`, `/health`, `/api/library?media_type=image&scan=0&compact=1&limit=20` 응답을 확인했다.
