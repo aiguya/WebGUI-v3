@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260612-release-hermes-09"
+STATIC_VERSION = "20260613-release-hermes-11"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -169,7 +169,8 @@ def strip_js_official_quota(js):
         js,
     )
     js = js.replace('  const grokReady = Boolean(data.grok_official?.chrome_running);\n', "")
-    js = js.replace('  const codexReady = Boolean(data.codex_proxy_running);\n', '  const codexReady = false;\n')
+    # Keep Codex status live in the Hermes-only release; only the homepage quota
+    # route is removed.
     js = js.replace("hermesReady || codexReady || grokReady", "hermesReady || codexReady")
     js = js.replace("!(hermesReady || codexReady || grokReady)", "!(hermesReady || codexReady)")
     js = js.replace(
@@ -317,6 +318,7 @@ function renderStatus(data) {
 
 def strip_app_official_quota(py):
     py = remove_official_python_defs(py)
+    py = py.replace('APP_BUILD_STAMP = "dev"', f'APP_BUILD_STAMP = "{STATIC_VERSION}"')
     py = py.replace(
         '    "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),\n'
         '        "grok_official_video_candidates": unique_model_ids(GROK_OFFICIAL_VIDEO_MODEL_CANDIDATES),\n',
@@ -662,6 +664,11 @@ exit /b 1
 :accept_hermes
 set "HERMES_CANDIDATE=%~1"
 if not exist "%HERMES_CANDIDATE%" exit /b 0
+"%HERMES_CANDIDATE%" proxy status >nul 2>nul
+if errorlevel 1 (
+  echo Hermes exists but proxy command is unavailable: %HERMES_CANDIDATE%>>"%LOG%"
+  exit /b 0
+)
 set "HERMES_EXE=%HERMES_CANDIDATE%"
 exit /b 0
 
@@ -733,13 +740,21 @@ if not defined PYTHON_CMD (
 )
 
 if not exist work mkdir work
-powershell -NoProfile -Command "try {{ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 3 | Out-Null; exit 0 }} catch {{ exit 1 }}" >nul 2>nul
-if not %errorlevel%==0 (
+set "HEALTH_STATE=missing"
+for /f "delims=" %%S in ('powershell -NoProfile -Command "try {{ $json=(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 3).Content ^| ConvertFrom-Json; if($json.build_stamp -eq '{STATIC_VERSION}') {{ 'current' }} else {{ 'stale' }} }} catch {{ 'missing' }}" 2^>nul') do set "HEALTH_STATE=%%S"
+if /I "%HEALTH_STATE%"=="stale" (
+  echo Another or older WebGrok server is already running on 127.0.0.1:7863.
+  echo Close the existing WebGrok server, then run this launcher again.
+  pause
+  exit /b 1
+)
+if not /I "%HEALTH_STATE%"=="current" (
   echo Starting WebGrok Hermes-only server...
   start "WebGrok Hermes Server" /min cmd /c "set WEBGORK_OPEN_BROWSER=0&& set WEBGORK_PORT=7863&& %PYTHON_CMD% work\\run_server.py"
-  powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){{ try {{ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 3 | Out-Null; $ok=$true; break }} catch {{ Start-Sleep -Milliseconds 500 }} }}; if($ok){{ exit 0 }} else {{ exit 1 }}"
+  powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){{ try {{ $json=(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 3).Content | ConvertFrom-Json; if($json.build_stamp -eq '{STATIC_VERSION}'){{ $ok=$true; break }} }} catch {{ }}; Start-Sleep -Milliseconds 500 }}; if($ok){{ exit 0 }} else {{ exit 1 }}"
   if errorlevel 1 (
-    echo Server did not start. Check work\\server-runner.log
+    echo Server did not start, or an older WebGrok server is still occupying port 7863.
+    echo Check work\\server-runner.log
     call :show_log work\\server-runner.log
     pause
     exit /b 1
@@ -829,6 +844,7 @@ using System.Windows.Forms;
 internal static class WebGrokChromeAppLauncher
 {{
     private const string Port = "7863";
+    private const string BuildStamp = "{STATIC_VERSION}";
     private const string HealthUrl = "http://127.0.0.1:" + Port + "/health";
     private const string AppUrl = "http://127.0.0.1:" + Port + "/?v={STATIC_VERSION}";
 
@@ -840,8 +856,18 @@ internal static class WebGrokChromeAppLauncher
         bool startedServer = false;
         try
         {{
-            if (!HealthOk())
+            bool serverResponding = HealthResponds();
+            if (!HealthMatchesBuild())
             {{
+                if (serverResponding)
+                {{
+                    MessageBox.Show(
+                        "Another or older WebGrok server is already running on 127.0.0.1:" + Port + ".\\r\\n\\r\\nClose the existing WebGrok server, then run this launcher again.",
+                        "WebGrok Chrome App",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return 1;
+                }}
                 EnsureBootstrap(root);
                 serverProcess = StartServer(root);
                 startedServer = serverProcess != null;
@@ -874,7 +900,7 @@ internal static class WebGrokChromeAppLauncher
         }}
     }}
 
-    private static bool HealthOk()
+    private static bool HealthResponds()
     {{
         try
         {{
@@ -892,11 +918,34 @@ internal static class WebGrokChromeAppLauncher
         }}
     }}
 
+    private static bool HealthMatchesBuild()
+    {{
+        try
+        {{
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(HealthUrl);
+            request.Method = "GET";
+            request.Timeout = 1500;
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (Stream stream = response.GetResponseStream())
+            using (StreamReader reader = new StreamReader(stream))
+            {{
+                string body = reader.ReadToEnd();
+                return (int)response.StatusCode >= 200
+                    && (int)response.StatusCode < 300
+                    && body.Contains("\\"build_stamp\\":\\"" + BuildStamp + "\\"");
+            }}
+        }}
+        catch
+        {{
+            return false;
+        }}
+    }}
+
     private static bool WaitForHealth()
     {{
         for (int i = 0; i < 80; i++)
         {{
-            if (HealthOk()) return true;
+            if (HealthMatchesBuild()) return true;
             Thread.Sleep(500);
         }}
         return false;
@@ -1008,7 +1057,7 @@ internal static class WebGrokChromeAppLauncher
             throw new InvalidOperationException("WEBGROK_BOOTSTRAP.bat was not found.");
         }}
         MessageBox.Show(
-            "WebGrok will prepare first-run dependencies now. If Python 3.11+ or Hermes Agent is already installed, it will be reused. If Python is missing, WebGrok may try to install it through winget. The setup can also install app Python packages, Hermes Agent when missing, and optionally Node.js. A setup window will open and may take several minutes.",
+            "WebGrok will prepare first-run dependencies now. If Python 3.11+ is already installed, it will be reused. Hermes Agent is reused only when the proxy command is available; otherwise WebGrok prepares a local .hermes-venv. If Python is missing, WebGrok may try to install it through winget. The setup can also install app Python packages and optionally Node.js. A setup window will open and may take several minutes.",
             "WebGrok first-run setup",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
@@ -1086,7 +1135,7 @@ internal static class WebGrokChromeAppLauncher
             try
             {{
                 string value = File.ReadAllText(hint).Trim().Trim('"');
-                if (File.Exists(value)) return value;
+                if (HermesProxyCapable(value)) return value;
             }}
             catch {{ }}
         }}
@@ -1111,7 +1160,7 @@ internal static class WebGrokChromeAppLauncher
         }};
         foreach (string item in candidates)
         {{
-            if (File.Exists(item)) return item;
+            if (HermesProxyCapable(item)) return item;
         }}
         try
         {{
@@ -1121,16 +1170,44 @@ internal static class WebGrokChromeAppLauncher
                 foreach (string dir in Directory.GetDirectories(pythonRoot, "pythoncore-*"))
                 {{
                     string item = Path.Combine(dir, "Scripts", "hermes.exe");
-                    if (File.Exists(item)) return item;
+                    if (HermesProxyCapable(item)) return item;
                 }}
             }}
         }}
         catch {{ }}
         foreach (string item in FindAllOnPath("hermes.exe"))
         {{
-            if (File.Exists(item)) return item;
+            if (HermesProxyCapable(item)) return item;
         }}
         return "";
+    }}
+
+    private static bool HermesProxyCapable(string path)
+    {{
+        if (String.IsNullOrEmpty(path)) return false;
+        if (!File.Exists(path)) return false;
+        ProcessStartInfo info = new ProcessStartInfo();
+        info.FileName = path;
+        info.Arguments = "proxy status";
+        info.UseShellExecute = false;
+        info.CreateNoWindow = true;
+        try
+        {{
+            using (Process process = Process.Start(info))
+            {{
+                if (process == null) return false;
+                if (!process.WaitForExit(8000))
+                {{
+                    try {{ process.Kill(); }} catch {{ }}
+                    return false;
+                }}
+                return process.ExitCode == 0;
+            }}
+        }}
+        catch
+        {{
+            return false;
+        }}
     }}
 
     private static string FindChrome()
@@ -1279,11 +1356,12 @@ Excluded:
 
 First run:
 1. Run `WEBGROK_CHROME_APP.exe` to open the app in Chrome app mode, or run `RUN_WEBGROK_HERMES_ONLY.bat` to open it in the default browser.
-2. On the first run, WebGrok prepares app Python packages automatically. If a usable Python 3.11+ or Hermes Agent is already installed, WebGrok reuses it. It installs a local Hermes Agent venv only when Hermes Agent is missing, and tries to install Python/Node.js through winget only when they are missing.
+2. On the first run, WebGrok prepares app Python packages automatically. If a usable Python 3.11+ is already installed, WebGrok reuses it. Existing Hermes Agent is reused only when `hermes proxy status` works; if Hermes is missing or lacks the proxy module, WebGrok installs a local `.hermes-venv`. It tries to install Python/Node.js through winget only when they are missing.
 3. Open Settings, press `인증`, and complete Hermes xAI OAuth.
 
 Note:
 - `WEBGROK_CHROME_APP.exe` is locally built and unsigned, so Windows may show a SmartScreen/security prompt.
+- If an older WebGrok server is already running on `127.0.0.1:7863`, close that server before launching this release.
 
 Build stamp: {STATIC_VERSION}
 """

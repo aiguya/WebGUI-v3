@@ -7437,6 +7437,7 @@ function renderStatus(data) {
 const renderStatusBase = renderStatus;
 renderStatus = function renderStatus(data) {
   renderStatusBase(data);
+  syncConnectionPanelFromHealth(data);
   const list = document.querySelector("#settingsList");
   if (list) {
     const proxyText = data.hermes_proxy_running
@@ -7455,6 +7456,47 @@ renderStatus = function renderStatus(data) {
     }
   }
 };
+
+function syncConnectionPanelFromHealth(data = {}) {
+  const hermesLoggedIn = Boolean(data.hermes_logged_in);
+  const hermesProxyRunning = Boolean(data.hermes_proxy_running);
+  if (typeof setTopServiceBadge === "function") {
+    setTopServiceBadge(
+      "hermes",
+      hermesLoggedIn && hermesProxyRunning,
+      hermesProxyRunning ? "Hermes connected" : (hermesLoggedIn ? "Hermes proxy off" : "Hermes disconnected"),
+    );
+  }
+  if (document.querySelector('[data-connection-service="hermes"]')) {
+    setConnectionBadge(
+      "hermes",
+      hermesLoggedIn && hermesProxyRunning,
+      hermesProxyRunning ? "연결됨" : (hermesLoggedIn ? "Proxy 꺼짐" : "연결안됨"),
+    );
+  }
+  const hermesStatus = document.querySelector("#hermesAuthStatus");
+  if (hermesStatus) {
+    hermesStatus.textContent = hermesLoggedIn
+      ? (hermesProxyRunning ? "Hermes OAuth 연결됨 · Proxy 실행 중" : "Hermes OAuth 연결됨 · Proxy 대기 중")
+      : "Hermes OAuth 로그인이 필요합니다.";
+    hermesStatus.classList.remove("error-text");
+  }
+
+  const codexRunning = Boolean(data.codex_proxy_running);
+  if (typeof setTopServiceBadge === "function") {
+    setTopServiceBadge("codex", codexRunning, codexRunning ? "Codex connected" : "Codex disconnected");
+  }
+  if (document.querySelector('[data-connection-service="codex"]')) {
+    setConnectionBadge("codex", codexRunning, codexRunning ? "연결됨" : "연결안됨");
+  }
+  const codexStatus = document.querySelector("#codexProxyStatusText");
+  if (codexStatus) {
+    codexStatus.textContent = codexRunning
+      ? `Codex OAuth Proxy 실행 중${data.codex_proxy_base_url ? ` · ${data.codex_proxy_base_url}` : ""}`
+      : (data.codex_proxy_configured ? "Codex Proxy가 꺼져 있습니다." : "Codex Proxy URL이 설정되지 않았습니다.");
+    codexStatus.classList.remove("error-text");
+  }
+}
 
 document.querySelector("#projectSelector")?.addEventListener("change", event => {
   setCurrentProject(event.target.value);
@@ -7965,6 +8007,8 @@ function setConnectionBadge(service, connected, text) {
 
 let pendingHermesAuthAutoOpen = false;
 let lastOpenedHermesAuthUrl = "";
+let hermesAuthPanelBound = false;
+let hermesAuthPanelRefreshTimer = null;
 
 function showHermesAuthUrl(url, openOnce = false) {
   const box = document.querySelector("#hermesAuthBox");
@@ -8003,6 +8047,12 @@ async function refreshHermesAuthPanel() {
 }
 
 function bindHermesAuthPanel() {
+  if (!document.querySelector("#startHermesAuth")) return;
+  if (hermesAuthPanelBound) {
+    refreshHermesAuthPanel();
+    return;
+  }
+  hermesAuthPanelBound = true;
   document.querySelector("#startHermesAuth")?.addEventListener("click", async () => {
     const button = document.querySelector("#startHermesAuth");
     const original = button.textContent;
@@ -8129,7 +8179,9 @@ function bindHermesAuthPanel() {
   });
 
   refreshHermesAuthPanel();
-  setInterval(refreshHermesAuthPanel, 5000);
+  if (!hermesAuthPanelRefreshTimer) {
+    hermesAuthPanelRefreshTimer = setInterval(refreshHermesAuthPanel, 5000);
+  }
 }
 
 function installCodexProxyPanel() {
@@ -8297,7 +8349,16 @@ async function refreshCodexProxyPanel() {
   }
 }
 
+let codexProxyPanelBound = false;
+let codexProxyPanelRefreshTimer = null;
+
 function bindCodexProxyPanel() {
+  if (!document.querySelector("#codexProxyStartPanel")) return;
+  if (codexProxyPanelBound) {
+    refreshCodexProxyPanel();
+    return;
+  }
+  codexProxyPanelBound = true;
   document.querySelector("#codexProxyStartPanel")?.addEventListener("click", async () => {
     const button = document.querySelector("#codexProxyStartPanel");
     const original = button.textContent;
@@ -8320,7 +8381,9 @@ function bindCodexProxyPanel() {
   });
   document.querySelector("#codexProxyRefresh")?.addEventListener("click", refreshCodexProxyPanel);
   refreshCodexProxyPanel();
-  setInterval(refreshCodexProxyPanel, 5000);
+  if (!codexProxyPanelRefreshTimer) {
+    codexProxyPanelRefreshTimer = setInterval(refreshCodexProxyPanel, 5000);
+  }
 }
 
 function removeCardContaining(selector) {

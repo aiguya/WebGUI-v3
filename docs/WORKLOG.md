@@ -1452,6 +1452,31 @@
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 크롬 앱 프로필 폴더, OAuth 토큰/쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
   - `git diff --check` 통과.
 
+### 2026-06-13 00:39 KST - 릴리즈 연결 상태/Proxy Hermes 판정 보강
+- 목표: 릴리즈 실행 후 하단 상태는 Hermes/Codex가 살아 있는데 상단 연결 상태 카드가 회색으로 남고, Hermes Proxy 버튼이 동작하지 않는 문제를 분리해 수정했다.
+- 확인:
+  - 사용자 PC의 전역 Hermes(`%LOCALAPPDATA%\Python\pythoncore-3.14-64\Scripts\hermes.exe`)는 `auth`는 동작하지만 `hermes proxy status/start`에서 `ModuleNotFoundError: No module named 'hermes_cli.proxy'`로 실패했다.
+  - 이전 릴리즈 런처는 `work\hermes-exe.txt`의 Hermes 파일 존재 여부만 보고 부트스트랩을 건너뛰어, Proxy 모듈이 없는 Hermes를 계속 재사용할 수 있었다.
+  - 설정 하단 상태 목록은 `/health` 결과를 표시하지만, 상단 연결 상태 카드는 같은 health 결과를 즉시 동기화하지 않아 Codex Proxy 실행 중에도 회색으로 남을 수 있었다.
+- 변경:
+  - `app.py`: Hermes 실행 파일 탐색을 auth용과 proxy용으로 분리하고, proxy용은 `hermes proxy status`가 성공하는 실행 파일만 선택하도록 했다.
+  - `app.py`: Hermes Proxy 시작 실패 시 성공처럼 반환하지 않고, `.webgork-private/hermes-proxy.log`에 실행 로그를 남기며 종료/포트 미개방 사유를 반환하도록 했다.
+  - `static/app.js`: `/health` 렌더링 시 연결 상태 카드와 상단 H/C 상태 표시를 함께 갱신하도록 했다.
+  - `static/app.js`: Hermes/Codex 연결 패널 바인딩을 idempotent하게 만들어 중복 interval/listener가 쌓이지 않게 했다.
+  - `tools/build_release_no_official.py`: 릴리즈 부트스트랩과 Chrome 앱 런처가 기존 Hermes를 재사용하기 전에 `proxy status`를 검증하도록 했다.
+  - `tools/build_release_no_official.py`: 릴리즈에서 Codex 상단 상태를 `false`로 고정하던 처리를 제거하고, 실제 `codex_proxy_running` 값을 반영하도록 했다.
+  - `app.py`, `tools/build_release_no_official.py`: `/health`에 빌드 스탬프를 넣고, 릴리즈 BAT/Chrome 앱 런처가 같은 포트의 이전 WebGrok 서버를 감지하면 그대로 열지 않고 종료 안내를 표시하도록 했다.
+  - `docs/USER_MANUAL_HERMES_RELEASE.md`, `README_RELEASE.md`: Hermes가 설치되어 있어도 Proxy 모듈이 없으면 릴리즈 내부 `.hermes-venv`를 준비한다고 명시했다.
+  - 릴리즈 캐시 스탬프를 `20260613-release-hermes-11`로 올리고, `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `%LOCALAPPDATA%\Python\bin\python.exe -m py_compile app.py tools/build_release_no_official.py release\WebGrok-v3-Hermes\app.py` 통과.
+  - 원본 앱에서 auth Hermes는 전역 Hermes를, proxy Hermes는 proxy 가능 venv를 선택하는 것을 확인했다.
+  - 릴리즈 생성물에서 `APP_BUILD_STAMP = "20260613-release-hermes-11"`와 stale server 감지 문구가 반영됨을 확인했다.
+  - 릴리즈 zip 검사 결과 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap marker/log, cookie/official session 파일이 포함되지 않았다.
+  - `git diff --check` 통과.
+
 ### 2026-06-12 23:37 KST - 릴리즈 Python 탐지 보강
 - 목표: Python이 설치된 PC에서도 릴리즈 첫 실행 부트스트랩이 `winget` Python 설치로 넘어가는 문제를 막고, 사용자 안내 문구를 명확히 한다.
 - 확인:

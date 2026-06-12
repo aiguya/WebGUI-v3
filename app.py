@@ -34,6 +34,7 @@ load_dotenv()
 
 APP_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+APP_BUILD_STAMP = "dev"
 SETTINGS_PATH = ROOT / "webgork-settings.json"
 PRIVATE_STATE_DIR = Path(os.getenv("WEBGORK_CONFIG_DIR") or (ROOT / ".webgork-private")).expanduser().resolve()
 SENSITIVE_MEDIA_FILENAMES = {
@@ -49,6 +50,7 @@ HERMES_LOGIN_STATE = {
 }
 HERMES_PROXY_PROCESS = None
 CODEX_PROXY_PROCESS = None
+HERMES_PROXY_CAPABILITY = {}
 HERMES_IMAGE_MODEL_CANDIDATES = [
     "grok-imagine-image-quality",
     "grok-imagine-image-pro",
@@ -1353,13 +1355,6 @@ def clear_oauth_token():
 def hermes_exe_candidates():
     exe_name = "hermes.exe" if os.name == "nt" else "hermes"
     candidates = []
-    try:
-        import sysconfig
-        scripts_dir = sysconfig.get_path("scripts")
-    except Exception:
-        scripts_dir = ""
-    if scripts_dir:
-        candidates.append(Path(scripts_dir) / exe_name)
     for env_name in ("WEBGORK_HERMES_EXE", "HERMES_EXE"):
         value = os.getenv(env_name)
         if value:
@@ -1377,6 +1372,13 @@ def hermes_exe_candidates():
         ROOT / "vendor" / "hermes-agent" / "venv" / "Scripts" / exe_name,
         ROOT / "vendor" / "hermes-agent" / "venv" / "bin" / exe_name,
     ])
+    try:
+        import sysconfig
+        scripts_dir = sysconfig.get_path("scripts")
+    except Exception:
+        scripts_dir = ""
+    if scripts_dir:
+        candidates.append(Path(scripts_dir) / exe_name)
     if os.name == "nt":
         local_appdata = os.getenv("LOCALAPPDATA")
         appdata = os.getenv("APPDATA")
@@ -1426,6 +1428,44 @@ def hermes_exe_path():
         if candidate and candidate.exists():
             return candidate.resolve()
     return ROOT / ".hermes-venv" / "Scripts" / ("hermes.exe" if os.name == "nt" else "hermes")
+
+
+def hermes_proxy_log_path():
+    PRIVATE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    return PRIVATE_STATE_DIR / "hermes-proxy.log"
+
+
+def hermes_proxy_capable(candidate):
+    if not candidate or not candidate.exists():
+        return False
+    key = str(candidate.resolve())
+    if key in HERMES_PROXY_CAPABILITY:
+        return HERMES_PROXY_CAPABILITY[key]
+    try:
+        result = subprocess.run(
+            [str(candidate), "proxy", "status"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            **hidden_process_kwargs(),
+        )
+    except Exception:
+        HERMES_PROXY_CAPABILITY[key] = False
+        return False
+    output = (result.stdout or "") + (result.stderr or "")
+    ok = result.returncode == 0 and "ModuleNotFoundError" not in output
+    HERMES_PROXY_CAPABILITY[key] = ok
+    return ok
+
+
+def hermes_proxy_exe_path():
+    for candidate in hermes_exe_candidates():
+        if candidate and candidate.exists() and hermes_proxy_capable(candidate):
+            return candidate.resolve()
+    return None
 
 
 def hermes_auth_path():
@@ -1583,27 +1623,56 @@ def ensure_hermes_proxy_background():
     global HERMES_PROXY_PROCESS
     if port_open("127.0.0.1", 8645):
         return True, "Hermes Proxy가 이미 실행 중입니다."
-    exe = hermes_exe_path()
-    if not exe.exists():
+    exe = hermes_proxy_exe_path()
+    if not exe:
+        fallback = hermes_exe_path()
+        if fallback.exists():
+            return False, f"Hermes 실행 파일은 찾았지만 Proxy 기능을 사용할 수 없습니다: {fallback}. 릴리즈 부트스트랩을 다시 실행해 Proxy 포함 Hermes를 준비해 주세요."
         return False, "Hermes 실행 파일을 찾을 수 없습니다."
     if HERMES_PROXY_PROCESS and HERMES_PROXY_PROCESS.poll() is None:
         return True, "Hermes Proxy 시작 대기 중입니다."
+    log_file = hermes_proxy_log_path().open("a", encoding="utf-8", errors="replace")
+    log_file.write(f"\n[{datetime.now().isoformat(timespec='seconds')}] starting {exe} proxy start --provider xai --host 127.0.0.1 --port 8645\n")
+    log_file.flush()
     try:
         HERMES_PROXY_PROCESS = subprocess.Popen(
             [str(exe), "proxy", "start", "--provider", "xai", "--host", "127.0.0.1", "--port", "8645"],
             cwd=str(ROOT),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=log_file,
             stdin=subprocess.DEVNULL,
             **hidden_process_kwargs(),
         )
     except Exception as exc:
+        try:
+            log_file.close()
+        except Exception:
+            pass
         return False, str(exc)
     for _ in range(20):
         if port_open("127.0.0.1", 8645):
+            try:
+                log_file.close()
+            except Exception:
+                pass
             return True, "Hermes Proxy가 실행되었습니다."
+        if HERMES_PROXY_PROCESS.poll() is not None:
+            try:
+                log_file.close()
+            except Exception:
+                pass
+            detail = ""
+            try:
+                detail = hermes_proxy_log_path().read_text(encoding="utf-8", errors="replace")[-2000:]
+            except Exception:
+                pass
+            return False, detail or f"Hermes Proxy 프로세스가 종료되었습니다. exit={HERMES_PROXY_PROCESS.returncode}"
         time.sleep(0.25)
-    return True, "Hermes Proxy를 백그라운드에서 시작했습니다."
+    try:
+        log_file.close()
+    except Exception:
+        pass
+    return False, "Hermes Proxy를 시작했지만 8645 포트가 열리지 않았습니다. Hermes Proxy 로그를 확인해 주세요."
 
 
 def read_hermes_login_output(process):
@@ -7027,6 +7096,7 @@ def health():
     grok_official = grok_official_status_payload(check_cookie=cfg["provider"] == "grok_official")
     return jsonify({
         "ok": True,
+        "build_stamp": APP_BUILD_STAMP,
         "mode": cfg["mode"],
         "provider": cfg["provider"],
         "hermes_configured": bool(cfg["hermes_base_url"]),
