@@ -1452,6 +1452,29 @@
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 크롬 앱 프로필 폴더, OAuth 토큰/쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
   - `git diff --check` 통과.
 
+### 2026-06-12 23:37 KST - 릴리즈 Python 탐지 보강
+- 목표: Python이 설치된 PC에서도 릴리즈 첫 실행 부트스트랩이 `winget` Python 설치로 넘어가는 문제를 막고, 사용자 안내 문구를 명확히 한다.
+- 확인:
+  - 테스트 PC의 PATH에는 `Microsoft\WindowsApps\python.exe`/`py.exe` 별칭이 먼저 잡히고, 실제 Python은 `%LOCALAPPDATA%\Python\bin\python.exe` 및 `%LOCALAPPDATA%\Python\pythoncore-3.14-64\python.exe`에 있었다.
+  - 기존 릴리즈 로그에는 `winget install --id Python.Python.3.12`가 실행된 흔적이 있어, Python 탐지가 기존 설치를 놓친 상태였음을 확인했다.
+- 변경:
+  - `tools/build_release_no_official.py`: `WEBGROK_BOOTSTRAP.bat`, `RUN_WEBGROK_HERMES_ONLY.bat`, 릴리즈 `WEBGROK_CHROME_APP.exe` 생성 코드의 Python 탐지를 같은 기준으로 보강했다.
+  - `tools/build_release_no_official.py`: `%LOCALAPPDATA%\Python\bin\python.exe`와 Program Files x86 Python 경로를 후보에 추가하고, 후보 실행 시 실제 Python 3.11 이상인지 검증하도록 했다.
+  - `tools/build_release_no_official.py`: `Microsoft\WindowsApps`의 `python.exe`/`py.exe` 별칭은 실제 Python으로 인정하지 않도록 제외했다.
+  - `tools/build_release_no_official.py`: 선택된 Python 명령을 `work\python-cmd.txt`에 남기도록 했다.
+  - `tools/WebGuiLauncher.cs`: 원본 Chrome 앱 런처도 같은 Python 탐지 기준으로 보강했다.
+  - `docs/USER_MANUAL_HERMES_RELEASE.md`: 기존 Python은 재사용하고, 사용 가능한 Python 3.11 이상이 없을 때만 Python 설치를 시도한다고 명확히 적었다.
+  - `WebGUI.v3.exe`, `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `python -m py_compile tools/build_release_no_official.py` 통과.
+  - `python tools/build_release_no_official.py`로 릴리즈 Chrome 앱 EXE 컴파일 및 릴리즈 폴더 재생성 통과.
+  - `powershell -ExecutionPolicy Bypass -File tools\build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재생성 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과 후 생성된 릴리즈 `__pycache__`를 제거했다.
+  - 릴리즈 zip 안에 `WEBGROK_BOOTSTRAP.bat`, `WEBGROK_CHROME_APP.exe`, `README_RELEASE.md`, `USER_MANUAL.md`가 포함됨을 확인했다.
+  - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 크롬 앱 프로필 폴더, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+  - `git diff --check` 통과.
+
 ### 2026-06-12 23:21 KST - 릴리즈 설치/실행 실패 이유 즉시 표시
 - 목표: 릴리즈 사용자가 설치 또는 실행 실패 시 로그 파일을 직접 찾아 열지 않아도 실패 원인을 바로 확인할 수 있게 한다.
 - 변경:

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -121,20 +122,75 @@ internal static class Program
 
     private static string FindPython()
     {
-        string local = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Python",
-            "pythoncore-3.14-64",
-            "python.exe");
-        if (File.Exists(local)) return local;
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        string[] candidates = new string[]
+        {
+            Path.Combine(localAppData, "Python", "bin", "python.exe"),
+            Path.Combine(localAppData, "Python", "pythoncore-3.14-64", "python.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python314", "python.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python313", "python.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python312", "python.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python311", "python.exe"),
+            Path.Combine(programFiles, "Python314", "python.exe"),
+            Path.Combine(programFiles, "Python313", "python.exe"),
+            Path.Combine(programFiles, "Python312", "python.exe"),
+            Path.Combine(programFiles, "Python311", "python.exe"),
+            Path.Combine(programFilesX86, "Python314", "python.exe"),
+            Path.Combine(programFilesX86, "Python313", "python.exe"),
+            Path.Combine(programFilesX86, "Python312", "python.exe"),
+            Path.Combine(programFilesX86, "Python311", "python.exe")
+        };
 
-        string py = FindOnPath("py.exe");
-        if (!String.IsNullOrEmpty(py)) return py;
+        foreach (string item in candidates)
+        {
+            if (AcceptPython(item, false)) return item;
+        }
 
-        string python = FindOnPath("python.exe");
-        if (!String.IsNullOrEmpty(python)) return python;
+        foreach (string item in FindAllOnPath("python.exe"))
+        {
+            if (AcceptPython(item, false)) return item;
+        }
 
-        return FindOnPath("python3.exe");
+        foreach (string item in FindAllOnPath("py.exe"))
+        {
+            if (AcceptPython(item, true)) return item;
+        }
+
+        return "";
+    }
+
+    private static bool AcceptPython(string path, bool pythonLauncher)
+    {
+        if (String.IsNullOrEmpty(path)) return false;
+        if (!File.Exists(path)) return false;
+        if (path.IndexOf("\\Microsoft\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+
+        ProcessStartInfo info = new ProcessStartInfo();
+        info.FileName = path;
+        info.Arguments = pythonLauncher
+            ? "-3 -c \"import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)\""
+            : "-c \"import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)\"";
+        info.UseShellExecute = false;
+        info.CreateNoWindow = true;
+        try
+        {
+            using (Process process = Process.Start(info))
+            {
+                if (process == null) return false;
+                if (!process.WaitForExit(5000))
+                {
+                    try { process.Kill(); } catch { }
+                    return false;
+                }
+                return process.ExitCode == 0;
+            }
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string FindChrome()
@@ -170,6 +226,25 @@ internal static class Program
             }
         }
         return "";
+    }
+
+    private static string[] FindAllOnPath(string fileName)
+    {
+        List<string> matches = new List<string>();
+        string path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (string dir in path.Split(Path.PathSeparator))
+        {
+            try
+            {
+                if (String.IsNullOrWhiteSpace(dir)) continue;
+                string full = Path.Combine(dir.Trim(), fileName);
+                if (File.Exists(full)) matches.Add(full);
+            }
+            catch
+            {
+            }
+        }
+        return matches.ToArray();
     }
 
     private static Process OpenChromeApp(string root)

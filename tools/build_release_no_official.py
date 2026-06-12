@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260612-release-hermes-06"
+STATIC_VERSION = "20260612-release-hermes-07"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -448,6 +448,7 @@ echo [%date% %time%] WebGrok bootstrap started>"%LOG%"
 if exist work\bootstrap-ok.txt if exist ".hermes-venv\Scripts\hermes.exe" (
   call :find_python
   if defined PYTHON_CMD (
+    echo %PYTHON_CMD%>work\python-cmd.txt
     echo Dependencies already prepared.>>"%LOG%"
     exit /b 0
   )
@@ -455,7 +456,8 @@ if exist work\bootstrap-ok.txt if exist ".hermes-venv\Scripts\hermes.exe" (
 
 call :find_python
 if not defined PYTHON_CMD (
-  echo Python was not found. Trying winget install...
+  echo Usable Python 3.11+ was not detected. Trying winget install...
+  echo Usable Python 3.11+ was not detected. Trying winget install...>>"%LOG%"
   call :install_python
   call :find_python
 )
@@ -469,6 +471,7 @@ if not defined PYTHON_CMD (
 )
 
 echo Using Python: %PYTHON_CMD%
+echo %PYTHON_CMD%>work\python-cmd.txt
 call :run %PYTHON_CMD% -m pip --version
 if errorlevel 1 (
   call :run %PYTHON_CMD% -m ensurepip --upgrade
@@ -540,6 +543,7 @@ exit /b 0
 :find_python
 set "PYTHON_CMD="
 for %%P in (
+  "%LocalAppData%\Python\bin\python.exe"
   "%LocalAppData%\Python\pythoncore-3.14-64\python.exe"
   "%LocalAppData%\Programs\Python\Python314\python.exe"
   "%LocalAppData%\Programs\Python\Python313\python.exe"
@@ -549,23 +553,39 @@ for %%P in (
   "%ProgramFiles%\Python313\python.exe"
   "%ProgramFiles%\Python312\python.exe"
   "%ProgramFiles%\Python311\python.exe"
+  "%ProgramFiles(x86)%\Python314\python.exe"
+  "%ProgramFiles(x86)%\Python313\python.exe"
+  "%ProgramFiles(x86)%\Python312\python.exe"
+  "%ProgramFiles(x86)%\Python311\python.exe"
 ) do (
-  if exist "%%~P" (
-    set "PYTHON_CMD="%%~P""
-    exit /b 0
+  call :accept_python "%%~P"
+  if defined PYTHON_CMD exit /b 0
+)
+for /f "delims=" %%P in ('where python.exe 2^>nul') do (
+  call :accept_python "%%~P"
+  if defined PYTHON_CMD exit /b 0
+)
+for /f "delims=" %%P in ('where py.exe 2^>nul') do (
+  echo "%%~P" | find /I "\Microsoft\WindowsApps\" >nul
+  if errorlevel 1 (
+    "%%~P" -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
+    if not errorlevel 1 (
+      set "PYTHON_CMD="%%~P" -3"
+      exit /b 0
+    )
   )
 )
-where py >nul 2>nul
-if not errorlevel 1 (
-  set "PYTHON_CMD=py -3"
-  exit /b 0
-)
-where python >nul 2>nul
-if not errorlevel 1 (
-  set "PYTHON_CMD=python"
-  exit /b 0
-)
 exit /b 1
+
+:accept_python
+set "PY_CANDIDATE=%~1"
+if not exist "%PY_CANDIDATE%" exit /b 0
+echo "%PY_CANDIDATE%" | find /I "\Microsoft\WindowsApps\" >nul
+if not errorlevel 1 exit /b 0
+"%PY_CANDIDATE%" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
+if errorlevel 1 exit /b 0
+set "PYTHON_CMD="%PY_CANDIDATE%""
+exit /b 0
 
 :install_python
 where winget >nul 2>nul
@@ -638,21 +658,10 @@ if exist WEBGROK_BOOTSTRAP.bat (
 )
 
 set "PYTHON_CMD="
-if exist "%LocalAppData%\\Python\\pythoncore-3.14-64\\python.exe" set "PYTHON_CMD="%LocalAppData%\\Python\\pythoncore-3.14-64\\python.exe""
-if not defined PYTHON_CMD if exist "%LocalAppData%\\Programs\\Python\\Python314\\python.exe" set "PYTHON_CMD="%LocalAppData%\\Programs\\Python\\Python314\\python.exe""
-if not defined PYTHON_CMD if exist "%LocalAppData%\\Programs\\Python\\Python313\\python.exe" set "PYTHON_CMD="%LocalAppData%\\Programs\\Python\\Python313\\python.exe""
-if not defined PYTHON_CMD if exist "%LocalAppData%\\Programs\\Python\\Python312\\python.exe" set "PYTHON_CMD="%LocalAppData%\\Programs\\Python\\Python312\\python.exe""
-if not defined PYTHON_CMD if exist "%LocalAppData%\\Programs\\Python\\Python311\\python.exe" set "PYTHON_CMD="%LocalAppData%\\Programs\\Python\\Python311\\python.exe""
-if not defined PYTHON_CMD (
-  where py >nul 2>nul
-  if not errorlevel 1 set "PYTHON_CMD=py -3"
-)
-if not defined PYTHON_CMD (
-  where python >nul 2>nul
-  if not errorlevel 1 set "PYTHON_CMD=python"
-)
+call :find_python
 if not defined PYTHON_CMD (
   echo Python was not found after bootstrap.
+  call :show_log work\\bootstrap.log
   pause
   exit /b 1
 )
@@ -673,6 +682,53 @@ if not %errorlevel%==0 (
 
 start "" http://127.0.0.1:7863/?v={STATIC_VERSION}
 endlocal
+exit /b 0
+
+:find_python
+set "PYTHON_CMD="
+for %%P in (
+  "%LocalAppData%\\Python\\bin\\python.exe"
+  "%LocalAppData%\\Python\\pythoncore-3.14-64\\python.exe"
+  "%LocalAppData%\\Programs\\Python\\Python314\\python.exe"
+  "%LocalAppData%\\Programs\\Python\\Python313\\python.exe"
+  "%LocalAppData%\\Programs\\Python\\Python312\\python.exe"
+  "%LocalAppData%\\Programs\\Python\\Python311\\python.exe"
+  "%ProgramFiles%\\Python314\\python.exe"
+  "%ProgramFiles%\\Python313\\python.exe"
+  "%ProgramFiles%\\Python312\\python.exe"
+  "%ProgramFiles%\\Python311\\python.exe"
+  "%ProgramFiles(x86)%\\Python314\\python.exe"
+  "%ProgramFiles(x86)%\\Python313\\python.exe"
+  "%ProgramFiles(x86)%\\Python312\\python.exe"
+  "%ProgramFiles(x86)%\\Python311\\python.exe"
+) do (
+  call :accept_python "%%~P"
+  if defined PYTHON_CMD exit /b 0
+)
+for /f "delims=" %%P in ('where python.exe 2^>nul') do (
+  call :accept_python "%%~P"
+  if defined PYTHON_CMD exit /b 0
+)
+for /f "delims=" %%P in ('where py.exe 2^>nul') do (
+  echo "%%~P" | find /I "\\Microsoft\\WindowsApps\\" >nul
+  if errorlevel 1 (
+    "%%~P" -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
+    if not errorlevel 1 (
+      set "PYTHON_CMD="%%~P" -3"
+      exit /b 0
+    )
+  )
+)
+exit /b 1
+
+:accept_python
+set "PY_CANDIDATE=%~1"
+if not exist "%PY_CANDIDATE%" exit /b 0
+echo "%PY_CANDIDATE%" | find /I "\\Microsoft\\WindowsApps\\" >nul
+if not errorlevel 1 exit /b 0
+"%PY_CANDIDATE%" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
+if errorlevel 1 exit /b 0
+set "PYTHON_CMD="%PY_CANDIDATE%""
 exit /b 0
 
 :show_log
@@ -697,6 +753,7 @@ def build_chrome_app_launcher():
     if not csc.exists():
         csc = Path(r"C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe")
     code = f'''using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -811,8 +868,10 @@ internal static class WebGrokChromeAppLauncher
     {{
         string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
         string[] candidates = new string[]
         {{
+            Path.Combine(localAppData, "Python", "bin", "python.exe"),
             Path.Combine(localAppData, "Python", "pythoncore-3.14-64", "python.exe"),
             Path.Combine(localAppData, "Programs", "Python", "Python314", "python.exe"),
             Path.Combine(localAppData, "Programs", "Python", "Python313", "python.exe"),
@@ -821,15 +880,57 @@ internal static class WebGrokChromeAppLauncher
             Path.Combine(programFiles, "Python314", "python.exe"),
             Path.Combine(programFiles, "Python313", "python.exe"),
             Path.Combine(programFiles, "Python312", "python.exe"),
-            Path.Combine(programFiles, "Python311", "python.exe")
+            Path.Combine(programFiles, "Python311", "python.exe"),
+            Path.Combine(programFilesX86, "Python314", "python.exe"),
+            Path.Combine(programFilesX86, "Python313", "python.exe"),
+            Path.Combine(programFilesX86, "Python312", "python.exe"),
+            Path.Combine(programFilesX86, "Python311", "python.exe")
         }};
         foreach (string item in candidates)
         {{
-            if (File.Exists(item)) return item;
+            if (AcceptPython(item, false)) return item;
         }}
-        string py = FindOnPath("py.exe");
-        if (!String.IsNullOrEmpty(py)) return py;
-        return FindOnPath("python.exe");
+        foreach (string item in FindAllOnPath("python.exe"))
+        {{
+            if (AcceptPython(item, false)) return item;
+        }}
+        foreach (string item in FindAllOnPath("py.exe"))
+        {{
+            if (AcceptPython(item, true)) return item;
+        }}
+        return "";
+    }}
+
+    private static bool AcceptPython(string path, bool pythonLauncher)
+    {{
+        if (String.IsNullOrEmpty(path)) return false;
+        if (!File.Exists(path)) return false;
+        if (path.IndexOf("\\\\Microsoft\\\\WindowsApps\\\\", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+
+        ProcessStartInfo info = new ProcessStartInfo();
+        info.FileName = path;
+        info.Arguments = pythonLauncher
+            ? "-3 -c \\"import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)\\""
+            : "-c \\"import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)\\"";
+        info.UseShellExecute = false;
+        info.CreateNoWindow = true;
+        try
+        {{
+            using (Process process = Process.Start(info))
+            {{
+                if (process == null) return false;
+                if (!process.WaitForExit(5000))
+                {{
+                    try {{ process.Kill(); }} catch {{ }}
+                    return false;
+                }}
+                return process.ExitCode == 0;
+            }}
+        }}
+        catch
+        {{
+            return false;
+        }}
     }}
 
     private static void EnsureBootstrap(string root)
@@ -841,7 +942,7 @@ internal static class WebGrokChromeAppLauncher
             throw new InvalidOperationException("WEBGROK_BOOTSTRAP.bat was not found.");
         }}
         MessageBox.Show(
-            "WebGrok will prepare first-run dependencies now. This can install Python packages, Hermes Agent, and optionally Node.js. A setup window will open and may take several minutes.",
+            "WebGrok will prepare first-run dependencies now. If Python 3.11+ is already installed, it will be reused. If not, WebGrok may try to install Python through winget. The setup can also install Python packages, Hermes Agent, and optionally Node.js. A setup window will open and may take several minutes.",
             "WebGrok first-run setup",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
@@ -938,6 +1039,23 @@ internal static class WebGrokChromeAppLauncher
             catch {{ }}
         }}
         return "";
+    }}
+
+    private static string[] FindAllOnPath(string fileName)
+    {{
+        List<string> matches = new List<string>();
+        string path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (string dir in path.Split(Path.PathSeparator))
+        {{
+            try
+            {{
+                if (String.IsNullOrWhiteSpace(dir)) continue;
+                string full = Path.Combine(dir.Trim(), fileName);
+                if (File.Exists(full)) matches.Add(full);
+            }}
+            catch {{ }}
+        }}
+        return matches.ToArray();
     }}
 
     private static Process OpenChromeApp(string root)
@@ -1038,7 +1156,7 @@ Excluded:
 
 First run:
 1. Run `WEBGROK_CHROME_APP.exe` to open the app in Chrome app mode, or run `RUN_WEBGROK_HERMES_ONLY.bat` to open it in the default browser.
-2. On the first run, WebGrok prepares Python packages and a local Hermes Agent venv automatically. It also tries to install Python/Node.js through winget when they are missing.
+2. On the first run, WebGrok prepares app Python packages and a local Hermes Agent venv automatically. If a usable Python 3.11+ is already installed, WebGrok reuses it. It tries to install Python/Node.js through winget only when they are missing.
 3. Open Settings, press `인증`, and complete Hermes xAI OAuth.
 
 Note:
