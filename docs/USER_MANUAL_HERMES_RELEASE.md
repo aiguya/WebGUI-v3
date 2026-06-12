@@ -10,7 +10,7 @@
 
 - `WEBGROK_CHROME_APP.exe`: Chrome 앱 모드로 WebGrok을 여는 원클릭 실행 파일입니다.
 - `RUN_WEBGROK_HERMES_ONLY.bat`: 기본 브라우저로 WebGrok을 여는 실행 파일입니다.
-- `WEBGROK_BOOTSTRAP.bat`: 첫 실행에 필요한 앱 Python 패키지와 Hermes Agent를 준비하는 설치 스크립트입니다. 사용 가능한 Python 3.11 이상이 이미 있으면 기존 Python을 재사용합니다.
+- `WEBGROK_BOOTSTRAP.bat`: 첫 실행에 필요한 앱 Python 패키지와 Hermes Agent를 준비하는 설치 스크립트입니다. 사용 가능한 Python 3.11 이상이나 Hermes Agent가 이미 있으면 기존 설치를 재사용합니다.
 - `README_RELEASE.md`: 릴리즈 구성과 첫 실행 요약입니다.
 - `USER_MANUAL.md`: 현재 문서입니다.
 - `webgork-settings.json`: 기본 provider 설정입니다.
@@ -22,7 +22,7 @@
 
 1. zip 파일을 원하는 폴더에 압축 해제합니다.
 2. `WEBGROK_CHROME_APP.exe`를 실행합니다.
-3. 처음 실행하는 PC라면 설치 창이 열리고 앱 Python 패키지, Hermes Agent 전용 venv를 준비합니다. 사용 가능한 Python 3.11 이상이 없을 때만 `winget`으로 Python 설치를 시도합니다.
+3. 처음 실행하는 PC라면 설치 창이 열리고 앱 Python 패키지를 준비합니다. 기존 Hermes Agent가 있으면 재사용하고, 없을 때만 릴리즈 폴더의 `.hermes-venv`에 Hermes Agent를 설치합니다. 사용 가능한 Python 3.11 이상이 없을 때만 `winget`으로 Python 설치를 시도합니다.
 4. Node.js가 없으면 Codex/ChatGPT OAuth Proxy용으로 `winget` 설치를 시도합니다. 이 단계가 실패해도 Hermes 기본 기능은 실행할 수 있습니다.
 5. 앱이 열리면 설정 화면의 `Hermes xAI` 행에서 `인증`을 눌러 Hermes xAI OAuth를 연결합니다.
 6. 브라우저가 열리지 않으면 `RUN_WEBGROK_HERMES_ONLY.bat`를 실행합니다.
@@ -35,7 +35,7 @@
 
 - Python 3.11 이상: WebGrok 서버와 Hermes Agent 실행에 필요합니다. 이미 설치되어 있으면 새로 설치하지 않고 재사용합니다.
 - 인터넷 연결: Python 패키지, Hermes Agent, 선택적으로 Node.js를 내려받는 데 필요합니다.
-- Hermes Agent: 릴리즈 폴더의 `.hermes-venv`에 자동 설치됩니다.
+- Hermes Agent: 기존 Hermes Agent가 있으면 재사용합니다. 없을 때만 릴리즈 폴더의 `.hermes-venv`에 자동 설치됩니다.
 - Node.js/npx: Codex/ChatGPT OAuth Proxy 기능에 필요합니다. Hermes 기능만 사용할 때는 Node.js 설치 실패가 앱 실행을 막지 않습니다.
 - Chrome: `WEBGROK_CHROME_APP.exe`의 앱 모드 실행에 필요합니다. Chrome이 없으면 기본 브라우저로 열립니다.
 
@@ -46,7 +46,7 @@
 - 설치 실패 상세: `work/bootstrap.log`
 - 서버 실행 실패 상세: `work/server-runner.log`
 
-대표적인 실패 원인은 `winget` 없음, 인터넷 차단, pip 패키지 설치 실패, Hermes Agent 설치 실패, Python 탐지/PATH 문제입니다. WindowsApps의 `python.exe`/`py.exe` 별칭은 실제 Python이 아니면 무시됩니다.
+대표적인 실패 원인은 `winget` 없음, 인터넷 차단, pip 패키지 설치 실패, Hermes Agent 탐지/설치 실패, Python 탐지/PATH 문제입니다. WindowsApps의 `python.exe`/`py.exe` 별칭은 실제 Python이 아니면 무시됩니다. 재사용된 Hermes Agent 경로는 `work/hermes-exe.txt`에 기록됩니다.
 
 ## 3. 설정
 

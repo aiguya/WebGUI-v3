@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260612-release-hermes-07"
+STATIC_VERSION = "20260612-release-hermes-08"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -445,10 +445,12 @@ if not exist work mkdir work
 set "LOG=work\bootstrap.log"
 echo [%date% %time%] WebGrok bootstrap started>"%LOG%"
 
-if exist work\bootstrap-ok.txt if exist ".hermes-venv\Scripts\hermes.exe" (
+if exist work\bootstrap-ok.txt (
   call :find_python
-  if defined PYTHON_CMD (
+  call :find_hermes
+  if defined PYTHON_CMD if defined HERMES_EXE (
     echo %PYTHON_CMD%>work\python-cmd.txt
+    echo %HERMES_EXE%>work\hermes-exe.txt
     echo Dependencies already prepared.>>"%LOG%"
     exit /b 0
   )
@@ -492,7 +494,12 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist ".hermes-venv\Scripts\hermes.exe" (
+call :find_hermes
+if defined HERMES_EXE (
+  echo Using existing Hermes Agent: %HERMES_EXE%
+  echo Using existing Hermes Agent: %HERMES_EXE%>>"%LOG%"
+  echo %HERMES_EXE%>work\hermes-exe.txt
+) else (
   echo Installing Hermes Agent into .hermes-venv...
   call :run %PYTHON_CMD% -m venv .hermes-venv
   if errorlevel 1 (
@@ -517,7 +524,10 @@ if not exist ".hermes-venv\Scripts\hermes.exe" (
   )
 )
 
-if not exist ".hermes-venv\Scripts\hermes.exe" (
+call :find_hermes
+if defined HERMES_EXE (
+  echo %HERMES_EXE%>work\hermes-exe.txt
+) else (
   echo Hermes Agent executable is still missing. See %LOG%
   call :show_log
   pause
@@ -598,6 +608,37 @@ if errorlevel 1 (
   call :run winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements
 )
 exit /b %errorlevel%
+
+:find_hermes
+set "HERMES_EXE="
+for %%H in (
+  ".hermes-venv\Scripts\hermes.exe"
+  ".hermes-venv\bin\hermes"
+  "%LocalAppData%\Python\bin\hermes.exe"
+  "%LocalAppData%\Python\Scripts\hermes.exe"
+  "%AppData%\Python\Scripts\hermes.exe"
+  "%LocalAppData%\Programs\Python\Python314\Scripts\hermes.exe"
+  "%LocalAppData%\Programs\Python\Python313\Scripts\hermes.exe"
+  "%LocalAppData%\Programs\Python\Python312\Scripts\hermes.exe"
+  "%LocalAppData%\Programs\Python\Python311\Scripts\hermes.exe"
+  "%LocalAppData%\pipx\venvs\hermes-agent\Scripts\hermes.exe"
+  "%LocalAppData%\pipx\venvs\hermes\Scripts\hermes.exe"
+  "%UserProfile%\.local\bin\hermes.exe"
+) do (
+  call :accept_hermes "%%~H"
+  if defined HERMES_EXE exit /b 0
+)
+for /f "delims=" %%H in ('where hermes.exe 2^>nul') do (
+  call :accept_hermes "%%~H"
+  if defined HERMES_EXE exit /b 0
+)
+exit /b 1
+
+:accept_hermes
+set "HERMES_CANDIDATE=%~1"
+if not exist "%HERMES_CANDIDATE%" exit /b 0
+set "HERMES_EXE=%HERMES_CANDIDATE%"
+exit /b 0
 
 :check_node
 if exist "%ProgramFiles%\nodejs\node.exe" set "PATH=%ProgramFiles%\nodejs;%PATH%"
@@ -942,7 +983,7 @@ internal static class WebGrokChromeAppLauncher
             throw new InvalidOperationException("WEBGROK_BOOTSTRAP.bat was not found.");
         }}
         MessageBox.Show(
-            "WebGrok will prepare first-run dependencies now. If Python 3.11+ is already installed, it will be reused. If not, WebGrok may try to install Python through winget. The setup can also install Python packages, Hermes Agent, and optionally Node.js. A setup window will open and may take several minutes.",
+            "WebGrok will prepare first-run dependencies now. If Python 3.11+ or Hermes Agent is already installed, it will be reused. If Python is missing, WebGrok may try to install it through winget. The setup can also install app Python packages, Hermes Agent when missing, and optionally Node.js. A setup window will open and may take several minutes.",
             "WebGrok first-run setup",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
@@ -1004,10 +1045,50 @@ internal static class WebGrokChromeAppLauncher
     {{
         if (String.IsNullOrEmpty(FindPython())) return true;
         string marker = Path.Combine(root, "work", "bootstrap-ok.txt");
-        string hermes = Path.Combine(root, ".hermes-venv", "Scripts", "hermes.exe");
         if (!File.Exists(marker)) return true;
-        if (!File.Exists(hermes)) return true;
+        if (String.IsNullOrEmpty(FindHermes(root))) return true;
         return false;
+    }}
+
+    private static string FindHermes(string root)
+    {{
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string hint = Path.Combine(root, "work", "hermes-exe.txt");
+        if (File.Exists(hint))
+        {{
+            try
+            {{
+                string value = File.ReadAllText(hint).Trim().Trim('"');
+                if (File.Exists(value)) return value;
+            }}
+            catch {{ }}
+        }}
+        string[] candidates = new string[]
+        {{
+            Path.Combine(root, ".hermes-venv", "Scripts", "hermes.exe"),
+            Path.Combine(root, ".hermes-venv", "bin", "hermes"),
+            Path.Combine(localAppData, "Python", "bin", "hermes.exe"),
+            Path.Combine(localAppData, "Python", "Scripts", "hermes.exe"),
+            Path.Combine(appData, "Python", "Scripts", "hermes.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python314", "Scripts", "hermes.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python313", "Scripts", "hermes.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python312", "Scripts", "hermes.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python311", "Scripts", "hermes.exe"),
+            Path.Combine(localAppData, "pipx", "venvs", "hermes-agent", "Scripts", "hermes.exe"),
+            Path.Combine(localAppData, "pipx", "venvs", "hermes", "Scripts", "hermes.exe"),
+            Path.Combine(userProfile, ".local", "bin", "hermes.exe")
+        }};
+        foreach (string item in candidates)
+        {{
+            if (File.Exists(item)) return item;
+        }}
+        foreach (string item in FindAllOnPath("hermes.exe"))
+        {{
+            if (File.Exists(item)) return item;
+        }}
+        return "";
     }}
 
     private static string FindChrome()
@@ -1156,7 +1237,7 @@ Excluded:
 
 First run:
 1. Run `WEBGROK_CHROME_APP.exe` to open the app in Chrome app mode, or run `RUN_WEBGROK_HERMES_ONLY.bat` to open it in the default browser.
-2. On the first run, WebGrok prepares app Python packages and a local Hermes Agent venv automatically. If a usable Python 3.11+ is already installed, WebGrok reuses it. It tries to install Python/Node.js through winget only when they are missing.
+2. On the first run, WebGrok prepares app Python packages automatically. If a usable Python 3.11+ or Hermes Agent is already installed, WebGrok reuses it. It installs a local Hermes Agent venv only when Hermes Agent is missing, and tries to install Python/Node.js through winget only when they are missing.
 3. Open Settings, press `인증`, and complete Hermes xAI OAuth.
 
 Note:

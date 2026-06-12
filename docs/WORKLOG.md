@@ -1475,6 +1475,27 @@
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 크롬 앱 프로필 폴더, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
   - `git diff --check` 통과.
 
+### 2026-06-12 23:47 KST - 릴리즈 Hermes Agent 재사용 처리
+- 목표: Hermes Agent가 이미 설치된 PC에서도 릴리즈 첫 실행 부트스트랩이 불필요하게 `.hermes-venv` 설치를 다시 시도하는 문제를 막는다.
+- 확인:
+  - 기존 `WEBGROK_BOOTSTRAP.bat`은 릴리즈 폴더의 `.hermes-venv\Scripts\hermes.exe`만 기준으로 Hermes 설치 여부를 판단하고 있었다.
+  - 앱 런타임은 `shutil.which("hermes")` 후보를 일부 보지만, 부트스트랩과 EXE 런처의 필요 여부 판단이 기존 Hermes 설치를 충분히 인정하지 않았다.
+- 변경:
+  - `tools/build_release_no_official.py`: 부트스트랩에 `:find_hermes`/`:accept_hermes`를 추가해 기존 `hermes.exe`를 먼저 탐색하도록 했다.
+  - `tools/build_release_no_official.py`: `%LOCALAPPDATA%\Python\bin`, Python `Scripts`, pipx venv, `%USERPROFILE%\.local\bin`, PATH의 `hermes.exe`를 후보로 추가했다.
+  - `tools/build_release_no_official.py`: 기존 Hermes를 찾으면 `work\hermes-exe.txt`에 경로를 저장하고, Hermes가 없을 때만 `.hermes-venv`를 생성하도록 했다.
+  - `tools/build_release_no_official.py`: 릴리즈 Chrome 앱 런처의 `NeedsBootstrap()`도 `work\hermes-exe.txt`, 기존 Hermes 후보, PATH 후보를 인정하도록 했다.
+  - `app.py`: `work\hermes-exe.txt`와 표준 사용자 설치 경로의 Hermes 후보를 추가해 부트스트랩이 찾은 기존 Hermes를 앱이 그대로 사용하도록 했다.
+  - `docs/USER_MANUAL_HERMES_RELEASE.md`: 기존 Hermes Agent가 있으면 재사용하고, 없을 때만 릴리즈 `.hermes-venv`에 설치한다고 명확히 적었다.
+  - `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `python -m py_compile app.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - 릴리즈 생성 결과에 `Using existing Hermes Agent`, `work\hermes-exe.txt`, `release-hermes-08` 반영을 확인했다.
+  - 릴리즈 zip 안에 `WEBGROK_BOOTSTRAP.bat`, `WEBGROK_CHROME_APP.exe`, `README_RELEASE.md`, `USER_MANUAL.md`가 포함됨을 확인했다.
+  - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 크롬 앱 프로필 폴더, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+  - `git diff --check` 통과.
+
 ### 2026-06-12 23:21 KST - 릴리즈 설치/실행 실패 이유 즉시 표시
 - 목표: 릴리즈 사용자가 설치 또는 실행 실패 시 로그 파일을 직접 찾아 열지 않아도 실패 원인을 바로 확인할 수 있게 한다.
 - 변경:

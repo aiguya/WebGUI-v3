@@ -1356,13 +1356,41 @@ def hermes_exe_candidates():
     for env_name in ("WEBGORK_HERMES_EXE", "HERMES_EXE"):
         value = os.getenv(env_name)
         if value:
-            candidates.append(Path(value).expanduser())
+            candidates.append(Path(value.strip().strip('"')).expanduser())
+    bootstrap_hint = ROOT / "work" / "hermes-exe.txt"
+    try:
+        value = bootstrap_hint.read_text(encoding="utf-8").strip().strip('"')
+    except OSError:
+        value = ""
+    if value:
+        candidates.append(Path(value).expanduser())
     candidates.extend([
         ROOT / ".hermes-venv" / "Scripts" / exe_name,
         ROOT / ".hermes-venv" / "bin" / exe_name,
         ROOT / "vendor" / "hermes-agent" / "venv" / "Scripts" / exe_name,
         ROOT / "vendor" / "hermes-agent" / "venv" / "bin" / exe_name,
     ])
+    if os.name == "nt":
+        local_appdata = os.getenv("LOCALAPPDATA")
+        appdata = os.getenv("APPDATA")
+        userprofile = os.getenv("USERPROFILE")
+        for base in [local_appdata, appdata]:
+            if base:
+                base_path = Path(base)
+                candidates.extend([
+                    base_path / "Python" / "bin" / exe_name,
+                    base_path / "Python" / "Scripts" / exe_name,
+                ])
+        if local_appdata:
+            local_path = Path(local_appdata)
+            for version in ("314", "313", "312", "311"):
+                candidates.append(local_path / "Programs" / "Python" / f"Python{version}" / "Scripts" / exe_name)
+            candidates.extend([
+                local_path / "pipx" / "venvs" / "hermes-agent" / "Scripts" / exe_name,
+                local_path / "pipx" / "venvs" / "hermes" / "Scripts" / exe_name,
+            ])
+        if userprofile:
+            candidates.append(Path(userprofile) / ".local" / "bin" / exe_name)
     sibling_names = [
         ROOT.name.replace("-Version-3", "-Version-2"),
         ROOT.name.replace("-Version-3", ""),
