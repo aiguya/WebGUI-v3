@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260612-release-hermes-05"
+STATIC_VERSION = "20260612-release-hermes-06"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -437,13 +437,192 @@ def remove_official_python_defs(py):
     return py
 
 
+def write_bootstrap():
+    text = r'''@echo off
+setlocal EnableExtensions
+cd /d "%~dp0"
+if not exist work mkdir work
+set "LOG=work\bootstrap.log"
+echo [%date% %time%] WebGrok bootstrap started>"%LOG%"
+
+if exist work\bootstrap-ok.txt if exist ".hermes-venv\Scripts\hermes.exe" (
+  call :find_python
+  if defined PYTHON_CMD (
+    echo Dependencies already prepared.>>"%LOG%"
+    exit /b 0
+  )
+)
+
+call :find_python
+if not defined PYTHON_CMD (
+  echo Python was not found. Trying winget install...
+  call :install_python
+  call :find_python
+)
+if not defined PYTHON_CMD (
+  echo Python 3.11+ could not be installed automatically.
+  echo Install Python 3.11+ manually, then run this file again.
+  echo See %LOG%
+  pause
+  exit /b 1
+)
+
+echo Using Python: %PYTHON_CMD%
+call :run %PYTHON_CMD% -m pip --version
+if errorlevel 1 (
+  call :run %PYTHON_CMD% -m ensurepip --upgrade
+)
+call :run %PYTHON_CMD% -m pip install --upgrade pip
+if errorlevel 1 (
+  echo Failed to prepare pip. See %LOG%
+  pause
+  exit /b 1
+)
+
+call :run %PYTHON_CMD% -m pip install -r requirements.txt
+if errorlevel 1 (
+  echo Failed to install WebGrok Python requirements. See %LOG%
+  pause
+  exit /b 1
+)
+
+if not exist ".hermes-venv\Scripts\hermes.exe" (
+  echo Installing Hermes Agent into .hermes-venv...
+  call :run %PYTHON_CMD% -m venv .hermes-venv
+  if errorlevel 1 (
+    echo Failed to create Hermes virtual environment. See %LOG%
+    pause
+    exit /b 1
+  )
+  call :run ".hermes-venv\Scripts\python.exe" -m pip install --upgrade pip
+  if errorlevel 1 (
+    echo Failed to prepare Hermes pip. See %LOG%
+    pause
+    exit /b 1
+  )
+  call :run ".hermes-venv\Scripts\python.exe" -m pip install "hermes-agent[cli]==0.15.1"
+  if errorlevel 1 (
+    echo Failed to install Hermes Agent. See %LOG%
+    pause
+    exit /b 1
+  )
+)
+
+if not exist ".hermes-venv\Scripts\hermes.exe" (
+  echo Hermes Agent executable is still missing. See %LOG%
+  pause
+  exit /b 1
+)
+
+call :check_node
+if errorlevel 1 (
+  echo Node.js was not found. Trying winget install...
+  call :install_node
+  call :check_node
+  if errorlevel 1 (
+    echo Node.js could not be installed automatically.
+    echo Hermes features will still run, but Codex/ChatGPT OAuth proxy needs Node.js.
+    echo See %LOG%
+  )
+)
+
+echo ok>work\bootstrap-ok.txt
+echo [%date% %time%] WebGrok bootstrap finished>>"%LOG%"
+exit /b 0
+
+:find_python
+set "PYTHON_CMD="
+for %%P in (
+  "%LocalAppData%\Python\pythoncore-3.14-64\python.exe"
+  "%LocalAppData%\Programs\Python\Python314\python.exe"
+  "%LocalAppData%\Programs\Python\Python313\python.exe"
+  "%LocalAppData%\Programs\Python\Python312\python.exe"
+  "%LocalAppData%\Programs\Python\Python311\python.exe"
+  "%ProgramFiles%\Python314\python.exe"
+  "%ProgramFiles%\Python313\python.exe"
+  "%ProgramFiles%\Python312\python.exe"
+  "%ProgramFiles%\Python311\python.exe"
+) do (
+  if exist "%%~P" (
+    set "PYTHON_CMD="%%~P""
+    exit /b 0
+  )
+)
+where py >nul 2>nul
+if not errorlevel 1 (
+  set "PYTHON_CMD=py -3"
+  exit /b 0
+)
+where python >nul 2>nul
+if not errorlevel 1 (
+  set "PYTHON_CMD=python"
+  exit /b 0
+)
+exit /b 1
+
+:install_python
+where winget >nul 2>nul
+if errorlevel 1 (
+  echo winget is not available.>>"%LOG%"
+  exit /b 1
+)
+call :run winget install --id Python.Python.3.12 -e --scope user --accept-package-agreements --accept-source-agreements
+if errorlevel 1 (
+  call :run winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements
+)
+exit /b %errorlevel%
+
+:check_node
+if exist "%ProgramFiles%\nodejs\node.exe" set "PATH=%ProgramFiles%\nodejs;%PATH%"
+if exist "%ProgramFiles(x86)%\nodejs\node.exe" set "PATH=%ProgramFiles(x86)%\nodejs;%PATH%"
+where node.exe >nul 2>nul
+if errorlevel 1 exit /b 1
+where npx.cmd >nul 2>nul
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:install_node
+where winget >nul 2>nul
+if errorlevel 1 (
+  echo winget is not available for Node.js install.>>"%LOG%"
+  exit /b 1
+)
+call :run winget install --id OpenJS.NodeJS.LTS -e --scope user --accept-package-agreements --accept-source-agreements
+if errorlevel 1 (
+  call :run winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements
+)
+if exist "%ProgramFiles%\nodejs" set "PATH=%ProgramFiles%\nodejs;%PATH%"
+if exist "%ProgramFiles(x86)%\nodejs" set "PATH=%ProgramFiles(x86)%\nodejs;%PATH%"
+exit /b 0
+
+:run
+echo ^> %*>>"%LOG%"
+%*>>"%LOG%" 2>&1
+exit /b %errorlevel%
+'''
+    write(RELEASE_ROOT / "WEBGROK_BOOTSTRAP.bat", text)
+
+
 def write_runner():
     text = f'''@echo off
 setlocal
 cd /d "%~dp0"
 
+if exist WEBGROK_BOOTSTRAP.bat (
+  call WEBGROK_BOOTSTRAP.bat
+  if errorlevel 1 (
+    echo WebGrok bootstrap failed. Check work\\bootstrap.log
+    pause
+    exit /b 1
+  )
+)
+
 set "PYTHON_CMD="
-if exist "%LocalAppData%\\Python\\pythoncore-3.14-64\\python.exe" set "PYTHON_CMD=%LocalAppData%\\Python\\pythoncore-3.14-64\\python.exe"
+if exist "%LocalAppData%\\Python\\pythoncore-3.14-64\\python.exe" set "PYTHON_CMD="%LocalAppData%\\Python\\pythoncore-3.14-64\\python.exe""
+if not defined PYTHON_CMD if exist "%LocalAppData%\\Programs\\Python\\Python314\\python.exe" set "PYTHON_CMD="%LocalAppData%\\Programs\\Python\\Python314\\python.exe""
+if not defined PYTHON_CMD if exist "%LocalAppData%\\Programs\\Python\\Python313\\python.exe" set "PYTHON_CMD="%LocalAppData%\\Programs\\Python\\Python313\\python.exe""
+if not defined PYTHON_CMD if exist "%LocalAppData%\\Programs\\Python\\Python312\\python.exe" set "PYTHON_CMD="%LocalAppData%\\Programs\\Python\\Python312\\python.exe""
+if not defined PYTHON_CMD if exist "%LocalAppData%\\Programs\\Python\\Python311\\python.exe" set "PYTHON_CMD="%LocalAppData%\\Programs\\Python\\Python311\\python.exe""
 if not defined PYTHON_CMD (
   where py >nul 2>nul
   if not errorlevel 1 set "PYTHON_CMD=py -3"
@@ -453,20 +632,9 @@ if not defined PYTHON_CMD (
   if not errorlevel 1 set "PYTHON_CMD=python"
 )
 if not defined PYTHON_CMD (
-  echo Python was not found. Install Python 3.11+ and run this file again.
+  echo Python was not found after bootstrap.
   pause
   exit /b 1
-)
-
-%PYTHON_CMD% -c "import flask, requests, dotenv, imageio_ffmpeg, PIL" >nul 2>nul
-if not %errorlevel%==0 (
-  echo Installing required Python packages...
-  %PYTHON_CMD% -m pip install -r requirements.txt
-  if not %errorlevel%==0 (
-    echo Failed to install requirements.
-    pause
-    exit /b 1
-  )
 )
 
 if not exist work mkdir work
@@ -475,7 +643,7 @@ if not %errorlevel%==0 (
   echo Starting WebGrok Hermes-only server...
   start "WebGrok Hermes Server" /min cmd /c "set WEBGORK_OPEN_BROWSER=0&& set WEBGORK_PORT=7863&& %PYTHON_CMD% work\\run_server.py"
   powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){{ try {{ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 3 | Out-Null; $ok=$true; break }} catch {{ Start-Sleep -Milliseconds 500 }} }}; if($ok){{ exit 0 }} else {{ exit 1 }}"
-  if not %errorlevel%==0 (
+  if errorlevel 1 (
     echo Server did not start. Check work\\server-runner.log
     pause
     exit /b 1
@@ -517,12 +685,13 @@ internal static class WebGrokChromeAppLauncher
         {{
             if (!HealthOk())
             {{
+                EnsureBootstrap(root);
                 serverProcess = StartServer(root);
                 startedServer = serverProcess != null;
             }}
             if (!WaitForHealth())
             {{
-                MessageBox.Show("WebGrok 서버를 시작하지 못했습니다. RUN_WEBGROK_HERMES_ONLY.bat을 한 번 실행해 의존성을 설치한 뒤 다시 시도해 주세요.", "WebGrok Chrome App");
+                MessageBox.Show("WebGrok server did not start. Check work\\\\server-runner.log and work\\\\bootstrap.log.", "WebGrok Chrome App");
                 return 1;
             }}
             Process chromeProcess = OpenChromeApp(root);
@@ -573,7 +742,7 @@ internal static class WebGrokChromeAppLauncher
         string python = FindPython();
         if (String.IsNullOrEmpty(python))
         {{
-            throw new InvalidOperationException("Python을 찾을 수 없습니다. Python 3.11 이상을 설치하거나 RUN_WEBGROK_HERMES_ONLY.bat을 사용해 주세요.");
+            throw new InvalidOperationException("Python was not found after bootstrap. Check work\\\\bootstrap.log.");
         }}
 
         ProcessStartInfo info = new ProcessStartInfo();
@@ -598,11 +767,68 @@ internal static class WebGrokChromeAppLauncher
 
     private static string FindPython()
     {{
-        string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Python", "pythoncore-3.14-64", "python.exe");
-        if (File.Exists(local)) return local;
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        string[] candidates = new string[]
+        {{
+            Path.Combine(localAppData, "Python", "pythoncore-3.14-64", "python.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python314", "python.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python313", "python.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python312", "python.exe"),
+            Path.Combine(localAppData, "Programs", "Python", "Python311", "python.exe"),
+            Path.Combine(programFiles, "Python314", "python.exe"),
+            Path.Combine(programFiles, "Python313", "python.exe"),
+            Path.Combine(programFiles, "Python312", "python.exe"),
+            Path.Combine(programFiles, "Python311", "python.exe")
+        }};
+        foreach (string item in candidates)
+        {{
+            if (File.Exists(item)) return item;
+        }}
         string py = FindOnPath("py.exe");
         if (!String.IsNullOrEmpty(py)) return py;
         return FindOnPath("python.exe");
+    }}
+
+    private static void EnsureBootstrap(string root)
+    {{
+        if (!NeedsBootstrap(root)) return;
+        string bootstrap = Path.Combine(root, "WEBGROK_BOOTSTRAP.bat");
+        if (!File.Exists(bootstrap))
+        {{
+            throw new InvalidOperationException("WEBGROK_BOOTSTRAP.bat was not found.");
+        }}
+        MessageBox.Show(
+            "WebGrok will prepare first-run dependencies now. This can install Python packages, Hermes Agent, and optionally Node.js. A setup window will open and may take several minutes.",
+            "WebGrok first-run setup",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
+        ProcessStartInfo info = new ProcessStartInfo();
+        info.FileName = "cmd.exe";
+        info.Arguments = "/c \\"" + bootstrap + "\\"";
+        info.WorkingDirectory = root;
+        info.UseShellExecute = true;
+        info.WindowStyle = ProcessWindowStyle.Normal;
+        Process process = Process.Start(info);
+        if (process == null)
+        {{
+            throw new InvalidOperationException("Failed to start WebGrok bootstrap.");
+        }}
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+        {{
+            throw new InvalidOperationException("WebGrok bootstrap failed. Check work\\\\bootstrap.log.");
+        }}
+    }}
+
+    private static bool NeedsBootstrap(string root)
+    {{
+        if (String.IsNullOrEmpty(FindPython())) return true;
+        string marker = Path.Combine(root, "work", "bootstrap-ok.txt");
+        string hermes = Path.Combine(root, ".hermes-venv", "Scripts", "hermes.exe");
+        if (!File.Exists(marker)) return true;
+        if (!File.Exists(hermes)) return true;
+        return false;
     }}
 
     private static string FindChrome()
@@ -723,6 +949,7 @@ Included:
 - Hermes Proxy based image generation, image editing, image-to-video, queue, templates, library, and local media tools.
 - A sanitized sample video template JSON. No sample image or video assets are bundled.
 - `USER_MANUAL.md` Korean feature/user manual.
+- `WEBGROK_BOOTSTRAP.bat` first-run dependency bootstrapper.
 - `RUN_WEBGROK_HERMES_ONLY.bat` one-click launcher.
 - `WEBGROK_CHROME_APP.exe` one-click Chrome app-mode launcher.
 
@@ -732,9 +959,9 @@ Excluded:
 - `.webgork-private`, `.chrome-*`, generated media-library images/videos, `backups`, local logs, git metadata, and local settings from the development workspace.
 
 First run:
-1. Start your Hermes proxy separately if it is not already running.
-2. Run `WEBGROK_CHROME_APP.exe` to open the app in Chrome app mode, or run `RUN_WEBGROK_HERMES_ONLY.bat` to open it in the default browser.
-3. Open Settings and adjust `Hermes Proxy Base URL` if needed.
+1. Run `WEBGROK_CHROME_APP.exe` to open the app in Chrome app mode, or run `RUN_WEBGROK_HERMES_ONLY.bat` to open it in the default browser.
+2. On the first run, WebGrok prepares Python packages and a local Hermes Agent venv automatically. It also tries to install Python/Node.js through winget when they are missing.
+3. Open Settings, press `인증`, and complete Hermes xAI OAuth.
 
 Note:
 - `WEBGROK_CHROME_APP.exe` is locally built and unsigned, so Windows may show a SmartScreen/security prompt.
@@ -797,6 +1024,7 @@ def main():
     )
     write_clean_settings()
     write_release_media_seed()
+    write_bootstrap()
     write_runner()
     build_chrome_app_launcher()
     write_release_notes()

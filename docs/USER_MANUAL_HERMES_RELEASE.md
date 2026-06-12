@@ -2,7 +2,7 @@
 
 이 문서는 `WebGrok-v3-Hermes` 릴리즈 전달본을 받은 사용자를 위한 기능 설명서입니다.
 
-이미지 생성, 이미지 편집, 이미지→영상, 영상 관련 요청은 기본적으로 사용자가 별도로 실행한 Hermes Agent Proxy endpoint를 통해 처리됩니다.
+이미지 생성, 이미지 편집, 이미지→영상, 영상 관련 요청은 기본적으로 로컬 Hermes Agent Proxy endpoint를 통해 처리됩니다. 첫 실행 시 필요한 의존성은 릴리즈 실행 파일이 자동 준비를 시도합니다.
 
 ## 1. 릴리즈 구성
 
@@ -10,6 +10,7 @@
 
 - `WEBGROK_CHROME_APP.exe`: Chrome 앱 모드로 WebGrok을 여는 원클릭 실행 파일입니다.
 - `RUN_WEBGROK_HERMES_ONLY.bat`: 기본 브라우저로 WebGrok을 여는 실행 파일입니다.
+- `WEBGROK_BOOTSTRAP.bat`: 첫 실행에 필요한 Python 패키지와 Hermes Agent를 준비하는 설치 스크립트입니다.
 - `README_RELEASE.md`: 릴리즈 구성과 첫 실행 요약입니다.
 - `USER_MANUAL.md`: 현재 문서입니다.
 - `webgork-settings.json`: 기본 provider 설정입니다.
@@ -20,10 +21,11 @@
 ## 2. 첫 실행
 
 1. zip 파일을 원하는 폴더에 압축 해제합니다.
-2. Hermes Agent Proxy를 먼저 실행합니다.
-3. `WEBGROK_CHROME_APP.exe`를 실행합니다.
-4. 브라우저가 열리지 않으면 `RUN_WEBGROK_HERMES_ONLY.bat`를 실행합니다.
-5. 앱이 열리면 우측 상단 또는 설정 화면의 연결 상태를 확인합니다.
+2. `WEBGROK_CHROME_APP.exe`를 실행합니다.
+3. 처음 실행하는 PC라면 설치 창이 열리고 Python 패키지, Hermes Agent 전용 venv를 준비합니다. Python이 없으면 `winget`으로 Python 설치를 시도합니다.
+4. Node.js가 없으면 Codex/ChatGPT OAuth Proxy용으로 `winget` 설치를 시도합니다. 이 단계가 실패해도 Hermes 기본 기능은 실행할 수 있습니다.
+5. 앱이 열리면 설정 화면의 `Hermes xAI` 행에서 `인증`을 눌러 Hermes xAI OAuth를 연결합니다.
+6. 브라우저가 열리지 않으면 `RUN_WEBGROK_HERMES_ONLY.bat`를 실행합니다.
 
 기본 주소는 `http://127.0.0.1:7863`입니다.
 

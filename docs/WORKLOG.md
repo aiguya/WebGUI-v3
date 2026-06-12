@@ -1431,3 +1431,23 @@
   - 릴리즈 Flask test client로 `/api/hermes/auth/status` 200 응답과 `ok=True`를 확인했다.
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, 크롬 앱 프로필 폴더, OAuth 토큰/쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
   - `git diff --check` 통과.
+
+### 2026-06-12 23:12 KST - Hermes-only 릴리즈 첫 실행 부트스트랩 추가
+- 목표: 릴리즈 전달본을 받은 사용자의 PC에 Python, Hermes Agent, Node.js가 없어도 `WEBGROK_CHROME_APP.exe` 또는 배치 실행만으로 필요한 의존성을 준비하고 앱을 열 수 있게 한다.
+- 변경:
+  - `tools/build_release_no_official.py`: `WEBGROK_BOOTSTRAP.bat` 생성 로직을 추가했다. 첫 실행 시 Python 탐색, `winget` 기반 Python 설치 시도, 앱 `requirements.txt` 설치, `.hermes-venv` 생성, `hermes-agent[cli]==0.15.1` 설치를 수행한다.
+  - `tools/build_release_no_official.py`: Node.js/npx가 없으면 `winget install OpenJS.NodeJS.LTS`를 시도하도록 추가했다. Node 설치가 실패해도 Hermes 기본 기능은 실행 가능하도록 경고만 남긴다.
+  - `tools/build_release_no_official.py`: 릴리즈 Chrome 앱 런처가 서버 시작 전에 부트스트랩 필요 여부를 확인하고, 필요하면 설치 창을 띄워 `WEBGROK_BOOTSTRAP.bat` 완료를 기다리도록 했다.
+  - `tools/build_release_no_official.py`: `RUN_WEBGROK_HERMES_ONLY.bat`도 같은 부트스트랩을 먼저 호출하도록 변경했다.
+  - `tools/build_release_no_official.py`: 릴리즈 정적 버전을 `20260612-release-hermes-06`으로 올렸다.
+  - `docs/USER_MANUAL_HERMES_RELEASE.md`: 첫 실행 자동 설치 흐름, `WEBGROK_BOOTSTRAP.bat`, Hermes 인증 절차 안내를 반영했다.
+  - `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `python -m py_compile tools/build_release_no_official.py` 통과.
+  - `python tools/build_release_no_official.py`로 Hermes-only 릴리즈 폴더 재생성 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - 릴리즈 Flask test client로 `/health`, `/api/hermes/auth/status` 200 응답을 확인했다.
+  - 릴리즈 zip 안에 `WEBGROK_BOOTSTRAP.bat`, `WEBGROK_CHROME_APP.exe`, `RUN_WEBGROK_HERMES_ONLY.bat`, `README_RELEASE.md`, `USER_MANUAL.md`가 포함됨을 확인했다.
+  - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 크롬 앱 프로필 폴더, OAuth 토큰/쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+  - `git diff --check` 통과.
