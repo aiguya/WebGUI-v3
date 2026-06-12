@@ -1353,6 +1353,13 @@ def clear_oauth_token():
 def hermes_exe_candidates():
     exe_name = "hermes.exe" if os.name == "nt" else "hermes"
     candidates = []
+    try:
+        import sysconfig
+        scripts_dir = sysconfig.get_path("scripts")
+    except Exception:
+        scripts_dir = ""
+    if scripts_dir:
+        candidates.append(Path(scripts_dir) / exe_name)
     for env_name in ("WEBGORK_HERMES_EXE", "HERMES_EXE"):
         value = os.getenv(env_name)
         if value:
@@ -1383,6 +1390,9 @@ def hermes_exe_candidates():
                 ])
         if local_appdata:
             local_path = Path(local_appdata)
+            python_root = local_path / "Python"
+            for core_dir in python_root.glob("pythoncore-*"):
+                candidates.append(core_dir / "Scripts" / exe_name)
             for version in ("314", "313", "312", "311"):
                 candidates.append(local_path / "Programs" / "Python" / f"Python{version}" / "Scripts" / exe_name)
             candidates.extend([

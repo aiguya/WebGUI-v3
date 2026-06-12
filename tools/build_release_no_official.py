@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260612-release-hermes-08"
+STATIC_VERSION = "20260612-release-hermes-09"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -610,13 +610,34 @@ if errorlevel 1 (
 exit /b %errorlevel%
 
 :find_hermes
+set "HERMES_ENV_EXE=%HERMES_EXE%"
 set "HERMES_EXE="
+if defined WEBGORK_HERMES_EXE call :accept_hermes "%WEBGORK_HERMES_EXE%"
+if defined HERMES_EXE exit /b 0
+if defined HERMES_ENV_EXE call :accept_hermes "%HERMES_ENV_EXE%"
+if defined HERMES_EXE exit /b 0
+if exist "work\hermes-exe.txt" (
+  for /f "usebackq delims=" %%H in ("work\hermes-exe.txt") do (
+    call :accept_hermes "%%~H"
+    if defined HERMES_EXE exit /b 0
+  )
+)
+if defined PYTHON_CMD (
+  for /f "delims=" %%H in ('%PYTHON_CMD% -c "import pathlib, sysconfig; p=pathlib.Path(sysconfig.get_path('scripts') or '') / 'hermes.exe'; print(p if p.exists() else '')" 2^>nul') do (
+    call :accept_hermes "%%~H"
+    if defined HERMES_EXE exit /b 0
+  )
+)
 for %%H in (
   ".hermes-venv\Scripts\hermes.exe"
   ".hermes-venv\bin\hermes"
   "%LocalAppData%\Python\bin\hermes.exe"
   "%LocalAppData%\Python\Scripts\hermes.exe"
   "%AppData%\Python\Scripts\hermes.exe"
+  "%LocalAppData%\Python\pythoncore-3.14-64\Scripts\hermes.exe"
+  "%LocalAppData%\Python\pythoncore-3.13-64\Scripts\hermes.exe"
+  "%LocalAppData%\Python\pythoncore-3.12-64\Scripts\hermes.exe"
+  "%LocalAppData%\Python\pythoncore-3.11-64\Scripts\hermes.exe"
   "%LocalAppData%\Programs\Python\Python314\Scripts\hermes.exe"
   "%LocalAppData%\Programs\Python\Python313\Scripts\hermes.exe"
   "%LocalAppData%\Programs\Python\Python312\Scripts\hermes.exe"
@@ -626,6 +647,10 @@ for %%H in (
   "%UserProfile%\.local\bin\hermes.exe"
 ) do (
   call :accept_hermes "%%~H"
+  if defined HERMES_EXE exit /b 0
+)
+for /d %%D in ("%LocalAppData%\Python\pythoncore-*") do (
+  call :accept_hermes "%%~D\Scripts\hermes.exe"
   if defined HERMES_EXE exit /b 0
 )
 for /f "delims=" %%H in ('where hermes.exe 2^>nul') do (
@@ -1072,6 +1097,10 @@ internal static class WebGrokChromeAppLauncher
             Path.Combine(localAppData, "Python", "bin", "hermes.exe"),
             Path.Combine(localAppData, "Python", "Scripts", "hermes.exe"),
             Path.Combine(appData, "Python", "Scripts", "hermes.exe"),
+            Path.Combine(localAppData, "Python", "pythoncore-3.14-64", "Scripts", "hermes.exe"),
+            Path.Combine(localAppData, "Python", "pythoncore-3.13-64", "Scripts", "hermes.exe"),
+            Path.Combine(localAppData, "Python", "pythoncore-3.12-64", "Scripts", "hermes.exe"),
+            Path.Combine(localAppData, "Python", "pythoncore-3.11-64", "Scripts", "hermes.exe"),
             Path.Combine(localAppData, "Programs", "Python", "Python314", "Scripts", "hermes.exe"),
             Path.Combine(localAppData, "Programs", "Python", "Python313", "Scripts", "hermes.exe"),
             Path.Combine(localAppData, "Programs", "Python", "Python312", "Scripts", "hermes.exe"),
@@ -1084,6 +1113,19 @@ internal static class WebGrokChromeAppLauncher
         {{
             if (File.Exists(item)) return item;
         }}
+        try
+        {{
+            string pythonRoot = Path.Combine(localAppData, "Python");
+            if (Directory.Exists(pythonRoot))
+            {{
+                foreach (string dir in Directory.GetDirectories(pythonRoot, "pythoncore-*"))
+                {{
+                    string item = Path.Combine(dir, "Scripts", "hermes.exe");
+                    if (File.Exists(item)) return item;
+                }}
+            }}
+        }}
+        catch {{ }}
         foreach (string item in FindAllOnPath("hermes.exe"))
         {{
             if (File.Exists(item)) return item;

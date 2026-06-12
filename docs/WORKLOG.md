@@ -1496,6 +1496,27 @@
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 크롬 앱 프로필 폴더, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
   - `git diff --check` 통과.
 
+### 2026-06-12 23:55 KST - Hermes Agent pythoncore Scripts 경로 탐지 보강
+- 목표: Hermes Agent가 이미 설치되어 있는데도 릴리즈 부트스트랩이 `Installing Hermes Agent into .hermes-venv...` 단계로 들어가는 문제를 실제 설치 경로 기준으로 수정한다.
+- 확인:
+  - 테스트 PC의 `hermes-agent` 패키지는 `C:\Users\aiguy\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages`에 설치되어 있었다.
+  - 실제 실행 파일은 `C:\Users\aiguy\AppData\Local\Python\pythoncore-3.14-64\Scripts\hermes.exe`였고, 기존 탐지 후보에는 이 `pythoncore-3.14-64\Scripts` 경로가 빠져 있었다.
+  - `C:\Users\aiguy\AppData\Local\Python\bin\python.exe -c "import sysconfig ..."`로 현재 Python의 scripts 경로가 위 Hermes 실행 파일을 정확히 가리키고 있음을 확인했다.
+- 변경:
+  - `tools/build_release_no_official.py`: 릴리즈 부트스트랩 `:find_hermes`에서 현재 선택된 Python의 `sysconfig.get_path("scripts")` 아래 `hermes.exe`를 먼저 탐지하도록 했다.
+  - `tools/build_release_no_official.py`: `%LOCALAPPDATA%\Python\pythoncore-3.14-64\Scripts\hermes.exe` 및 3.13/3.12/3.11 후보와 `pythoncore-*` 디렉터리 스캔을 추가했다.
+  - `tools/build_release_no_official.py`: 릴리즈 Chrome 앱 런처의 `FindHermes()`에도 같은 `pythoncore-*\Scripts` 후보와 디렉터리 스캔을 추가했다.
+  - `app.py`: 앱 런타임 Hermes 후보에 현재 Python의 `sysconfig` scripts 경로와 `%LOCALAPPDATA%\Python\pythoncore-*` 스캔을 추가했다.
+  - `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `cmd /c WEBGROK_BOOTSTRAP.bat` 실행 시 `Installing Hermes Agent into .hermes-venv...`가 아니라 `Using existing Hermes Agent: C:\Users\aiguy\AppData\Local\Python\pythoncore-3.14-64\Scripts\hermes.exe`가 출력됨을 확인했다.
+  - 테스트 실행 후 릴리즈 폴더를 다시 생성해 테스트 로그와 런타임 `work\hermes-exe.txt`, `.hermes-venv`가 릴리즈 패키지에 남지 않도록 했다.
+  - `python -m py_compile app.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - 릴리즈 zip 안에 `WEBGROK_BOOTSTRAP.bat`, `WEBGROK_CHROME_APP.exe`, `README_RELEASE.md`, `USER_MANUAL.md`가 포함됨을 확인했다.
+  - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 부트스트랩 테스트 로그/마커, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+  - `git diff --check` 통과.
+
 ### 2026-06-12 23:21 KST - 릴리즈 설치/실행 실패 이유 즉시 표시
 - 목표: 릴리즈 사용자가 설치 또는 실행 실패 시 로그 파일을 직접 찾아 열지 않아도 실패 원인을 바로 확인할 수 있게 한다.
 - 변경:
