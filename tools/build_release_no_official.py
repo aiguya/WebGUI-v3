@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260612-release-hermes-04"
+STATIC_VERSION = "20260612-release-hermes-05"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -641,7 +641,7 @@ internal static class WebGrokChromeAppLauncher
         string chrome = FindChrome();
         if (!String.IsNullOrEmpty(chrome))
         {{
-            string profile = Path.Combine(root, ".webgrok-chrome-app-profile");
+            string profile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WebGrok", "v3-Hermes", "chrome-app-profile");
             Directory.CreateDirectory(profile);
             ProcessStartInfo info = new ProcessStartInfo();
             info.FileName = chrome;

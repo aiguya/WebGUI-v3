@@ -1414,3 +1414,20 @@
   - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
   - `git diff --check` 통과.
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, 크롬 앱 프로필 폴더, OAuth 토큰/쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-12 22:58 KST - 릴리즈 연결 상태 버튼 캐시 문제 수정
+- 목표: Hermes-only 릴리즈에서 설정의 연결 상태 패널에 있는 `인증` 버튼이 보이지만 동작하지 않는 문제를 수정한다.
+- 확인:
+  - 릴리즈 HTML에는 `startHermesAuth` 버튼이 있고, 릴리즈 JS에도 `/api/hermes/auth/start` 바인딩이 남아 있었다.
+  - 릴리즈 `app.py`에도 `/api/hermes/auth/status`, `/api/hermes/auth/start`, `/api/hermes/auth/submit`, `/api/hermes/auth/logout`, `/api/hermes/auth/reset` 라우트가 유지되어 있었다.
+  - 문제 원인은 릴리즈 정적 버전이 `20260612-release-hermes-04`로 유지되어 Chrome 앱이 이전 `app.js` 캐시를 사용할 수 있는 상태였던 것으로 판단했다.
+- 변경:
+  - `tools/build_release_no_official.py`: 릴리즈 정적 버전을 `20260612-release-hermes-05`로 올려 HTML, JS, 앱 URL 캐시를 무효화했다.
+  - `tools/build_release_no_official.py`: 릴리즈 Chrome 앱 프로필을 릴리즈 폴더 내부가 아니라 `%LOCALAPPDATA%\WebGrok\v3-Hermes\chrome-app-profile`에 만들도록 변경해 재빌드 시 릴리즈 폴더가 잠기는 문제를 막았다.
+  - `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - 릴리즈 Flask test client로 `/api/hermes/auth/status` 200 응답과 `ok=True`를 확인했다.
+  - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, 크롬 앱 프로필 폴더, OAuth 토큰/쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+  - `git diff --check` 통과.
