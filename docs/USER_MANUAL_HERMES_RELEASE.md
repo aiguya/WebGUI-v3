@@ -29,6 +29,25 @@
 
 기본 주소는 `http://127.0.0.1:7863`입니다.
 
+### 필요한 구성요소
+
+릴리즈 앱은 다음 구성요소를 필요로 하며, 첫 실행 시 자동 준비를 시도합니다.
+
+- Python 3.11 이상: WebGrok 서버와 Hermes Agent 실행에 필요합니다.
+- 인터넷 연결: Python 패키지, Hermes Agent, 선택적으로 Node.js를 내려받는 데 필요합니다.
+- Hermes Agent: 릴리즈 폴더의 `.hermes-venv`에 자동 설치됩니다.
+- Node.js/npx: Codex/ChatGPT OAuth Proxy 기능에 필요합니다. Hermes 기능만 사용할 때는 Node.js 설치 실패가 앱 실행을 막지 않습니다.
+- Chrome: `WEBGROK_CHROME_APP.exe`의 앱 모드 실행에 필요합니다. Chrome이 없으면 기본 브라우저로 열립니다.
+
+### 설치/실행 실패 확인
+
+설치 또는 실행이 실패하면 실패 화면에 최근 로그가 함께 표시됩니다.
+
+- 설치 실패 상세: `work/bootstrap.log`
+- 서버 실행 실패 상세: `work/server-runner.log`
+
+대표적인 실패 원인은 `winget` 없음, 인터넷 차단, pip 패키지 설치 실패, Hermes Agent 설치 실패, Python PATH 문제입니다.
+
 ## 3. 설정
 
 설정 탭에서는 연결과 모델 관련 설정을 관리합니다.

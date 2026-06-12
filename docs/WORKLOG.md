@@ -1451,3 +1451,20 @@
   - 릴리즈 zip 안에 `WEBGROK_BOOTSTRAP.bat`, `WEBGROK_CHROME_APP.exe`, `RUN_WEBGROK_HERMES_ONLY.bat`, `README_RELEASE.md`, `USER_MANUAL.md`가 포함됨을 확인했다.
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 크롬 앱 프로필 폴더, OAuth 토큰/쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
   - `git diff --check` 통과.
+
+### 2026-06-12 23:21 KST - 릴리즈 설치/실행 실패 이유 즉시 표시
+- 목표: 릴리즈 사용자가 설치 또는 실행 실패 시 로그 파일을 직접 찾아 열지 않아도 실패 원인을 바로 확인할 수 있게 한다.
+- 변경:
+  - `tools/build_release_no_official.py`: `WEBGROK_BOOTSTRAP.bat` 실패 지점마다 `work/bootstrap.log` 최근 40줄을 콘솔에 출력하도록 `:show_log` 헬퍼를 추가했다.
+  - `tools/build_release_no_official.py`: `RUN_WEBGROK_HERMES_ONLY.bat`에서 부트스트랩 실패 또는 서버 시작 실패 시 각각 `work/bootstrap.log`, `work/server-runner.log` 최근 50줄을 콘솔에 표시하도록 했다.
+  - `tools/build_release_no_official.py`: 릴리즈 `WEBGROK_CHROME_APP.exe` 런처가 부트스트랩/서버 시작 실패 팝업에 `bootstrap.log`, `server-runner.log` 최근 내용을 함께 표시하도록 C# 생성 코드를 보강했다.
+  - `docs/USER_MANUAL_HERMES_RELEASE.md`: 필요한 구성요소(Python, 인터넷 연결, Hermes Agent, Node.js/npx, Chrome)와 실패 시 확인 위치(`work/bootstrap.log`, `work/server-runner.log`)를 추가했다.
+  - `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `python -m py_compile tools/build_release_no_official.py` 통과.
+  - `python tools/build_release_no_official.py`로 릴리즈 Chrome 앱 EXE 컴파일 및 릴리즈 폴더 재생성 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - 릴리즈 zip 안에 `WEBGROK_BOOTSTRAP.bat`, `WEBGROK_CHROME_APP.exe`, `RUN_WEBGROK_HERMES_ONLY.bat`, `README_RELEASE.md`, `USER_MANUAL.md`가 포함됨을 확인했다.
+  - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 크롬 앱 프로필 폴더, OAuth 토큰/쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+  - `git diff --check` 통과.

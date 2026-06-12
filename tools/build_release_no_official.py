@@ -463,6 +463,7 @@ if not defined PYTHON_CMD (
   echo Python 3.11+ could not be installed automatically.
   echo Install Python 3.11+ manually, then run this file again.
   echo See %LOG%
+  call :show_log
   pause
   exit /b 1
 )
@@ -475,6 +476,7 @@ if errorlevel 1 (
 call :run %PYTHON_CMD% -m pip install --upgrade pip
 if errorlevel 1 (
   echo Failed to prepare pip. See %LOG%
+  call :show_log
   pause
   exit /b 1
 )
@@ -482,6 +484,7 @@ if errorlevel 1 (
 call :run %PYTHON_CMD% -m pip install -r requirements.txt
 if errorlevel 1 (
   echo Failed to install WebGrok Python requirements. See %LOG%
+  call :show_log
   pause
   exit /b 1
 )
@@ -491,18 +494,21 @@ if not exist ".hermes-venv\Scripts\hermes.exe" (
   call :run %PYTHON_CMD% -m venv .hermes-venv
   if errorlevel 1 (
     echo Failed to create Hermes virtual environment. See %LOG%
+    call :show_log
     pause
     exit /b 1
   )
   call :run ".hermes-venv\Scripts\python.exe" -m pip install --upgrade pip
   if errorlevel 1 (
     echo Failed to prepare Hermes pip. See %LOG%
+    call :show_log
     pause
     exit /b 1
   )
   call :run ".hermes-venv\Scripts\python.exe" -m pip install "hermes-agent[cli]==0.15.1"
   if errorlevel 1 (
     echo Failed to install Hermes Agent. See %LOG%
+    call :show_log
     pause
     exit /b 1
   )
@@ -510,6 +516,7 @@ if not exist ".hermes-venv\Scripts\hermes.exe" (
 
 if not exist ".hermes-venv\Scripts\hermes.exe" (
   echo Hermes Agent executable is still missing. See %LOG%
+  call :show_log
   pause
   exit /b 1
 )
@@ -599,6 +606,18 @@ exit /b 0
 echo ^> %*>>"%LOG%"
 %*>>"%LOG%" 2>&1
 exit /b %errorlevel%
+
+:show_log
+echo.
+echo ---- Recent bootstrap log ----
+if exist "%LOG%" (
+  powershell -NoProfile -Command "Get-Content -LiteralPath '%CD%\\%LOG%' -Tail 40" 2>nul
+) else (
+  echo Log file was not created.
+)
+echo ---- End bootstrap log ----
+echo.
+exit /b 0
 '''
     write(RELEASE_ROOT / "WEBGROK_BOOTSTRAP.bat", text)
 
@@ -612,6 +631,7 @@ if exist WEBGROK_BOOTSTRAP.bat (
   call WEBGROK_BOOTSTRAP.bat
   if errorlevel 1 (
     echo WebGrok bootstrap failed. Check work\\bootstrap.log
+    call :show_log work\\bootstrap.log
     pause
     exit /b 1
   )
@@ -645,6 +665,7 @@ if not %errorlevel%==0 (
   powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){{ try {{ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 3 | Out-Null; $ok=$true; break }} catch {{ Start-Sleep -Milliseconds 500 }} }}; if($ok){{ exit 0 }} else {{ exit 1 }}"
   if errorlevel 1 (
     echo Server did not start. Check work\\server-runner.log
+    call :show_log work\\server-runner.log
     pause
     exit /b 1
   )
@@ -652,6 +673,19 @@ if not %errorlevel%==0 (
 
 start "" http://127.0.0.1:7863/?v={STATIC_VERSION}
 endlocal
+exit /b 0
+
+:show_log
+echo.
+echo ---- Recent log: %~1 ----
+if exist "%~1" (
+  powershell -NoProfile -Command "Get-Content -LiteralPath '%CD%\\%~1' -Tail 50" 2>nul
+) else (
+  echo Log file was not created.
+)
+echo ---- End log ----
+echo.
+exit /b 0
 '''
     write(RELEASE_ROOT / "RUN_WEBGROK_HERMES_ONLY.bat", text)
 
@@ -691,7 +725,11 @@ internal static class WebGrokChromeAppLauncher
             }}
             if (!WaitForHealth())
             {{
-                MessageBox.Show("WebGrok server did not start. Check work\\\\server-runner.log and work\\\\bootstrap.log.", "WebGrok Chrome App");
+                MessageBox.Show(
+                    "WebGrok server did not start.\\r\\n\\r\\n" + ReadFailureLogs(root),
+                    "WebGrok Chrome App",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
                 return 1;
             }}
             Process chromeProcess = OpenChromeApp(root);
@@ -704,7 +742,11 @@ internal static class WebGrokChromeAppLauncher
         }}
         catch (Exception ex)
         {{
-            MessageBox.Show(ex.Message, "WebGrok Chrome App");
+            MessageBox.Show(
+                ex.Message + "\\r\\n\\r\\n" + ReadFailureLogs(root),
+                "WebGrok Chrome App",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
             return 1;
         }}
     }}
@@ -817,7 +859,43 @@ internal static class WebGrokChromeAppLauncher
         process.WaitForExit();
         if (process.ExitCode != 0)
         {{
-            throw new InvalidOperationException("WebGrok bootstrap failed. Check work\\\\bootstrap.log.");
+            throw new InvalidOperationException("WebGrok bootstrap failed.");
+        }}
+    }}
+
+    private static string ReadFailureLogs(string root)
+    {{
+        string bootstrap = TailFile(Path.Combine(root, "work", "bootstrap.log"), 5000);
+        string server = TailFile(Path.Combine(root, "work", "server-runner.log"), 5000);
+        string message = "";
+        if (!String.IsNullOrEmpty(bootstrap))
+        {{
+            message += "Recent bootstrap.log:\\r\\n" + bootstrap + "\\r\\n\\r\\n";
+        }}
+        if (!String.IsNullOrEmpty(server))
+        {{
+            message += "Recent server-runner.log:\\r\\n" + server + "\\r\\n";
+        }}
+        if (String.IsNullOrEmpty(message))
+        {{
+            message = "No setup log was found yet. Check the release folder's work directory.";
+        }}
+        return message;
+    }}
+
+    private static string TailFile(string path, int maxChars)
+    {{
+        try
+        {{
+            if (!File.Exists(path)) return "";
+            string text = File.ReadAllText(path);
+            text = text.Replace("\\n", "\\r\\n").Replace("\\r\\r\\n", "\\r\\n");
+            if (text.Length <= maxChars) return text;
+            return text.Substring(text.Length - maxChars);
+        }}
+        catch (Exception ex)
+        {{
+            return "Could not read " + path + ": " + ex.Message;
         }}
     }}
 
