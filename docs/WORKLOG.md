@@ -1477,6 +1477,25 @@
   - 릴리즈 zip 검사 결과 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap marker/log, cookie/official session 파일이 포함되지 않았다.
   - `git diff --check` 통과.
 
+### 2026-06-13 02:00 KST - 릴리즈 Hermes 설치 조건 정정
+- 목표: 기존 Hermes Agent가 설치되어 있는데도 릴리즈 부트스트랩이 `hermes proxy status` 실패만 보고 `.hermes-venv` 설치로 넘어가는 문제를 바로잡았다.
+- 확인:
+  - 원본 앱은 전역 Hermes 하나만 쓰는 구조가 아니라, 이미 실행 중인 8645 Proxy 또는 proxy 가능한 다른 venv를 사용할 수 있다.
+  - 따라서 `proxy` 모듈 부재는 "Hermes Agent 미설치"로 해석하면 안 되고, 부트스트랩 설치 조건으로 쓰면 기존 설치 재사용 원칙과 어긋난다.
+- 변경:
+  - `tools/build_release_no_official.py`: `WEBGROK_BOOTSTRAP.bat`의 Hermes 탐색 기준을 다시 실행 파일 존재 여부로 되돌렸다.
+  - `tools/build_release_no_official.py`: 릴리즈 Chrome 앱 런처의 `NeedsBootstrap()`도 Hermes 실행 파일 존재 여부만 확인하도록 되돌렸다.
+  - `tools/build_release_no_official.py`: README 첫 실행 안내에서 `hermes proxy status` 기준 설치 문구를 제거했다.
+  - `docs/USER_MANUAL_HERMES_RELEASE.md`: Hermes Agent가 있으면 재사용하고, 없을 때만 릴리즈 내부 `.hermes-venv`에 설치한다고 다시 명시했다.
+  - 릴리즈 캐시 스탬프를 `20260613-release-hermes-12`로 올리고, `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `cmd /c WEBGROK_BOOTSTRAP.bat`를 릴리즈 폴더에서 직접 실행해 `Using existing Hermes Agent: C:\Users\aiguy\AppData\Local\Python\pythoncore-3.14-64\Scripts\hermes.exe`가 출력되고 설치 단계로 넘어가지 않음을 확인했다.
+  - 검증 후 릴리즈 폴더를 다시 재생성해 `work\bootstrap.log`, `work\bootstrap-ok.txt`, `work\hermes-exe.txt`, `.hermes-venv`가 zip에 포함되지 않게 했다.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `%LOCALAPPDATA%\Python\bin\python.exe -m py_compile tools/build_release_no_official.py app.py release\WebGrok-v3-Hermes\app.py` 통과.
+  - 릴리즈 zip 검사 결과 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap marker/log, cookie/official session 파일이 포함되지 않았다.
+  - `git diff --check` 통과.
+
 ### 2026-06-12 23:37 KST - 릴리즈 Python 탐지 보강
 - 목표: Python이 설치된 PC에서도 릴리즈 첫 실행 부트스트랩이 `winget` Python 설치로 넘어가는 문제를 막고, 사용자 안내 문구를 명확히 한다.
 - 확인:

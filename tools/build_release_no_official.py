@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260613-release-hermes-11"
+STATIC_VERSION = "20260613-release-hermes-12"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -502,6 +502,8 @@ if defined HERMES_EXE (
   echo Using existing Hermes Agent: %HERMES_EXE%>>"%LOG%"
   echo %HERMES_EXE%>work\hermes-exe.txt
 ) else (
+  echo Hermes Agent was not found.
+  echo Hermes Agent was not found.>>"%LOG%"
   echo Installing Hermes Agent into .hermes-venv...
   call :run %PYTHON_CMD% -m venv .hermes-venv
   if errorlevel 1 (
@@ -664,11 +666,6 @@ exit /b 1
 :accept_hermes
 set "HERMES_CANDIDATE=%~1"
 if not exist "%HERMES_CANDIDATE%" exit /b 0
-"%HERMES_CANDIDATE%" proxy status >nul 2>nul
-if errorlevel 1 (
-  echo Hermes exists but proxy command is unavailable: %HERMES_CANDIDATE%>>"%LOG%"
-  exit /b 0
-)
 set "HERMES_EXE=%HERMES_CANDIDATE%"
 exit /b 0
 
@@ -1057,7 +1054,7 @@ internal static class WebGrokChromeAppLauncher
             throw new InvalidOperationException("WEBGROK_BOOTSTRAP.bat was not found.");
         }}
         MessageBox.Show(
-            "WebGrok will prepare first-run dependencies now. If Python 3.11+ is already installed, it will be reused. Hermes Agent is reused only when the proxy command is available; otherwise WebGrok prepares a local .hermes-venv. If Python is missing, WebGrok may try to install it through winget. The setup can also install app Python packages and optionally Node.js. A setup window will open and may take several minutes.",
+            "WebGrok will prepare first-run dependencies now. If Python 3.11+ or Hermes Agent is already installed, it will be reused. If Python is missing, WebGrok may try to install it through winget. The setup can also install app Python packages, Hermes Agent when missing, and optionally Node.js. A setup window will open and may take several minutes.",
             "WebGrok first-run setup",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
@@ -1135,7 +1132,7 @@ internal static class WebGrokChromeAppLauncher
             try
             {{
                 string value = File.ReadAllText(hint).Trim().Trim('"');
-                if (HermesProxyCapable(value)) return value;
+                if (File.Exists(value)) return value;
             }}
             catch {{ }}
         }}
@@ -1160,7 +1157,7 @@ internal static class WebGrokChromeAppLauncher
         }};
         foreach (string item in candidates)
         {{
-            if (HermesProxyCapable(item)) return item;
+            if (File.Exists(item)) return item;
         }}
         try
         {{
@@ -1170,14 +1167,14 @@ internal static class WebGrokChromeAppLauncher
                 foreach (string dir in Directory.GetDirectories(pythonRoot, "pythoncore-*"))
                 {{
                     string item = Path.Combine(dir, "Scripts", "hermes.exe");
-                    if (HermesProxyCapable(item)) return item;
+                    if (File.Exists(item)) return item;
                 }}
             }}
         }}
         catch {{ }}
         foreach (string item in FindAllOnPath("hermes.exe"))
         {{
-            if (HermesProxyCapable(item)) return item;
+            if (File.Exists(item)) return item;
         }}
         return "";
     }}
@@ -1356,7 +1353,7 @@ Excluded:
 
 First run:
 1. Run `WEBGROK_CHROME_APP.exe` to open the app in Chrome app mode, or run `RUN_WEBGROK_HERMES_ONLY.bat` to open it in the default browser.
-2. On the first run, WebGrok prepares app Python packages automatically. If a usable Python 3.11+ is already installed, WebGrok reuses it. Existing Hermes Agent is reused only when `hermes proxy status` works; if Hermes is missing or lacks the proxy module, WebGrok installs a local `.hermes-venv`. It tries to install Python/Node.js through winget only when they are missing.
+2. On the first run, WebGrok prepares app Python packages automatically. If a usable Python 3.11+ or Hermes Agent is already installed, WebGrok reuses it. It installs a local Hermes Agent venv only when Hermes Agent is missing, and tries to install Python/Node.js through winget only when they are missing.
 3. Open Settings, press `인증`, and complete Hermes xAI OAuth.
 
 Note:
