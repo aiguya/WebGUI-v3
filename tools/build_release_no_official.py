@@ -676,6 +676,7 @@ This release folder is a privacy-clean, one-click runnable package.
 Included:
 - Hermes Proxy based image generation, image editing, image-to-video, queue, templates, library, and local media tools.
 - A sanitized sample video template JSON. No sample image or video assets are bundled.
+- `USER_MANUAL.md` Korean feature/user manual.
 - `RUN_WEBGROK_HERMES_ONLY.bat` one-click launcher.
 - `WEBGROK_CHROME_APP.exe` one-click Chrome app-mode launcher.
 
@@ -695,6 +696,10 @@ Note:
 Build stamp: {STATIC_VERSION}
 """
     write(RELEASE_ROOT / "README_RELEASE.md", text)
+
+
+def write_user_manual():
+    copy_file(ROOT / "docs" / "USER_MANUAL_HERMES_RELEASE.md", RELEASE_ROOT / "USER_MANUAL.md")
 
 
 def write_clean_settings():
@@ -749,6 +754,7 @@ def main():
     write_runner()
     build_chrome_app_launcher()
     write_release_notes()
+    write_user_manual()
     print(RELEASE_ROOT)
 
 

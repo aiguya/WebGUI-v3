@@ -1373,3 +1373,15 @@
   - 릴리즈 Flask test client로 `/`, `/health`, `/api/library?media_type=image&scan=0&compact=1&limit=20` 응답을 확인했다.
   - 릴리즈 폴더에서 `20260612-release-hermes-04`, `LIBRARY_CACHE`, `fetchPickerItems`, `compact=1` 포함을 확인했다.
   - zip 내부에 `__pycache__`, `.webgork-private`, `.chrome`, OAuth token류가 포함되지 않았음을 확인했다.
+
+### 2026-06-12 09:04 KST - 릴리즈 사용자 매뉴얼 추가
+- 목표: Hermes-only 릴리즈 전달본을 받은 사용자가 기능별 사용법을 확인할 수 있는 한국어 사용자 매뉴얼을 제공한다.
+- 변경:
+  - `docs/USER_MANUAL_HERMES_RELEASE.md`: 실행 방법, 설정, 이미지 생성, 이미지 편집, 이미지→영상, 영상 연장/프레임 연장, 영상 편집, 망가 배치, 프롬프트, 템플릿, 라이브러리, 작업 큐, 오류 확인, 데이터 백업, 릴리즈 제외 기능을 설명하는 사용자 매뉴얼을 추가했다.
+  - `tools/build_release_no_official.py`: 릴리즈 빌드 시 매뉴얼을 `release/WebGrok-v3-Hermes/USER_MANUAL.md`로 복사하고 `README_RELEASE.md`의 Included 목록에 표시하도록 했다.
+  - `release/WebGrok-v3-Hermes-20260611.zip`: `USER_MANUAL.md` 포함 상태로 다시 압축했다.
+- 검증:
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - 릴리즈 Flask test client로 `/`, `/health`, `/api/library?media_type=image&scan=0&compact=1&limit=20` 응답을 확인했다.
+  - zip 내부에 `README_RELEASE.md`와 `USER_MANUAL.md`가 포함되고, `__pycache__`, `.webgork-private`, `.chrome`, OAuth token류가 포함되지 않았음을 확인했다.
