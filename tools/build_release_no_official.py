@@ -511,18 +511,26 @@ internal static class WebGrokChromeAppLauncher
     private static int Main()
     {{
         string root = AppDomain.CurrentDomain.BaseDirectory;
+        Process serverProcess = null;
+        bool startedServer = false;
         try
         {{
             if (!HealthOk())
             {{
-                StartServer(root);
+                serverProcess = StartServer(root);
+                startedServer = serverProcess != null;
             }}
             if (!WaitForHealth())
             {{
                 MessageBox.Show("WebGrok 서버를 시작하지 못했습니다. RUN_WEBGROK_HERMES_ONLY.bat을 한 번 실행해 의존성을 설치한 뒤 다시 시도해 주세요.", "WebGrok Chrome App");
                 return 1;
             }}
-            OpenChromeApp();
+            Process chromeProcess = OpenChromeApp(root);
+            if (startedServer)
+            {{
+                WaitForChromeAppExit(chromeProcess);
+                StopStartedServer(serverProcess);
+            }}
             return 0;
         }}
         catch (Exception ex)
@@ -560,7 +568,7 @@ internal static class WebGrokChromeAppLauncher
         return false;
     }}
 
-    private static void StartServer(string root)
+    private static Process StartServer(string root)
     {{
         string python = FindPython();
         if (String.IsNullOrEmpty(python))
@@ -585,7 +593,7 @@ internal static class WebGrokChromeAppLauncher
             info.FileName = python;
             info.Arguments = "work\\\\run_server.py";
         }}
-        Process.Start(info);
+        return Process.Start(info);
     }}
 
     private static string FindPython()
@@ -628,21 +636,59 @@ internal static class WebGrokChromeAppLauncher
         return "";
     }}
 
-    private static void OpenChromeApp()
+    private static Process OpenChromeApp(string root)
     {{
         string chrome = FindChrome();
         if (!String.IsNullOrEmpty(chrome))
         {{
+            string profile = Path.Combine(root, ".webgrok-chrome-app-profile");
+            Directory.CreateDirectory(profile);
             ProcessStartInfo info = new ProcessStartInfo();
             info.FileName = chrome;
-            info.Arguments = "--app=\\"" + AppUrl + "\\" --new-window";
+            info.Arguments = "--user-data-dir=\\"" + profile + "\\" --no-first-run --app=\\"" + AppUrl + "\\" --new-window";
             info.UseShellExecute = false;
-            Process.Start(info);
-            return;
+            return Process.Start(info);
         }}
         ProcessStartInfo fallback = new ProcessStartInfo(AppUrl);
         fallback.UseShellExecute = true;
         Process.Start(fallback);
+        return null;
+    }}
+
+    private static void WaitForChromeAppExit(Process chromeProcess)
+    {{
+        if (chromeProcess == null) return;
+        try
+        {{
+            chromeProcess.WaitForExit();
+        }}
+        catch
+        {{
+        }}
+    }}
+
+    private static void StopStartedServer(Process serverProcess)
+    {{
+        if (serverProcess == null) return;
+        try
+        {{
+            if (serverProcess.HasExited) return;
+            try
+            {{
+                serverProcess.CloseMainWindow();
+            }}
+            catch
+            {{
+            }}
+            if (!serverProcess.WaitForExit(1500))
+            {{
+                serverProcess.Kill();
+                serverProcess.WaitForExit(5000);
+            }}
+        }}
+        catch
+        {{
+        }}
     }}
 }}
 '''

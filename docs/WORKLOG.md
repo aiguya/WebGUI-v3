@@ -1397,3 +1397,20 @@
   - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
   - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
   - 릴리즈 Flask test client로 `/`, `/health`, `/api/library?media_type=image&scan=0&compact=1&limit=20` 응답을 확인했다.
+
+### 2026-06-12 22:49 KST - 크롬 앱 종료 시 자체 서버 종료
+- 목표: 크롬 앱 EXE로 실행한 경우 사용자가 앱 창을 닫으면 런처가 직접 띄운 서버도 함께 종료되도록 한다.
+- 변경:
+  - `tools/WebGuiLauncher.cs`: 서버가 꺼져 있을 때만 `StartServer()`의 `Process`를 보관하고, 크롬 앱 프로세스 종료를 기다린 뒤 해당 서버 프로세스를 종료하도록 변경했다.
+  - `tools/WebGuiLauncher.cs`: 크롬 앱 실행 시 전용 `--user-data-dir=.webgui-chrome-app-profile`을 사용해 앱 창 프로세스를 추적할 수 있게 했다.
+  - `tools/build_release_no_official.py`: 릴리즈 `WEBGROK_CHROME_APP.exe` 생성 코드에도 같은 서버 추적/종료 흐름을 적용하고, 릴리즈 전용 `.webgrok-chrome-app-profile`을 사용하도록 했다.
+  - 이미 실행 중인 서버에 붙은 경우에는 런처가 서버를 새로 띄운 것이 아니므로 크롬 앱을 닫아도 기존 서버를 종료하지 않도록 분리했다.
+  - `WebGUI.v3.exe`, `release/WebGrok-v3-Hermes/WEBGROK_CHROME_APP.exe`, `release/WebGrok-v3-Hermes-20260611.zip`을 재생성했다.
+- 검증:
+  - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
+  - `python -m py_compile tools/build_release_no_official.py` 통과.
+  - `python tools/build_release_no_official.py`로 Hermes-only 릴리즈 폴더 재생성 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile release/WebGrok-v3-Hermes/app.py tools/build_release_no_official.py` 통과.
+  - `git diff --check` 통과.
+  - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, 크롬 앱 프로필 폴더, OAuth 토큰/쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.

@@ -16,11 +16,14 @@ internal static class Program
     private static int Main()
     {
         string root = AppDomain.CurrentDomain.BaseDirectory;
+        Process serverProcess = null;
+        bool startedServer = false;
         try
         {
             if (!HealthOk())
             {
-                StartServer(root);
+                serverProcess = StartServer(root);
+                startedServer = serverProcess != null;
             }
 
             if (!WaitForHealth())
@@ -34,7 +37,12 @@ internal static class Program
                 return 1;
             }
 
-            OpenChromeApp();
+            Process chromeProcess = OpenChromeApp(root);
+            if (startedServer)
+            {
+                WaitForChromeAppExit(chromeProcess);
+                StopStartedServer(serverProcess);
+            }
             return 0;
         }
         catch (Exception ex)
@@ -76,7 +84,7 @@ internal static class Program
         return false;
     }
 
-    private static void StartServer(string root)
+    private static Process StartServer(string root)
     {
         Directory.CreateDirectory(Path.Combine(root, "work"));
         string python = FindPython();
@@ -108,7 +116,7 @@ internal static class Program
             info.Arguments = script;
         }
 
-        Process.Start(info);
+        return Process.Start(info);
     }
 
     private static string FindPython()
@@ -164,21 +172,59 @@ internal static class Program
         return "";
     }
 
-    private static void OpenChromeApp()
+    private static Process OpenChromeApp(string root)
     {
         string chrome = FindChrome();
         if (!String.IsNullOrEmpty(chrome))
         {
+            string profile = Path.Combine(root, ".webgui-chrome-app-profile");
+            Directory.CreateDirectory(profile);
             ProcessStartInfo info = new ProcessStartInfo();
             info.FileName = chrome;
-            info.Arguments = "--app=\"" + AppUrl + "\" --new-window --class=WebGUIv3";
+            info.Arguments = "--user-data-dir=\"" + profile + "\" --no-first-run --app=\"" + AppUrl + "\" --new-window --class=WebGUIv3";
             info.UseShellExecute = false;
-            Process.Start(info);
-            return;
+            return Process.Start(info);
         }
 
         ProcessStartInfo fallback = new ProcessStartInfo(AppUrl);
         fallback.UseShellExecute = true;
         Process.Start(fallback);
+        return null;
+    }
+
+    private static void WaitForChromeAppExit(Process chromeProcess)
+    {
+        if (chromeProcess == null) return;
+        try
+        {
+            chromeProcess.WaitForExit();
+        }
+        catch
+        {
+        }
+    }
+
+    private static void StopStartedServer(Process serverProcess)
+    {
+        if (serverProcess == null) return;
+        try
+        {
+            if (serverProcess.HasExited) return;
+            try
+            {
+                serverProcess.CloseMainWindow();
+            }
+            catch
+            {
+            }
+            if (!serverProcess.WaitForExit(1500))
+            {
+                serverProcess.Kill();
+                serverProcess.WaitForExit(5000);
+            }
+        }
+        catch
+        {
+        }
     }
 }
