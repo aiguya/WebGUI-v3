@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260613-release-hermes-12"
+STATIC_VERSION = "20260613-release-hermes-14"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -745,7 +745,7 @@ if /I "%HEALTH_STATE%"=="stale" (
   pause
   exit /b 1
 )
-if not /I "%HEALTH_STATE%"=="current" (
+if /I not "%HEALTH_STATE%"=="current" (
   echo Starting WebGrok Hermes-only server...
   start "WebGrok Hermes Server" /min cmd /c "set WEBGORK_OPEN_BROWSER=0&& set WEBGORK_PORT=7863&& %PYTHON_CMD% work\\run_server.py"
   powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){{ try {{ $json=(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 3).Content | ConvertFrom-Json; if($json.build_stamp -eq '{STATIC_VERSION}'){{ $ok=$true; break }} }} catch {{ }}; Start-Sleep -Milliseconds 500 }}; if($ok){{ exit 0 }} else {{ exit 1 }}"

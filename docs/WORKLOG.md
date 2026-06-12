@@ -1477,6 +1477,28 @@
   - 릴리즈 zip 검사 결과 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap marker/log, cookie/official session 파일이 포함되지 않았다.
   - `git diff --check` 통과.
 
+### 2026-06-13 02:23 KST - Hermes 인증 버튼/릴리즈 실행 경로 수정
+- 목표: 릴리즈 앱에서 Hermes 인증 버튼이 동작하지 않는 것처럼 보이고, Proxy가 켜지지 않는 문제를 현재 실행 앱 기준으로 확인해 수정했다.
+- 확인:
+  - 실행 중인 릴리즈 앱은 `build_stamp=20260613-release-hermes-12`였고 `/api/hermes/auth/status`는 `logged_in=true`, `proxy_running=false`를 반환했다.
+  - `/api/hermes/auth/start`는 `already_logged_in=true`만 반환하고 Proxy 시작 결과를 UI로 전달하지 않아, 인증 버튼이 먹통처럼 보였다.
+  - `/api/hermes/proxy/start`는 릴리즈 앱 기준 proxy 가능한 Hermes 후보를 못 찾아 500을 반환했다. 원본 앱은 `Version-2\.hermes-venv\Scripts\hermes.exe`를 proxy용으로 잡을 수 있었지만, 릴리즈 폴더에서는 해당 후보가 검색 범위 밖이었다.
+  - `RUN_WEBGROK_HERMES_ONLY.bat`에는 `if not /I` 순서 오류가 있어 `"missing"=="current" was unexpected at this time.`로 서버 시작이 중단될 수 있었다.
+- 변경:
+  - `app.py`: 릴리즈가 repo 내부 `release\WebGrok-v3-Hermes`에서 실행될 때 부모 repo와 그 형제 `Version-2`의 Hermes venv 후보까지 탐색하도록 확장했다.
+  - `app.py`: 이미 Hermes OAuth 로그인 상태에서 인증 시작을 누르면 `ensure_hermes_proxy_background()` 결과를 `proxy_started`, `proxy_message`, `proxy_running`으로 반환하도록 했다.
+  - `static/app.js`: 인증 버튼 응답이 이미 로그인 상태일 때 Proxy 실행 성공/실패 상태를 UI와 토스트에 표시하고 health를 다시 불러오도록 했다.
+  - `tools/build_release_no_official.py`: BAT 조건문을 `if /I not "%HEALTH_STATE%"=="current"`로 수정했다.
+  - 릴리즈 캐시 스탬프를 `20260613-release-hermes-14`로 올리고, `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - 릴리즈 앱 import 기준 `auth_exe`는 전역 Hermes, `proxy_exe`는 `C:\Users\aiguy\Documents\Codex\2026-05-28\https-gall-dcinside-com-mgallery-board-Version-2\.hermes-venv\Scripts\hermes.exe`를 선택함을 확인했다.
+  - 릴리즈 Flask 테스트 클라이언트로 `POST /api/hermes/auth/start` 호출 시 `proxy_started=true`, `proxy_running=true`, `proxy_message="Hermes Proxy가 실행되었습니다."`를 확인했다.
+  - `cmd /c RUN_WEBGROK_HERMES_ONLY.bat` 실행 시 기존 `if not /I` 문법 오류가 사라지고 서버 시작 단계까지 진행됨을 확인했다.
+  - `node --check static/app.js`, `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `%LOCALAPPDATA%\Python\bin\python.exe -m py_compile app.py tools/build_release_no_official.py release\WebGrok-v3-Hermes\app.py` 통과.
+  - 릴리즈 zip 검사 결과 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap marker/log, cookie/official session 파일이 포함되지 않았다.
+  - `git diff --check` 통과.
+
 ### 2026-06-13 02:00 KST - 릴리즈 Hermes 설치 조건 정정
 - 목표: 기존 Hermes Agent가 설치되어 있는데도 릴리즈 부트스트랩이 `hermes proxy status` 실패만 보고 `.hermes-venv` 설치로 넘어가는 문제를 바로잡았다.
 - 확인:

@@ -1355,6 +1355,17 @@ def clear_oauth_token():
 def hermes_exe_candidates():
     exe_name = "hermes.exe" if os.name == "nt" else "hermes"
     candidates = []
+
+    def add_hermes_roots(base):
+        if not base:
+            return
+        candidates.extend([
+            base / ".hermes-venv" / "Scripts" / exe_name,
+            base / ".hermes-venv" / "bin" / exe_name,
+            base / "vendor" / "hermes-agent" / "venv" / "Scripts" / exe_name,
+            base / "vendor" / "hermes-agent" / "venv" / "bin" / exe_name,
+        ])
+
     for env_name in ("WEBGORK_HERMES_EXE", "HERMES_EXE"):
         value = os.getenv(env_name)
         if value:
@@ -1366,12 +1377,7 @@ def hermes_exe_candidates():
         value = ""
     if value:
         candidates.append(Path(value).expanduser())
-    candidates.extend([
-        ROOT / ".hermes-venv" / "Scripts" / exe_name,
-        ROOT / ".hermes-venv" / "bin" / exe_name,
-        ROOT / "vendor" / "hermes-agent" / "venv" / "Scripts" / exe_name,
-        ROOT / "vendor" / "hermes-agent" / "venv" / "bin" / exe_name,
-    ])
+    add_hermes_roots(ROOT)
     try:
         import sysconfig
         scripts_dir = sysconfig.get_path("scripts")
@@ -1403,20 +1409,18 @@ def hermes_exe_candidates():
             ])
         if userprofile:
             candidates.append(Path(userprofile) / ".local" / "bin" / exe_name)
-    sibling_names = [
-        ROOT.name.replace("-Version-3", "-Version-2"),
-        ROOT.name.replace("-Version-3", ""),
-    ]
-    for name in dict.fromkeys(sibling_names):
-        if not name or name == ROOT.name:
-            continue
-        sibling = ROOT.parent / name
-        candidates.extend([
-            sibling / ".hermes-venv" / "Scripts" / exe_name,
-            sibling / ".hermes-venv" / "bin" / exe_name,
-            sibling / "vendor" / "hermes-agent" / "venv" / "Scripts" / exe_name,
-            sibling / "vendor" / "hermes-agent" / "venv" / "bin" / exe_name,
-        ])
+    local_roots = [ROOT]
+    if ROOT.parent.name.lower() == "release":
+        local_roots.append(ROOT.parent.parent)
+    for base in dict.fromkeys(local_roots):
+        sibling_names = [
+            base.name.replace("-Version-3", "-Version-2"),
+            base.name.replace("-Version-3", ""),
+        ]
+        for name in dict.fromkeys(sibling_names):
+            if not name or name == base.name:
+                continue
+            add_hermes_roots(base.parent / name)
     discovered = shutil.which("hermes")
     if discovered:
         candidates.append(Path(discovered))
@@ -7278,8 +7282,16 @@ def hermes_auth_start():
         return safe_error("Hermes 실행 파일을 찾을 수 없습니다. V3 Hermes 설치를 먼저 확인해 주세요.", status=400)
     logged_in, detail = hermes_auth_logged_in()
     if logged_in:
-        ensure_hermes_proxy_background()
-        return jsonify({"ok": True, "already_logged_in": True, "status": detail, **hermes_login_snapshot()})
+        proxy_started, proxy_message = ensure_hermes_proxy_background()
+        return jsonify({
+            "ok": True,
+            "already_logged_in": True,
+            "status": detail,
+            "proxy_started": proxy_started,
+            "proxy_message": proxy_message,
+            "proxy_running": port_open("127.0.0.1", 8645),
+            **hermes_login_snapshot(),
+        })
     with HERMES_LOGIN_LOCK:
         existing = HERMES_LOGIN_STATE.get("process")
         if existing and existing.poll() is None:

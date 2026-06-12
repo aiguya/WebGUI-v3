@@ -8065,8 +8065,15 @@ function bindHermesAuthPanel() {
       if (!data.ok) throw new Error(data.error || data.detail || "Hermes 인증 시작 실패");
       if (data.already_logged_in) {
         pendingHermesAuthAutoOpen = false;
-        setHermesAuthStatus("이미 Hermes OAuth에 연결되어 있습니다.");
-        showToast("Hermes OAuth가 이미 연결되어 있습니다.");
+        if (data.proxy_running || data.proxy_started) {
+          setHermesAuthStatus("Hermes OAuth 연결됨 · Proxy 실행 중");
+          showToast("Hermes OAuth와 Proxy가 연결되어 있습니다.");
+        } else {
+          const message = data.proxy_message || "Hermes OAuth는 연결되어 있지만 Proxy는 아직 실행되지 않았습니다.";
+          setHermesAuthStatus(message, true);
+          showToast(message, true);
+        }
+        await loadHealth();
       } else if (data.auth_url) {
         showHermesAuthUrl(data.auth_url, true);
         setHermesAuthStatus("브라우저 인증 화면의 코드를 복사해 아래에 붙여넣으세요.");
