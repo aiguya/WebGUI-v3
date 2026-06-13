@@ -1881,3 +1881,21 @@
   - `node --check static/app.js`와 `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
   - 릴리즈 앱/정적 파일/매뉴얼에 로그아웃 버튼과 `/api/codex-proxy/logout` 포함을 확인했다.
   - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 로그, bootstrap marker, hint 파일, 세션 DB, 쿠키/토큰 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-14 03:47 KST - Grok 공식홈 기본 브라우저 쿠키 확인/내 Chrome 흐름 보강
+- 증상:
+  - `기본 브라우저`로 Grok 공식홈을 열어 로그인해도 Chrome/Edge가 쿠키 DB를 잠근 상태에서는 앱이 쿠키를 가져오지 못했다.
+  - `내 Chrome` 버튼은 이미 일반 Chrome이 실행 중이면 기본 프로필에 디버그 포트를 붙일 수 없어 사용자가 보기에는 아무것도 열리지 않는 것처럼 보였다.
+- 변경:
+  - `/api/grok-official/browser/close-and-check` 엔드포인트를 추가했다.
+  - 설정의 Grok 공식홈 연결 행에 `종료+쿠키 확인` 버튼을 추가해 Chrome/Edge/Brave/Opera를 명시적으로 종료한 뒤 쿠키 캐시를 비우고 Grok 세션을 다시 확인하도록 했다.
+  - `내 Chrome` 시작 요청이 기존 Chrome 프로필 잠금 또는 9227 포트 점유로 실패하면 `can_restart_default=True` 응답을 반환하도록 했다.
+  - 프론트엔드에서 `내 Chrome` 실패 시 확인창을 거쳐 `종료+내 Chrome` 흐름으로 이어지도록 했다.
+  - 정적 캐시 버전을 `20260614-v3-74`로 올리고 원본 `WebGUI.v3.exe`를 다시 빌드했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `node --check static/app.js` 통과.
+  - 테스트 클라이언트에서 브라우저 종료 함수를 stub 처리해 `/api/grok-official/browser/close-and-check`가 `200 True`를 반환함을 확인했다.
+  - 테스트 클라이언트에서 Chrome 실행 중 상태를 stub 처리해 `/api/grok-official/chrome/start-default`가 `409`와 `can_restart_default=True`를 반환함을 확인했다.
+  - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
+  - 내부 브라우저 UI 확인은 Windows 샌드박스의 `spawn setup refresh` 오류로 도구가 두 번 종료되어 생략했다.

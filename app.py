@@ -2590,11 +2590,15 @@ def grok_default_chrome_profile_name():
 
 
 def chrome_process_count():
+    return process_count_for_image("chrome.exe")
+
+
+def process_count_for_image(image_name):
     if os.name != "nt":
         return 0
     try:
         output = subprocess.check_output(
-            ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/FO", "CSV", "/NH"],
+            ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=3,
@@ -2603,7 +2607,12 @@ def chrome_process_count():
         return 0
     if "INFO:" in output:
         return 0
-    return sum(1 for line in output.splitlines() if line.strip().lower().startswith('"chrome.exe"'))
+    prefix = f'"{image_name.lower()}"'
+    return sum(1 for line in output.splitlines() if line.strip().lower().startswith(prefix))
+
+
+def clear_grok_system_cookie_cache():
+    GROK_SYSTEM_COOKIE_CACHE.update({"cookies": [], "source": "", "error": "", "expires_at": 0.0})
 
 
 def stop_chrome_processes():
@@ -2627,6 +2636,40 @@ def stop_chrome_processes():
         "stopped": before,
         "remaining": after,
         "message": f"Chrome 프로세스 {before}개를 종료했습니다.",
+    }
+
+
+def stop_default_browser_processes():
+    if os.name != "nt":
+        raise RuntimeError("브라우저 자동 종료는 Windows에서만 지원합니다.")
+    names = ["chrome.exe", "msedge.exe", "brave.exe", "opera.exe", "opera_gx.exe"]
+    stopped = {}
+    remaining = {}
+    errors = []
+    for name in names:
+        before = process_count_for_image(name)
+        if not before:
+            continue
+        proc = subprocess.run(
+            ["taskkill", "/IM", name, "/T", "/F"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        time.sleep(0.4)
+        after = process_count_for_image(name)
+        stopped[name] = before
+        remaining[name] = after
+        if proc.returncode != 0 and after:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            errors.append(f"{name}: {detail[:300]}")
+    if errors:
+        raise RuntimeError("; ".join(errors))
+    total = sum(stopped.values())
+    return {
+        "stopped": stopped,
+        "remaining": remaining,
+        "message": f"브라우저 프로세스 {total}개를 종료했습니다." if total else "실행 중인 Chromium 브라우저가 없습니다.",
     }
 
 
@@ -7963,6 +8006,26 @@ def grok_official_browser_open():
         return safe_error("Grok 공식홈을 기본 브라우저로 열지 못했습니다.", exc, 502)
 
 
+@app.post("/api/grok-official/browser/close-and-check")
+def grok_official_browser_close_and_check():
+    try:
+        stopped = stop_default_browser_processes()
+        clear_grok_system_cookie_cache()
+        status = grok_official_status_payload(check_cookie=True)
+        if status.get("session_cookie"):
+            message = "기본 브라우저 쿠키에서 Grok 공식홈 세션을 확인했습니다."
+        else:
+            message = status.get("cookie_error") or "브라우저를 종료했지만 Grok 공식홈 세션 쿠키를 찾지 못했습니다. 기본 브라우저에서 grok.com 로그인 상태를 다시 확인해 주세요."
+        return jsonify({
+            "ok": True,
+            "message": message,
+            "stopped_browsers": stopped,
+            "status": status,
+        })
+    except Exception as exc:
+        return safe_error("기본 브라우저 종료 후 Grok 공식홈 쿠키 확인에 실패했습니다.", exc, 502)
+
+
 @app.post("/api/grok-official/chrome/start")
 def grok_official_chrome_start():
     try:
@@ -7975,15 +8038,34 @@ def grok_official_chrome_start():
 @app.post("/api/grok-official/chrome/start-default")
 def grok_official_chrome_start_default():
     if port_open("127.0.0.1", grok_official_port()):
-        return safe_error(
-            "Grok 공식홈 Chrome 디버그 포트가 이미 사용 중입니다.",
-            detail="전용 Grok Chrome 창을 모두 닫은 뒤 다시 눌러 주세요. 기본 Chrome 프로필은 이미 실행 중인 일반 Chrome에 뒤늦게 붙을 수 없습니다.",
-            status=409,
-        )
+        return jsonify({
+            "ok": False,
+            "error": "Grok 공식홈 Chrome 디버그 포트가 이미 사용 중입니다.",
+            "detail": "전용 Grok Chrome 창을 모두 닫거나, Chrome을 종료하고 기본 프로필을 다시 여는 '종료+내 Chrome' 흐름을 사용해 주세요.",
+            "next": "기존 Chrome을 종료하고 기본 프로필로 다시 열 수 있습니다.",
+            "can_restart_default": True,
+        }), 409
+    if chrome_process_count():
+        return jsonify({
+            "ok": False,
+            "error": "기본 Chrome 프로필이 이미 실행 중인 Chrome에 잠겨 있습니다.",
+            "detail": "기본 Chrome 프로필은 이미 실행 중인 일반 Chrome에 뒤늦게 붙을 수 없습니다. Chrome을 종료하고 디버그 모드로 다시 열어야 쿠키를 읽을 수 있습니다.",
+            "next": "확인하면 실행 중인 Chrome을 종료하고 기본 프로필로 Grok 공식홈을 다시 엽니다.",
+            "can_restart_default": True,
+        }), 409
     try:
         result = ensure_grok_chrome(use_default_profile=True)
         return jsonify({"ok": True, **result, "status": grok_official_status_payload(check_cookie=False)})
     except Exception as exc:
+        detail = error_detail_text(exc)
+        if "잠겨" in detail or "already running" in detail.lower():
+            return jsonify({
+                "ok": False,
+                "error": "기본 Chrome 프로필로 Grok 공식홈을 시작하지 못했습니다.",
+                "detail": detail,
+                "next": "확인하면 실행 중인 Chrome을 종료하고 기본 프로필로 Grok 공식홈을 다시 엽니다.",
+                "can_restart_default": True,
+            }), 409
         return safe_error("기본 Chrome 프로필로 Grok 공식홈을 시작하지 못했습니다.", exc, 502)
 
 

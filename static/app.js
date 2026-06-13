@@ -284,8 +284,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260614-v3-73";
-const appShellCacheName = "webgui-shell-v3-73";
+const appStaticVersion = "20260614-v3-74";
+const appShellCacheName = "webgui-shell-v3-74";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -8298,6 +8298,30 @@ async function refreshGrokOfficialPanel() {
   }
 }
 
+async function restartGrokOfficialDefaultChrome(button, options = {}) {
+  if (!options.skipConfirm && !confirm("실행 중인 모든 Chrome 창을 종료하고 기본 프로필을 9227 디버그 모드로 다시 엽니다. 계속할까요?")) return false;
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "종료 중";
+  try {
+    const response = await fetch("/api/grok-official/chrome/restart-default", { method: "POST" });
+    const data = await readJsonResponse(response, "Chrome 종료 후 기본 프로필 실행 실패");
+    if (!data.ok) throw new Error(data.error || data.detail || "Chrome 종료 후 기본 프로필 실행 실패");
+    showToast(data.message || "Chrome을 종료하고 기본 프로필로 Grok 공식홈을 열었습니다.");
+    setGrokOfficialStatus(data.message || "열린 Chrome에서 Grok 로그인 상태를 확인한 뒤 새로고침을 눌러 주세요.");
+    await refreshGrokOfficialPanel();
+    await loadHealth();
+    return true;
+  } catch (error) {
+    showToast(error.message, true);
+    setGrokOfficialStatus(error.message, true);
+    return false;
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
 function bindGrokOfficialPanel() {
   document.querySelector("#grokOfficialStart")?.addEventListener("click", async () => {
     const button = document.querySelector("#grokOfficialStart");
@@ -8320,6 +8344,28 @@ function bindGrokOfficialPanel() {
       button.textContent = original;
     }
   });
+  document.querySelector("#grokOfficialCloseAndCheck")?.addEventListener("click", async () => {
+    if (!confirm("기본 브라우저 쿠키를 읽기 위해 Chrome/Edge/Brave/Opera를 종료하고 Grok 세션을 다시 확인합니다. 계속할까요?")) return;
+    const button = document.querySelector("#grokOfficialCloseAndCheck");
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "확인 중";
+    try {
+      const response = await fetch("/api/grok-official/browser/close-and-check", { method: "POST" });
+      const data = await readJsonResponse(response, "기본 브라우저 쿠키 확인 실패");
+      if (!data.ok) throw new Error(data.error || data.detail || "기본 브라우저 쿠키 확인 실패");
+      showToast(data.message || "Grok 공식홈 쿠키를 다시 확인했습니다.");
+      setGrokOfficialStatus(data.message || "Grok 공식홈 쿠키를 다시 확인했습니다.", !data.status?.session_cookie);
+      await refreshGrokOfficialPanel();
+      await loadHealth();
+    } catch (error) {
+      showToast(error.message, true);
+      setGrokOfficialStatus(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  });
   document.querySelector("#grokOfficialStartDefault")?.addEventListener("click", async () => {
     const button = document.querySelector("#grokOfficialStartDefault");
     const original = button.textContent;
@@ -8328,6 +8374,14 @@ function bindGrokOfficialPanel() {
     try {
       const response = await fetch("/api/grok-official/chrome/start-default", { method: "POST" });
       const data = await readJsonResponse(response, "기본 Chrome 프로필 시작 실패");
+      if (!data.ok && data.can_restart_default) {
+        const message = data.detail || data.next || "실행 중인 Chrome 때문에 기본 프로필을 바로 열 수 없습니다. Chrome을 종료하고 다시 열까요?";
+        if (confirm(message)) {
+          await restartGrokOfficialDefaultChrome(button, { skipConfirm: true });
+          return;
+        }
+        throw new Error(data.error || data.detail || "기본 Chrome 프로필 시작 실패");
+      }
       if (!data.ok) throw new Error(data.error || data.detail || "기본 Chrome 프로필 시작 실패");
       showToast(data.message || "기본 Chrome 프로필로 Grok 공식홈을 열었습니다.");
       setGrokOfficialStatus(data.message || "기본 Chrome에서 Grok 로그인 상태를 확인해 주세요.");
@@ -8342,26 +8396,8 @@ function bindGrokOfficialPanel() {
     }
   });
   document.querySelector("#grokOfficialRestartDefault")?.addEventListener("click", async () => {
-    if (!confirm("실행 중인 모든 Chrome 창을 종료하고 기본 프로필을 9227 디버그 모드로 다시 엽니다. 계속할까요?")) return;
     const button = document.querySelector("#grokOfficialRestartDefault");
-    const original = button.textContent;
-    button.disabled = true;
-    button.textContent = "종료 중";
-    try {
-      const response = await fetch("/api/grok-official/chrome/restart-default", { method: "POST" });
-      const data = await readJsonResponse(response, "Chrome 종료 후 기본 프로필 실행 실패");
-      if (!data.ok) throw new Error(data.error || data.detail || "Chrome 종료 후 기본 프로필 실행 실패");
-      showToast(data.message || "Chrome을 종료하고 기본 프로필로 Grok 공식홈을 열었습니다.");
-      setGrokOfficialStatus(data.message || "열린 Chrome에서 Grok 로그인 상태를 확인한 뒤 새로고침을 눌러 주세요.");
-      await refreshGrokOfficialPanel();
-      await loadHealth();
-    } catch (error) {
-      showToast(error.message, true);
-      setGrokOfficialStatus(error.message, true);
-    } finally {
-      button.disabled = false;
-      button.textContent = original;
-    }
+    await restartGrokOfficialDefaultChrome(button);
   });
   document.querySelector("#grokOfficialUse")?.addEventListener("click", async () => {
     try {
@@ -8706,6 +8742,7 @@ function installConnectionStatusPanel() {
         <span class="connection-state" data-connection-label>연결안됨</span>
         <div class="connection-actions">
           <button type="button" id="grokOfficialStart" class="secondary">기본 브라우저</button>
+          <button type="button" id="grokOfficialCloseAndCheck" class="secondary danger-btn">종료+쿠키 확인</button>
           <button type="button" id="grokOfficialStartDefault" class="secondary">내 Chrome</button>
           <button type="button" id="grokOfficialRestartDefault" class="secondary danger-btn">종료+내 Chrome</button>
           <button type="button" id="grokOfficialUse" class="secondary">Provider</button>
