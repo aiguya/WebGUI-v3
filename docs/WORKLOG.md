@@ -1949,3 +1949,25 @@
   - 테스트 클라이언트에서 `/api/grok-official/chrome/start`가 `200 True`와 port `9227`을 반환함을 확인했다.
   - 실제 7863 서버 재시작 후 `/startup`과 `/` 응답이 모두 `20260614-v3-76`으로 맞춰졌음을 확인했다.
   - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
+
+### 2026-06-14 05:59 KST - 공식 생성 이미지 source URL 우선 사용
+- 증상:
+  - 공식홈에서 방금 생성한 이미지를 공식홈 이미지→영상으로 보냈는데도 pipeline이 `result.post.moderated=true`로 실패했다.
+  - progress에는 이전 이미지 생성의 `official_image_url`이 남아 있었지만, 실제 i2v 경로는 로컬 파일을 다시 업로드한 `blob_ref`를 사용하고 있었다.
+- 원인:
+  - `grok_official_pipeline_video()`가 `source_path`를 받으면 공식 생성 이미지 메타데이터를 확인하지 않고 `grok_official_blob_ref_for_image()`로 재업로드했다.
+  - 따라서 공식홈 생성 이미지라도 영상 pipeline에서는 `self_upload_blob_ref`로 보내져 내부 생성 이미지 참조로 처리되지 않았다.
+- 변경:
+  - `grok_official_generated_source_url_for_path()`를 추가해 라이브러리 항목의 `official_image_url`, `official_media_url`, `official_image_id`를 확인하도록 했다.
+  - 배치 이미지에서 단일 `official_image_url`만 쓰면 다른 이미지 URL을 참조할 수 있어 `official_output_paths`/`official_output_file_paths`와 `official_image_urls`를 인덱스로 매칭하도록 했다.
+  - `grok_official_pipeline_image_fixed_for_path()`를 추가해 공식 생성 이미지 URL(`imagine-public.x.ai`, `assets.grok.com`)이 있으면 재업로드하지 않고 pipeline input의 `fixed`를 `{"type":"image_url","url": ...}`로 구성하도록 했다.
+  - 공식 URL이 없을 때만 기존 `blob_ref` 업로드 fallback을 사용한다.
+  - 공식홈 i2v, 일반 i2v의 Grok 공식홈 provider, i2i pipeline fallback이 같은 source 선택 헬퍼를 사용하도록 정리했다.
+  - 프레임 연장처럼 내부에서 `live_video(... provider="grok_official")`로 i2v segment를 만드는 경로도 같은 source 선택 결과를 메타데이터에 남기도록 `input_image_mode` 덮어쓰기를 수정했다.
+  - 영상 pipeline 시작 시 `reset_grok_official_progress()`를 호출해 이전 이미지 생성 progress 값이 남아 오해를 만들지 않도록 했다.
+  - i2i pipeline 시작 시에도 progress에 `source_mode`, `source_type`, `official_source_url`을 남겨 실제 요청 source가 공식 URL인지 확인할 수 있게 했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - 방금 생성된 이미지 `grok-official-20260613-205300-fcd04b643fdb492e985f6be3ff67fe19.jpg`에 대해 source 선택 테스트 결과 배치 4번째 URL(`...0a039358...jpg`), `official_public_image_reference`, `fixed.type=image_url`, `upload=False`를 확인했다.
+  - 이전 성공 사례 이미지 `grok-official-20260606-180022-5a0ccb972bd147ef9c0a81a89938e1bc.jpg`도 `assets.grok.com/.../content`, `fixed.type=image_url`, `upload=False`로 확인했다.
+  - `tools/build_webgui_launcher.ps1`는 현재 `WebGUI.v3.exe`가 실행 중이라 출력 파일 잠금으로 실패했다. 이번 변경은 런처가 아닌 `app.py` 변경이라 exe 재빌드는 보류했다.

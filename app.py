@@ -4304,6 +4304,89 @@ def grok_official_blob_ref_for_image(path, account_id=None):
     }
 
 
+def grok_official_matched_source_url_for_item(source, item, extra, remote_url=""):
+    urls = [url for url in (extra.get("official_image_urls") or []) if http_media_url(url)]
+    if urls:
+        rel = item.get("file_path") if isinstance(item, dict) else ""
+        try:
+            source_abs = str(Path(source).resolve())
+        except Exception:
+            source_abs = ""
+        for path_list_key in ("official_output_paths", "official_output_file_paths"):
+            for index, candidate in enumerate(extra.get(path_list_key) or []):
+                if index >= len(urls):
+                    break
+                candidate_text = str(candidate or "")
+                if candidate_text and (candidate_text == rel or candidate_text == source_abs):
+                    return urls[index]
+        try:
+            output_index = int(extra.get("official_output_index") or 0) - 1
+        except (TypeError, ValueError):
+            output_index = -1
+        if 0 <= output_index < len(urls):
+            return urls[output_index]
+    return (
+        extra.get("official_image_url")
+        or extra.get("official_media_url")
+        or remote_url
+        or ""
+    )
+
+
+def grok_official_generated_source_url_for_path(path, account_id=None):
+    source = Path(path)
+    item = find_metadata_by_file_path(source)
+    extra = item.get("extra") if isinstance(item, dict) and isinstance(item.get("extra"), dict) else {}
+    remote_url = remote_url_for_media_path(source)
+    source_url = grok_official_matched_source_url_for_item(source, item, extra, remote_url=remote_url)
+    generated_id = (
+        official_generated_id_from_url(extra.get("official_image_url") or "")
+        or official_generated_id_from_url(extra.get("official_media_url") or "")
+        or official_generated_id_from_url(extra.get("official_output_path") or "")
+        or official_generated_id_from_url(remote_url or "")
+    )
+    official_id = generated_id or (
+        extra.get("official_image_id")
+        or official_image_id_from_url(extra.get("official_image_url") or "")
+        or official_image_id_from_url(extra.get("official_media_url") or "")
+        or official_image_id_from_url(remote_url or "")
+    )
+    if source_url and ("imagine-public.x.ai" in source_url or "assets.grok.com" in source_url):
+        image_id = official_image_id_from_url(source_url) or official_generated_id_from_url(source_url) or official_id
+        return source_url, {
+            "source_url": remote_url,
+            "official_source_url": source_url,
+            "official_source_type": "official_public_image_url",
+            "official_source_mode": "official_public_image_reference",
+            "official_parent_post_id": image_id,
+            "official_root_post_id": generated_id or image_id,
+            "official_is_root_user_uploaded": False,
+        }
+    if official_id:
+        reference_url = grok_official_generated_asset_image_url(
+            official_id,
+            account_id=account_id,
+            source_url=source_url,
+        )
+        return reference_url, {
+            "source_url": remote_url,
+            "official_source_url": reference_url,
+            "official_source_type": "official_image_url",
+            "official_source_mode": "official_generated_image_reference",
+            "official_parent_post_id": official_id,
+            "official_root_post_id": generated_id or official_id,
+            "official_is_root_user_uploaded": False,
+        }
+    return "", {}
+
+
+def grok_official_pipeline_image_fixed_for_path(path, account_id=None):
+    official_source_url, source_extra = grok_official_generated_source_url_for_path(path, account_id=account_id)
+    if official_source_url:
+        return {"type": "image_url", "url": official_source_url}, source_extra
+    return grok_official_blob_ref_for_image(path, account_id=account_id)
+
+
 def grok_official_pipeline_run(spec, kind="video", account_id=None):
     headers = {
         **grok_web_headers(account_id, accept="text/event-stream, application/json"),
@@ -4496,7 +4579,7 @@ def grok_official_pipeline_video(prompt, source_url="", source_path=None, durati
     node_inputs = {"prompt": "$input.video_prompt"}
     source_extra = {}
     if source_path:
-        fixed, source_extra = grok_official_blob_ref_for_image(source_path, account_id=account_id)
+        fixed, source_extra = grok_official_pipeline_image_fixed_for_path(source_path, account_id=account_id)
         inputs["photo"] = {"type": "image", "label": "First frame", "fixed": fixed}
         node_inputs["image"] = "$input.photo"
     elif source_url:
@@ -4522,6 +4605,21 @@ def grok_official_pipeline_video(prompt, source_url="", source_path=None, durati
         },
         "outputs": {"video": "$gen_video.video"},
     }
+    reset_grok_official_progress(
+        status="running",
+        stage="pipeline-start",
+        message="Grok official video pipeline starting",
+        prompt_preview=prompt[:120],
+        duration=duration,
+        resolution=resolution,
+        aspect_ratio=aspect_ratio,
+        source_mode=source_extra.get("official_source_mode") or "",
+        source_type=source_extra.get("official_source_type") or "",
+        official_source_url=source_extra.get("official_source_url") or source_extra.get("source_url") or source_url or "",
+        account_id_present=bool(account_id or active_grok_account_id()),
+        event_count=0,
+        completed=False,
+    )
     result = grok_official_pipeline_run(spec, kind="video", account_id=account_id)
     path = grok_official_download(result["media_url"], media_path("video"), kind="video")
     return path, {
@@ -4547,7 +4645,7 @@ def grok_official_pipeline_image_edit(prompt, source_paths, dest_dir, aspect_rat
     if not sources:
         raise RuntimeError("편집할 이미지가 없습니다.")
     aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
-    fixed, source_extra = grok_official_blob_ref_for_image(sources[0], account_id=account_id)
+    fixed, source_extra = grok_official_pipeline_image_fixed_for_path(sources[0], account_id=account_id)
     inputs = {
         "image_prompt": {"type": "text", "fixed": {"type": "text", "value": prompt}},
         "photo": {"type": "image", "label": "Source image", "fixed": fixed},
@@ -4573,6 +4671,20 @@ def grok_official_pipeline_image_edit(prompt, source_paths, dest_dir, aspect_rat
     if resolution and resolution != "auto":
         spec["nodes"]["edit_image"]["params"]["resolution"] = resolution
         spec["nodes"]["edit_image"]["params"]["imageGenResolution"] = resolution
+    reset_grok_official_progress(
+        status="running",
+        stage="pipeline-image-edit-start",
+        message="Grok official image edit pipeline starting",
+        prompt_preview=prompt[:120],
+        resolution=resolution,
+        aspect_ratio=aspect_ratio,
+        source_mode=source_extra.get("official_source_mode") or "",
+        source_type=source_extra.get("official_source_type") or "",
+        official_source_url=source_extra.get("official_source_url") or source_extra.get("source_url") or "",
+        account_id_present=bool(account_id or active_grok_account_id()),
+        event_count=0,
+        completed=False,
+    )
     result = grok_official_pipeline_run(spec, kind="image", account_id=account_id)
     media_blobs = result.get("media_blobs") or []
     if media_blobs:
@@ -6770,7 +6882,7 @@ def live_video(prompt, image_path, duration, aspect_ratio="source", resolution="
             resolution=resolution,
         )
         extra["video_model"] = model
-        extra["input_image_mode"] = "grok_official_upload_blob_ref"
+        extra["input_image_mode"] = extra.get("official_source_mode") or "grok_official_upload_blob_ref"
         return path, extra
     image_payload, used_remote = image_input_object(image_path)
     payload = {
