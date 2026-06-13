@@ -284,8 +284,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260614-v3-71";
-const appShellCacheName = "webgui-shell-v3-71";
+const appStaticVersion = "20260614-v3-72";
+const appShellCacheName = "webgui-shell-v3-72";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -7399,7 +7399,7 @@ function codexProxyReadyFromHealth(data = {}) {
 function renderStatus(data) {
   const hermesReady = Boolean(data.hermes_logged_in && data.hermes_proxy_running);
   const codexReady = codexProxyReadyFromHealth(data);
-  const grokReady = Boolean(data.grok_official?.chrome_running);
+  const grokReady = Boolean(data.grok_official?.session_cookie);
   const appReady = "authenticated" in data ? Boolean(data.authenticated) : Boolean(hermesReady || codexReady || grokReady);
   const statusPill = document.querySelector("#statusPill");
   if (!statusPill) return;
@@ -7407,7 +7407,7 @@ function renderStatus(data) {
   statusPill.classList.toggle("is-live", appReady);
   statusPill.classList.toggle("is-mock", !appReady);
   statusPill.innerHTML = `
-    <span data-top-service="grok" class="mini-service ${grokReady ? "is-live" : "is-off"}" title="Grok Official ${grokReady ? "Chrome ready" : "not ready"}">
+    <span data-top-service="grok" class="mini-service ${grokReady ? "is-live" : "is-off"}" title="Grok Official ${grokReady ? "cookie ready" : "not ready"}">
       <span class="status-dot"></span><span>G</span>
     </span>
     <span data-top-service="hermes" class="mini-service ${hermesReady ? "is-live" : "is-off"}" title="Hermes ${hermesReady ? "연결됨" : "연결안됨"}">
@@ -7430,7 +7430,7 @@ function renderStatus(data) {
     <dt>모드</dt><dd>${data.mode}</dd>
     <dt>Provider</dt><dd>${data.provider || "direct"}</dd>
     <dt>Hermes Proxy</dt><dd>${data.hermes_configured ? data.hermes_base_url : "없음"}</dd>
-    <dt>Grok Official</dt><dd>${data.grok_official?.chrome_running ? `Chrome ${data.grok_official.chrome_port}` : "없음"}</dd>
+    <dt>Grok Official</dt><dd>${data.grok_official?.session_cookie ? `Cookie ${data.grok_official.cookie_source || ""}` : "없음"}</dd>
     <dt>Codex Proxy</dt><dd>${codexReady ? `연결됨 · ${data.codex_proxy_base_url || ""}` : (data.codex_proxy_running ? `OAuth 확인 중 · ${data.codex_proxy_oauth_status || "unknown"}` : (data.codex_proxy_configured ? `대기 · ${data.codex_proxy_base_url || ""}` : "없음"))}</dd>
     <dt>OAuth</dt><dd>${data.oauth_configured ? "연결됨" : "없음"}</dd>
     <dt>만료 시각</dt><dd>${data.oauth_expires_at ? new Date(data.oauth_expires_at * 1000).toLocaleString() : "없음"}</dd>
@@ -8277,7 +8277,7 @@ async function refreshGrokOfficialPanel() {
     const response = await fetch("/api/grok-official/status");
     const data = await readJsonResponse(response, "Grok 공식홈 상태 확인 실패");
     if (!data.ok) throw new Error(data.error || "Grok 공식홈 상태 확인 실패");
-    const ready = Boolean(data.chrome_running && data.session_cookie);
+    const ready = Boolean(data.session_cookie);
     const progress = data.progress || {};
     const hasProgress = progress.status && progress.status !== "idle";
     const progressDetail = hasProgress
@@ -8285,7 +8285,7 @@ async function refreshGrokOfficialPanel() {
       : "";
     const label = ready
       ? "연결됨"
-      : (data.chrome_running ? "로그인 필요" : (data.chrome_processes ? "재시작 필요" : "Chrome 꺼짐"));
+      : (data.chrome_running ? "로그인 필요" : (data.chrome_processes ? "쿠키 확인 필요" : "쿠키 없음"));
     setConnectionBadge("grokOfficial", ready, label);
     setGrokOfficialStatus(
       progressDetail || data.message || (ready ? "Grok 공식홈 세션 준비됨" : "Grok 공식홈 Chrome에서 로그인해 주세요."),
@@ -8307,8 +8307,8 @@ function bindGrokOfficialPanel() {
       const response = await fetch("/api/grok-official/browser/open", { method: "POST" });
       const data = await readJsonResponse(response, "Grok 공식홈 기본 브라우저 열기 실패");
       if (!data.ok) throw new Error(data.error || data.detail || "Grok 공식홈 기본 브라우저 열기 실패");
-      showToast(data.message || "Grok 공식홈을 기본 브라우저로 열었습니다. 열린 브라우저에서 로그인해 주세요.");
-      setGrokOfficialStatus(data.message || "기본 브라우저에서 Grok 로그인 상태를 확인한 뒤 새로고침을 눌러 주세요.");
+      showToast(data.message || "Grok 공식홈을 기본 브라우저로 열었습니다. 로그인 후 브라우저를 완전히 종료하고 새로고침을 눌러 주세요.");
+      setGrokOfficialStatus(data.message || "기본 브라우저에서 Grok 로그인 후 브라우저를 완전히 종료하고 새로고침을 눌러 주세요.");
       await refreshGrokOfficialPanel();
       await loadHealth();
     } catch (error) {

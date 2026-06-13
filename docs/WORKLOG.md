@@ -1840,3 +1840,24 @@
   - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
   - 릴리즈 앱 테스트 클라이언트에서 `/startup`이 `200 {'build_stamp': '20260614-release-hermes-23', 'ok': True}`를 반환함을 확인했다.
   - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap/server/launcher 로그, bootstrap marker, hint 파일, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-14 03:15 KST - Grok 공식홈 기본 브라우저 쿠키 fallback 추가
+- 증상:
+  - 원본 앱에서 `기본 브라우저`로 Grok 공식홈을 열고 로그인해도 연결 상태가 쿠키를 확인하지 못했다.
+- 원인:
+  - 기존 공식홈 쿠키 확인은 9227 CDP 디버그 포트가 열린 Chrome에서 `Network.getAllCookies`로만 읽는 구조였다.
+  - Windows 기본 브라우저로 `grok.com`을 열면 CDP 포트가 없으므로 앱이 쿠키를 읽을 통로가 없었다.
+  - 실행 중인 Chrome/Edge는 쿠키 DB를 잠그는 경우가 있어 로컬 DB 읽기도 실패할 수 있다.
+- 변경:
+  - CDP 쿠키 읽기가 불가능할 때 Windows Chromium 계열 브라우저(Chrome, Edge, Brave, Chrome Beta/Dev, Opera)의 `grok.com` 쿠키 DB를 스캔하는 fallback을 추가했다.
+  - Chromium 쿠키의 DPAPI/AES-GCM 복호화를 지원하고, `cryptography>=42.0.0`을 requirements에 추가했다.
+  - 실행 중인 브라우저 DB 잠금에 대비해 SQLite immutable 읽기와 WinAPI 공유 읽기 복사 fallback을 추가했다.
+  - 기본 브라우저 쿠키를 읽은 경우에도 `session_cookie=True`이면 공식홈 연결로 판정하도록 백엔드/상단 상태/설정 패널 로직을 수정했다.
+  - 브라우저가 쿠키 DB를 잠그고 있으면 "로그인 후 기본 브라우저를 완전히 종료하고 새로고침하거나, 내 Chrome 사용" 안내를 표시하도록 했다.
+  - 정적 캐시 버전을 `20260614-v3-72`로 올리고 원본 `WebGUI.v3.exe`를 다시 빌드했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `node --check static/app.js` 통과.
+  - 현재 PC에서 Chrome/Edge가 쿠키 DB를 잠근 경우 친절한 안내 메시지가 반환됨을 확인했다.
+  - `/api/grok-official/browser/open` 테스트 클라이언트 응답을 확인했다.
+  - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.

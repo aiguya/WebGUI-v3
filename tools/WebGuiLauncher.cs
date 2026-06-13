@@ -10,7 +10,7 @@ using System.Windows.Forms;
 internal static class Program
 {
     private const string Port = "7863";
-    private const string StaticVersion = "20260614-v3-71";
+    private const string StaticVersion = "20260614-v3-72";
     private const string HealthUrl = "http://127.0.0.1:" + Port + "/startup";
     private const string AppUrl = "http://127.0.0.1:" + Port + "/?v=" + StaticVersion;
     private static string LastHealthError = "";
