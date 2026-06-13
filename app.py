@@ -6048,6 +6048,13 @@ def codex_image_size(aspect_ratio):
     }.get(aspect_ratio or "auto", "1024x1024")
 
 
+def codex_proxy_image_timeout():
+    try:
+        return max(300, min(1800, int(os.getenv("CODEX_PROXY_IMAGE_TIMEOUT", "900"))))
+    except (TypeError, ValueError):
+        return 900
+
+
 def b64_image(path):
     return base64.b64encode(Path(path).read_bytes()).decode("ascii")
 
@@ -6296,11 +6303,26 @@ def codex_proxy_error(response):
         return response.text[:2000]
 
 
-def codex_proxy_post_image(base, endpoint, headers, payload, timeout=300):
-    response = requests.post(base + endpoint, headers=headers, json=payload, timeout=timeout)
+def codex_proxy_timeout_error(timeout, endpoint):
+    return (
+        f"Codex/ChatGPT OAuth 프록시가 {timeout}초 안에 이미지 응답을 반환하지 않았습니다. "
+        f"프록시는 계속 생성/재시도 중일 수 있습니다. Codex 연결 상태를 새로고침한 뒤 다시 시도하거나, "
+        f"동시 요청 수를 줄이고 잠시 기다려 주세요. endpoint={endpoint}"
+    )
+
+
+def codex_proxy_post_image(base, endpoint, headers, payload, timeout=None):
+    timeout = timeout or codex_proxy_image_timeout()
+    try:
+        response = requests.post(base + endpoint, headers=headers, json=payload, timeout=timeout)
+    except requests.Timeout as exc:
+        raise RuntimeError(codex_proxy_timeout_error(timeout, endpoint)) from exc
     if response.status_code == 422 and payload.get("quality") != "low":
         retry_payload = {**payload, "quality": "low", "requestId": f"webgork-retry-{uuid.uuid4().hex}"}
-        retry = requests.post(base + endpoint, headers=headers, json=retry_payload, timeout=timeout)
+        try:
+            retry = requests.post(base + endpoint, headers=headers, json=retry_payload, timeout=timeout)
+        except requests.Timeout as exc:
+            raise RuntimeError(codex_proxy_timeout_error(timeout, endpoint)) from exc
         if retry.status_code < 400:
             retry._webgork_retry = {"quality": "low", "reason": codex_proxy_error(response)}
             return retry
@@ -6354,7 +6376,7 @@ def codex_proxy_live_image(prompt, dest_dir, edit_sources=None, aspect_ratio="au
     else:
         payload = {**common, "references": [data_uri(source) for source in sources[:5]]}
         endpoint = "/api/generate"
-    response = codex_proxy_post_image(base, endpoint, headers, payload, timeout=300)
+    response = codex_proxy_post_image(base, endpoint, headers, payload)
     if response.status_code >= 400:
         raise RuntimeError(f"Codex OAuth 프록시 이미지 요청 실패: {response.status_code} {codex_proxy_error(response)}")
     payload = response.json()

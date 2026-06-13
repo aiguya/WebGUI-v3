@@ -2031,3 +2031,17 @@
 - 검증:
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
   - 로컬 monkeypatch 테스트로 생성 없이 request body 조립을 검증했다. `fileAttachments`는 원본 이미지 id, `extendPostId/parentPostId`는 video post id, `isVideoExtension=true`, `videoExtensionStartTime=6.041667` 형태로 생성됨을 확인했다.
+
+### 2026-06-14 08:29 KST - Codex/ChatGPT 이미지 생성 timeout 보강
+- 증상:
+  - GPT 이미지 생성에서 `HTTPConnectionPool(host='127.0.0.1', port=3333): Read timed out. (read timeout=300)` 오류가 발생했다.
+  - 2026-06-14 08:15 KST 로그 기준 `/api/t2i` 2건이 502로 종료됐고, Codex proxy는 같은 요청군에서 stream retry/빈 이미지 응답을 거치며 287~546초까지 처리 중이었다.
+- 원인:
+  - 앱의 Codex proxy 이미지 요청 read timeout이 300초로 고정되어 있어, 프록시가 아직 생성/재시도 중인데 앱이 먼저 연결을 끊었다.
+- 변경:
+  - `codex_proxy_image_timeout()`을 추가해 Codex proxy 이미지 요청 기본 timeout을 900초로 늘렸다.
+  - `CODEX_PROXY_IMAGE_TIMEOUT` 환경변수로 300~1800초 사이 조정 가능하게 했다.
+  - Codex proxy timeout 시 원시 `HTTPConnectionPool` 오류 대신, 프록시가 장시간 생성/재시도 중일 수 있다는 안내 문구를 반환하도록 했다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - 기본 timeout 900초, 환경변수 1200초, 잘못된 환경변수 fallback 900초 확인.
