@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260614-release-hermes-21"
+STATIC_VERSION = "20260614-release-hermes-22"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -767,18 +767,18 @@ if not defined PYTHON_CMD (
 )
 
 if not exist work mkdir work
-set "HEALTH_STATE=missing"
-for /f "delims=" %%S in ('powershell -NoProfile -Command "try {{ $json=(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 3).Content ^| ConvertFrom-Json; if($json.build_stamp -eq '{STATIC_VERSION}') {{ 'current' }} else {{ 'stale' }} }} catch {{ 'missing' }}" 2^>nul') do set "HEALTH_STATE=%%S"
-if /I "%HEALTH_STATE%"=="stale" (
+set "STARTUP_STATE=missing"
+for /f "delims=" %%S in ('powershell -NoProfile -Command "try {{ $json=(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/startup -TimeoutSec 3).Content ^| ConvertFrom-Json; if($json.build_stamp -eq '{STATIC_VERSION}') {{ 'current' }} else {{ 'stale' }} }} catch {{ 'missing' }}" 2^>nul') do set "STARTUP_STATE=%%S"
+if /I "%STARTUP_STATE%"=="stale" (
   echo Another or older WebGrok server is already running on 127.0.0.1:7863.
   echo Close the existing WebGrok server, then run this launcher again.
   pause
   exit /b 1
 )
-if /I not "%HEALTH_STATE%"=="current" (
+if /I not "%STARTUP_STATE%"=="current" (
   echo Starting WebGrok Hermes-only server...
   start "WebGrok Hermes Server" /min cmd /c "set WEBGORK_OPEN_BROWSER=0&& set WEBGORK_PORT=7863&& %PYTHON_CMD% work\\run_server.py"
-  powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){{ try {{ $json=(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/health -TimeoutSec 3).Content | ConvertFrom-Json; if($json.build_stamp -eq '{STATIC_VERSION}'){{ $ok=$true; break }} }} catch {{ }}; Start-Sleep -Milliseconds 500 }}; if($ok){{ exit 0 }} else {{ exit 1 }}"
+  powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){{ try {{ $json=(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/startup -TimeoutSec 3).Content | ConvertFrom-Json; if($json.build_stamp -eq '{STATIC_VERSION}'){{ $ok=$true; break }} }} catch {{ }}; Start-Sleep -Milliseconds 500 }}; if($ok){{ exit 0 }} else {{ exit 1 }}"
   if errorlevel 1 (
     echo Server did not start, or an older WebGrok server is still occupying port 7863.
     echo Check work\\server-runner.log
@@ -873,7 +873,7 @@ internal static class WebGrokChromeAppLauncher
 {{
     private const string Port = "7863";
     private const string BuildStamp = "{STATIC_VERSION}";
-    private const string HealthUrl = "http://127.0.0.1:" + Port + "/health";
+    private const string HealthUrl = "http://127.0.0.1:" + Port + "/startup";
     private const string AppUrl = "http://127.0.0.1:" + Port + "/?v={STATIC_VERSION}";
     private static string LastHealthError = "";
 
@@ -887,10 +887,10 @@ internal static class WebGrokChromeAppLauncher
         {{
             Log(root, "launcher start build=" + BuildStamp + " root=" + root);
             bool serverResponding = HealthResponds();
-            Log(root, "initial health responds=" + serverResponding.ToString());
+            Log(root, "initial startup responds=" + serverResponding.ToString());
             if (!HealthMatchesBuild())
             {{
-                Log(root, "health does not match current build");
+                Log(root, "startup build stamp does not match current build");
                 if (serverResponding)
                 {{
                     Log(root, "stale or different server is occupying port " + Port);
@@ -908,7 +908,7 @@ internal static class WebGrokChromeAppLauncher
             }}
             if (!WaitForHealth(root))
             {{
-                Log(root, "health wait timed out");
+                Log(root, "startup wait timed out");
                 MessageBox.Show(
                     "WebGrok server did not start.\\r\\n\\r\\n" + ReadFailureLogs(root),
                     "WebGrok Chrome App",
@@ -916,7 +916,7 @@ internal static class WebGrokChromeAppLauncher
                     MessageBoxIcon.Error);
                 return 1;
             }}
-            Log(root, "health ok");
+            Log(root, "startup ok");
             Process chromeProcess = OpenChromeApp(root);
             Log(root, "chrome app opened pid=" + (chromeProcess == null ? "external-or-default-browser" : chromeProcess.Id.ToString()));
             if (startedServer)
@@ -954,7 +954,7 @@ internal static class WebGrokChromeAppLauncher
         }}
         catch
         {{
-            LastHealthError = "health request failed";
+            LastHealthError = "startup request failed";
             return false;
         }}
     }}
@@ -990,7 +990,7 @@ internal static class WebGrokChromeAppLauncher
             if (HealthMatchesBuild()) return true;
             if (i == 0 || i % 10 == 9)
             {{
-                Log(root, "waiting for health attempt=" + (i + 1).ToString() + " last_error=" + LastHealthError);
+                Log(root, "waiting for startup attempt=" + (i + 1).ToString() + " last_error=" + LastHealthError);
             }}
             Thread.Sleep(500);
         }}

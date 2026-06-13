@@ -11,7 +11,7 @@ internal static class Program
 {
     private const string Port = "7863";
     private const string StaticVersion = "20260612-v3-70";
-    private const string HealthUrl = "http://127.0.0.1:" + Port + "/health";
+    private const string HealthUrl = "http://127.0.0.1:" + Port + "/startup";
     private const string AppUrl = "http://127.0.0.1:" + Port + "/?v=" + StaticVersion;
     private static string LastHealthError = "";
 
@@ -26,14 +26,14 @@ internal static class Program
             Log(root, "launcher start version=" + StaticVersion + " root=" + root);
             if (!HealthOk())
             {
-                Log(root, "initial health failed: " + LastHealthError);
+                Log(root, "initial startup check failed: " + LastHealthError);
                 serverProcess = StartServer(root);
                 startedServer = serverProcess != null;
                 Log(root, "server start requested pid=" + (serverProcess == null ? "none" : serverProcess.Id.ToString()));
             }
             else
             {
-                Log(root, "initial health ok");
+                Log(root, "initial startup check ok");
             }
 
             if (!WaitForHealth(root))
@@ -46,7 +46,7 @@ internal static class Program
                 return 1;
             }
 
-            Log(root, "health ok");
+            Log(root, "startup check ok");
             Process chromeProcess = OpenChromeApp(root);
             Log(root, "chrome app opened pid=" + (chromeProcess == null ? "external-or-default-browser" : chromeProcess.Id.ToString()));
             if (startedServer)
@@ -96,7 +96,7 @@ internal static class Program
             if (HealthOk()) return true;
             if (i == 0 || i % 10 == 9)
             {
-                Log(root, "waiting for health attempt=" + (i + 1).ToString() + " last_error=" + LastHealthError);
+                Log(root, "waiting for startup attempt=" + (i + 1).ToString() + " last_error=" + LastHealthError);
             }
             Thread.Sleep(500);
         }

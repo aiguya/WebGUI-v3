@@ -7112,6 +7112,11 @@ def settings_page():
     return response
 
 
+@app.get("/startup")
+def startup():
+    return jsonify({"ok": True, "build_stamp": APP_BUILD_STAMP})
+
+
 @app.get("/health")
 def health():
     cfg = config()

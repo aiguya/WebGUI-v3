@@ -1783,3 +1783,25 @@
   - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
   - 최종 zip에서 runner bytes 처리, `AppendLogWriter`, `20260614-release-hermes-21` 포함 확인.
   - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap/server/launcher 로그, bootstrap marker, hint 파일, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-14 01:55 KST - 런처 시작 확인용 경량 startup 엔드포인트 분리
+- 증상:
+  - 다른 PC에서 `WEBGROK_CHROME_APP.exe` 실행 시 런처 로그에는 `/health` 대기 타임아웃이 반복되었다.
+  - 같은 실패 팝업의 `server-runner.log`에는 `/health HTTP/1.1" 200` 응답이 계속 기록되어 서버 자체는 올라온 상태였다.
+- 원인:
+  - 런처가 서버 기동 확인에 `/health`를 사용하고 있었는데, `/health`는 Hermes/Codex 상태 확인까지 수행한다.
+  - 초기 설치 직후나 외부 프로세스 상태가 느린 PC에서는 `/health`가 1.5초 런처 타임아웃을 넘겨, 실제 서버는 살아 있어도 런처가 실패로 판단할 수 있었다.
+- 변경:
+  - `app.py`에 빌드 스탬프만 반환하는 경량 `/startup` 엔드포인트를 추가했다.
+  - 원본 `tools/WebGuiLauncher.cs`가 서버 시작/대기 확인에 `/startup`을 사용하도록 변경했다.
+  - Hermes-only 릴리즈 생성 스크립트 `tools/build_release_no_official.py`의 배치 런처와 `WEBGROK_CHROME_APP.exe` 생성 코드도 `/startup` 기준으로 변경했다.
+  - 런처 로그 문구를 `health` 대신 `startup`으로 바꾸어 다음 실패 로그에서 실제 단계가 분명하게 보이도록 했다.
+  - `.webgui-chrome-app-profile/`을 git 추적 제외에 추가했다.
+  - 원본 `WebGUI.v3.exe`, `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 빌드했다.
+- 검증:
+  - `python -m py_compile app.py tools/build_release_no_official.py work/run_server.py release/WebGrok-v3-Hermes/app.py release/WebGrok-v3-Hermes/work/run_server.py` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - 원본 앱 테스트 클라이언트에서 `/startup`이 `200 {'build_stamp': 'dev', 'ok': True}`를 반환함을 확인했다.
+  - 릴리즈 앱 테스트 클라이언트에서 `/startup`이 `200 {'build_stamp': '20260614-release-hermes-22', 'ok': True}`를 반환함을 확인했다.
+  - 최종 zip 안에 `README_RELEASE.md`, `USER_MANUAL.md`, `WEBGROK_CHROME_APP.exe`, `WEBGROK_BOOTSTRAP.bat`, `RUN_WEBGROK_HERMES_ONLY.bat`, `static/app.js`, `templates/index.html`, `work/run_server.py` 포함을 확인했다.
+  - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap/server/launcher 로그, bootstrap marker, hint 파일, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.

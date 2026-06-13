@@ -42,6 +42,7 @@ work/*
 .chrome-v3-preview-profile/
 .chrome-v3-preview-profile-visible/
 .chrome-grok-official-profile/
+.webgui-chrome-app-profile/
 
 # OS/editor noise
 .DS_Store
