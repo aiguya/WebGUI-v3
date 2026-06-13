@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260613-release-hermes-19"
+STATIC_VERSION = "20260613-release-hermes-20"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -396,6 +396,7 @@ _disable_grok_official_release_routes()
     py = py.replace('cfg["provider"] == "release_removed_provider"', "False")
     py = py.replace('"release_removed_provider"', '"removed_provider_unreachable"')
     py = py.replace("release_removed_provider", "removed_provider_unreachable")
+    py = py.replace("effective_video_False", "False")
     py = py.replace("release-disabled-route", "removed-route")
     py = re.sub(
         r"\n\s*raise_if_removed_provider_unreachable_placeholder\(path, extra\)",
@@ -419,7 +420,7 @@ def remove_official_python_defs(py):
         "chrome_executable_path",
         "grok_default_chrome_user_data_dir",
         "grok_default_chrome_profile_name",
-        "compose_official_connected_result",
+        "cdp_json",
     }
     for node in tree.body:
         name = getattr(node, "name", "")

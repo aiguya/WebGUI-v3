@@ -1717,3 +1717,24 @@
   - 최종 릴리즈 산출물과 zip에서 `raise_if_removed_provider_unreachable_placeholder` 미포함 확인.
   - 최종 zip에서 `20260613-release-hermes-19` 포함 확인.
   - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap 로그/마커, 쿠키/공식홈 세션 파일, smoke 테스트 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-13 11:44 KST - 릴리즈 이미지 편집/영상/연장 경로 NameError 계열 추가 검토
+- 목표:
+  - 이미지 생성 placeholder NameError와 같은 릴리즈 변환 부작용이 이미지 편집, 이미지→영상, 영상 연장, 프레임 연장에도 남아 있는지 확인한다.
+- 확인:
+  - `/api/i2i`의 placeholder 호출은 앞선 수정으로 산출물에서 제거되어 있었다.
+  - `/api/i2v` 산출물에 `effective_video_False`라는 잘못된 변수명이 남아 live 영상 생성 경로에서 NameError가 날 수 있었다.
+  - `/api/v2v-extend`는 공홈 쿠키 루트가 아니라 Hermes/xAI `/videos/extensions` 기반 연장 경로인데, 릴리즈 빌더가 이름만 보고 `compose_official_connected_result` 정의를 제거해 연장 완료 후 NameError가 날 수 있었다.
+  - 공홈 CDP 전용 `cdp_json()`도 산출물에 남아 제거된 provider port 이름을 참조하고 있었다. 호출 경로는 없었지만 릴리즈 정리 대상으로 확인했다.
+- 변경:
+  - `tools/build_release_no_official.py`에서 `effective_video_False`를 `False`로 정리하도록 추가했다.
+  - `compose_official_connected_result`는 Hermes 연장 후 로컬 ffmpeg 결합에 필요한 함수이므로 릴리즈 제거 대상에서 제외했다.
+  - `cdp_json`은 공홈 CDP 전용 함수라 릴리즈 제거 대상에 추가했다.
+  - 릴리즈 스탬프를 `20260613-release-hermes-20`으로 올리고 릴리즈 폴더 및 zip을 다시 생성했다.
+- 검증:
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile app.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py` 통과.
+  - stub 기반 라우트 테스트로 `/api/i2i`, `/api/i2v`, `/api/v2v-extend`, `/api/v2v-frame-extend`가 모두 `200 True`를 반환함을 확인했다.
+  - 최종 zip에서 `raise_if_removed_provider_unreachable_placeholder`, `effective_video_False`, `def cdp_json` 미포함 확인.
+  - 최종 zip에서 `def compose_official_connected_result`와 `20260613-release-hermes-20` 포함 확인.
+  - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap 로그/마커, 쿠키/공식홈 세션 파일, smoke 테스트 파일이 포함되지 않았음을 확인했다.
