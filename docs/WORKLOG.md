@@ -1645,3 +1645,31 @@
   - `POST /api/hermes/auth/start`가 정상적으로 auth URL을 반환함을 확인했다.
   - 릴리즈 zip 안에 `WEBGROK_CHROME_APP.exe`, `README_RELEASE.md`, `USER_MANUAL.md`, `work/run_server.py`, `static/app.js`, `templates/index.html` 포함 확인.
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap 로그/마커, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-13 10:58 KST - Usage/credit UI 복구 및 Hermes 인증 기본 브라우저 열기 수정
+- 목표: Hermes-only 릴리즈에서 제거 대상은 공홈 쿠키/웹 세션을 흉내 내는 생성/편집/영상 요청 루트이고, Grok Usage/credit 확인 UI와 새로고침은 유지해야 하므로 이를 복구한다. Chrome 앱 전용 프로필에서 Hermes 인증 URL이 열려 사용자 로그인 상태가 없는 새 크롬처럼 보이는 문제도 수정한다.
+- 확인:
+  - 직전 릴리즈 빌더가 `refreshQuota`, `/api/oauth/quota`, `installQuotaPanel`, Usage 링크를 제거하고 로컬 usage 전용 `tokenUsagePanel`을 넣고 있었다.
+  - 이 해석은 요구와 달랐다. `https://grok.com/?_s=usage` 접근 버튼과 credit 새로고침은 공홈 쿠키 기반 요청 루트와 무관하므로 유지 대상이다.
+  - Chrome 앱은 별도 프로필(`AppData\Local\WebGrok\v3-Hermes\chrome-app-profile`)로 실행되므로 앱 내부 `window.open()`/`target=_blank`는 사용자가 로그인한 기본 Chrome 프로필이 아니라 앱 프로필 창을 열 수 있었다.
+- 변경:
+  - `app.py`: `/api/system/open-url`을 추가해 허용된 외부 URL(`auth.x.ai`, `console.x.ai`, `grok.com`, `www.grok.com`)만 OS 기본 브라우저로 열도록 했다.
+  - `static/app.js`: Hermes 인증 URL과 Usage 링크 클릭 시 `/api/system/open-url`을 호출하도록 변경했다. 실패 시에만 기존 `window.open()`으로 fallback한다.
+  - `templates/index.html`: 기존 Usage 링크에 `data-open-external-url`을 추가했다.
+  - `tools/build_release_no_official.py`: 릴리즈 스탬프를 `20260613-release-hermes-17`로 올렸다.
+  - `tools/build_release_no_official.py`: `refreshQuota`, `/api/oauth/quota`, `installQuotaPanel`, Usage 링크, 상단 `quotaPill`을 제거하지 않도록 되돌렸다.
+  - `tools/build_release_no_official.py`: 릴리즈에서 `grok_oauth_quota()`와 `oauth_quota()`는 제거하지 않도록 예외 처리했다.
+  - 직전 임시 로컬 usage 전용 `tokenUsagePanel`/`renderReleaseUsage()` 주입은 제거했다.
+  - `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile app.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py` 통과.
+  - 릴리즈 산출물에서 `20260613-release-hermes-17`, `/api/oauth/quota`, `installQuotaPanel`, `refreshQuotaButton`, `grok.com/?_s=usage`, `/api/system/open-url` 포함 확인.
+  - 릴리즈 산출물에서 `/api/grok-official`, `grok_official`, `tokenUsagePanel`, `renderReleaseUsage` 미포함 확인.
+  - 실행 중인 앱 `/health`에서 `build_stamp=20260613-release-hermes-17` 확인.
+  - `/api/oauth/quota`가 로그인 전에도 `usage_url=https://grok.com/?_s=usage`를 포함한 정상 JSON을 반환함을 확인했다.
+  - `POST /api/hermes/auth/start`가 정상적으로 auth URL을 반환함을 확인했다.
+  - `POST /api/system/open-url`이 허용되지 않은 `file://` URL을 차단함을 확인했다.
+  - 릴리즈 zip 안에 `WEBGROK_CHROME_APP.exe`, `README_RELEASE.md`, `USER_MANUAL.md`, `work/run_server.py`, `static/app.js`, `templates/index.html` 포함 확인.
+  - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap 로그/마커, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.

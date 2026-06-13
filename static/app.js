@@ -8010,18 +8010,50 @@ let lastOpenedHermesAuthUrl = "";
 let hermesAuthPanelBound = false;
 let hermesAuthPanelRefreshTimer = null;
 
+async function openExternalUrl(url) {
+  if (!url) return false;
+  try {
+    const response = await fetch("/api/system/open-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const data = await readJsonResponse(response, "외부 URL 열기 실패");
+    if (!data.ok) throw new Error(data.error || data.detail || "외부 URL 열기 실패");
+    return true;
+  } catch (error) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    showToast("기본 브라우저 열기에 실패해 현재 브라우저에서 열었습니다.", true);
+    return false;
+  }
+}
+
 function showHermesAuthUrl(url, openOnce = false) {
   const box = document.querySelector("#hermesAuthBox");
   const link = document.querySelector("#hermesAuthUrl");
   if (!box || !link || !url) return;
   box.hidden = false;
   link.href = url;
+  link.dataset.openExternalUrl = url;
+  link.onclick = event => {
+    event.preventDefault();
+    openExternalUrl(url);
+  };
   if (openOnce && url !== lastOpenedHermesAuthUrl) {
     lastOpenedHermesAuthUrl = url;
     pendingHermesAuthAutoOpen = false;
-    window.open(url, "_blank", "noopener,noreferrer");
+    openExternalUrl(url);
   }
 }
+
+document.addEventListener("click", event => {
+  const link = event.target.closest("a[data-open-external-url], a[href='https://grok.com/?_s=usage']");
+  if (!link) return;
+  const url = link.dataset.openExternalUrl || link.href;
+  if (!url) return;
+  event.preventDefault();
+  openExternalUrl(url);
+});
 
 async function refreshHermesAuthPanel() {
   try {
@@ -8574,7 +8606,7 @@ function installQuotaPanel() {
       <div class="quota-track"><span data-quota-bar></span></div>
       <p class="note" data-quota-detail>OAuth billing 확인 전</p>
     </div>
-    <a class="button-link login-wide secondary" href="https://grok.com/?_s=usage" target="_blank" rel="noreferrer">공식 Usage 페이지 열기</a>
+    <a class="button-link login-wide secondary" href="https://grok.com/?_s=usage" data-open-external-url="https://grok.com/?_s=usage" target="_blank" rel="noreferrer">공식 Usage 페이지 열기</a>
   `;
   const connection = document.querySelector("#connectionStatusPanel");
   grid.insertBefore(card, connection?.nextSibling || grid.firstChild);

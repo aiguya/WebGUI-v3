@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260613-release-hermes-16"
+STATIC_VERSION = "20260613-release-hermes-17"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -109,28 +109,12 @@ def strip_html_official_quota(html):
             <dl class="status-list visually-hidden" id="codexProxyStatusList"></dl>
           </div>
         </div>'''
-    usage_card = '''
-        <div class="settings-card quota-card" id="tokenUsagePanel">
-          <div class="settings-card-head">
-            <h2>토큰 사용량</h2>
-            <span class="connection-state" data-release-usage-status>상태 확인 전</span>
-          </div>
-          <div class="quota-meter">
-            <div class="quota-meter-head">
-              <strong data-release-usage-label>0 tokens</strong>
-              <span>local usage</span>
-            </div>
-            <div class="quota-track"><span data-release-usage-bar style="width:0%"></span></div>
-            <p class="note" data-release-usage-detail>요청 0회 · 토큰 0</p>
-          </div>
-        </div>'''
     html = re.sub(
         r'(\n\s*<div class="settings-grid">)',
-        r'\1' + connection_card + usage_card,
+        r'\1' + connection_card,
         html,
         count=1,
     )
-    html = html.replace('<span class="quota-credit-label">credit</span>', '<span class="quota-credit-label">token</span>')
     html = apply_release_static_version(html)
     html = html.replace(r"C:\Users\aiguy\Pictures\WebGUI-v3", r"C:\WebGrok\media")
     html = html.replace("실행 시 Hermes/Grok 쿼터가 사용될 수 있습니다.", "실행 시 Hermes 요청량이 사용될 수 있습니다.")
@@ -139,9 +123,6 @@ def strip_html_official_quota(html):
 
 def strip_js_official_quota(js):
     js = apply_release_static_version(js)
-    js = js.replace("let lastQuotaRefresh = 0;\n", "")
-    js = js.replace("  refreshQuota();\n", "")
-    js = re.sub(r"\n\s*refreshQuota\(true\);", "", js)
     js = re.sub(
         r"const grokOfficialEndpointByBase = \{.*?\};",
         "const grokOfficialEndpointByBase = {};",
@@ -173,62 +154,6 @@ def strip_js_official_quota(js):
         js,
         flags=re.S,
     )
-    js = re.sub(
-        r"\nfunction formatQuotaValue\(value\) \{[\s\S]*?\nfunction ensureModelOption\(",
-        "\nfunction ensureModelOption(",
-        js,
-    )
-    release_usage_js = r'''
-function formatReleaseUsageNumber(value) {
-  const numeric = Number(value || 0);
-  if (!Number.isFinite(numeric)) return "0";
-  return new Intl.NumberFormat("ko-KR").format(Math.max(0, Math.round(numeric)));
-}
-
-function renderReleaseUsage(data = {}) {
-  const usage = data.usage || {};
-  const requests = Number(usage.requests || 0);
-  const tokens = Number(usage.tokens || 0);
-  const cost = Number(usage.cost_usd || 0);
-  const last = usage.last_usage;
-  const label = `${formatReleaseUsageNumber(tokens)} tokens`;
-  const detailParts = [
-    `요청 ${formatReleaseUsageNumber(requests)}회`,
-    `토큰 ${formatReleaseUsageNumber(tokens)}`,
-  ];
-  if (cost > 0) detailParts.push(`비용 $${cost.toFixed(4)}`);
-  if (last) detailParts.push(`최근 ${new Date(last).toLocaleString()}`);
-  const detail = detailParts.join(" · ");
-  const visualPercent = tokens > 0 ? Math.min(100, Math.max(8, Math.log10(tokens + 1) * 18)) : 0;
-  document.querySelectorAll("[data-release-usage-label]").forEach(node => {
-    node.textContent = label;
-  });
-  document.querySelectorAll("[data-release-usage-detail]").forEach(node => {
-    node.textContent = detail;
-  });
-  document.querySelectorAll("[data-release-usage-status]").forEach(node => {
-    node.textContent = requests > 0 ? "기록 있음" : "기록 없음";
-  });
-  document.querySelectorAll("[data-release-usage-bar]").forEach(node => {
-    node.style.width = `${visualPercent}%`;
-  });
-  const pill = document.querySelector("#quotaPill");
-  if (pill) {
-    pill.innerHTML = `
-      <span class="quota-credit-label">token</span>
-      <span class="quota-battery" aria-hidden="true">
-        <span style="width:${visualPercent}%"></span>
-        <strong>${formatReleaseUsageNumber(tokens)}</strong>
-      </span>`;
-    pill.title = detail;
-    pill.classList.remove("is-low", "is-critical", "is-warning");
-    pill.classList.toggle("is-empty", tokens <= 0);
-  }
-}
-
-'''
-    if "function renderReleaseUsage(" not in js:
-        js = js.replace("\nfunction ensureModelOption(", "\n" + release_usage_js + "function ensureModelOption(", 1)
     js = js.replace('  const grokReady = Boolean(data.grok_official?.chrome_running);\n', "")
     # Keep Codex status live in the Hermes-only release; only the homepage quota
     # route is removed.
@@ -276,17 +201,6 @@ function renderStatus(data) {
         '''    <dt>Grok Official</dt><dd>${data.grok_official?.chrome_running ? `Chrome ${data.grok_official.chrome_port}` : "없음"}</dd>
 ''',
         "",
-    )
-    js = js.replace(
-        "  renderStatusBase(data);\n  syncConnectionPanelFromHealth(data);",
-        "  renderStatusBase(data);\n  renderReleaseUsage(data);\n  syncConnectionPanelFromHealth(data);",
-        1,
-    )
-    js = re.sub(
-        r"function installQuotaPanel\(\) \{.*?\n\}",
-        "",
-        js,
-        flags=re.S,
     )
     js = re.sub(
         r'\n\s*const oldUsageLink = document\.querySelector\("a\[href=\'https://grok\.com/\?_s=usage\'\]"\);[\s\S]*?oldUsageCard\.remove\(\);\n',
@@ -342,7 +256,6 @@ function renderStatus(data) {
         1,
     )
     js = re.sub(r"\n\s*compactSettingsLayout\(\);", "", js)
-    js = re.sub(r"\n\s*installQuotaPanel\(\);", "", js)
     js = js.replace("/api/grok-official", "/disabled-home-quota")
     js = js.replace("grok_official", "home_quota_disabled")
     js = js.replace("grokOfficial", "homeQuotaDisabled")
@@ -465,8 +378,6 @@ def remove_official_python_defs(py):
         "chrome_executable_path",
         "grok_default_chrome_user_data_dir",
         "grok_default_chrome_profile_name",
-        "grok_oauth_quota",
-        "oauth_quota",
         "compose_official_connected_result",
     }
     for node in tree.body:
@@ -474,12 +385,14 @@ def remove_official_python_defs(py):
         decorators = " ".join(ast.unparse(item) for item in getattr(node, "decorator_list", []))
         text = f"{name} {decorators}".lower()
         should_remove = (
+            name not in {"grok_oauth_quota", "oauth_quota"}
+            and (
             name in remove_names
             or "grok" in name.lower()
             or "grok_official" in text
             or "grok-official" in text
             or "grok_chrome" in text
-            or decorators.startswith("app.get('/api/oauth/quota")
+            )
         )
         if should_remove and hasattr(node, "lineno") and hasattr(node, "end_lineno"):
             start = min([node.lineno, *[item.lineno for item in getattr(node, "decorator_list", [])]])

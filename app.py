@@ -41,6 +41,12 @@ SENSITIVE_MEDIA_FILENAMES = {
     "xai-oauth-token.json",
     "webgork-oauth-token.json",
 }
+ALLOWED_EXTERNAL_URL_HOSTS = {
+    "auth.x.ai",
+    "console.x.ai",
+    "grok.com",
+    "www.grok.com",
+}
 HERMES_LOGIN_LOCK = Lock()
 HERMES_LOGIN_STATE = {
     "process": None,
@@ -7137,6 +7143,25 @@ def health():
 @app.get("/api/error-log")
 def error_log():
     return jsonify({"ok": True, "last_error": LAST_ERROR})
+
+
+@app.post("/api/system/open-url")
+def open_external_url():
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or host not in ALLOWED_EXTERNAL_URL_HOSTS:
+        return safe_error("허용되지 않은 외부 URL입니다.", status=400)
+    try:
+        if os.name == "nt":
+            os.startfile(url)  # pylint: disable=no-member
+        else:
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([opener, url])
+        return jsonify({"ok": True, "url": url})
+    except Exception as exc:
+        return safe_error("기본 브라우저로 URL을 열지 못했습니다.", exc, 500)
 
 
 @app.get("/api/oauth/quota")
