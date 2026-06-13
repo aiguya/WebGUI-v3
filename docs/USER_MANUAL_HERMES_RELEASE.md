@@ -58,6 +58,7 @@
 
 - `Hermes xAI`: Hermes OAuth와 Proxy 상태를 보여줍니다.
 - `Codex / ChatGPT`: Codex OAuth Proxy 상태를 보여줍니다.
+- `Codex / ChatGPT`의 `로그아웃`은 로컬 Codex OAuth 세션을 삭제하고 앱이 띄운 Codex Proxy를 종료합니다.
 
 Hermes를 사용할 때는 `Hermes xAI`가 연결되어 있고, Proxy가 실행 중이어야 합니다.
 

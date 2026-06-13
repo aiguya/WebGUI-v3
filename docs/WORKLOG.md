@@ -1861,3 +1861,23 @@
   - 현재 PC에서 Chrome/Edge가 쿠키 DB를 잠근 경우 친절한 안내 메시지가 반환됨을 확인했다.
   - `/api/grok-official/browser/open` 테스트 클라이언트 응답을 확인했다.
   - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
+
+### 2026-06-14 03:32 KST - Codex/ChatGPT OAuth 로그아웃 추가
+- 목표:
+  - 원본과 Hermes-only 릴리즈 모두에서 Codex/ChatGPT OAuth 세션을 명시적으로 로그아웃할 수 있게 한다.
+- 변경:
+  - `app.py`에 `/api/codex-proxy/logout` 엔드포인트를 추가했다.
+  - 로그아웃 시 프록시의 로그아웃 API 후보(`/api/auth/logout`, `/api/logout`, `/api/oauth/logout`)를 먼저 시도한다.
+  - 앱이 띄운 Codex Proxy 프로세스와 `.webgork-private/ima2/server.json`에 기록된 앱 관리 프록시 프로세스를 종료하도록 했다.
+  - `.webgork-private/ima2/sessions.db`, `sessions.db-wal`, `sessions.db-shm` 등 로컬 Codex OAuth 세션 파일을 삭제하고 `config.json`은 OAuth provider 설정으로 재생성한다.
+  - Codex/ChatGPT 연결 상태 패널과 상세 패널에 `로그아웃` 버튼을 추가했다.
+  - 릴리즈 연결상태 카드 템플릿에도 `로그아웃` 버튼을 추가했다.
+  - 정적 캐시 버전을 `20260614-v3-73`, 릴리즈 스탬프를 `20260614-release-hermes-24`로 올렸다.
+  - 원본 `WebGUI.v3.exe`, `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 빌드했다.
+  - 릴리즈 사용자 매뉴얼에 Codex/ChatGPT 로그아웃 설명을 추가했다.
+- 검증:
+  - 실제 Codex 세션 삭제 없이 stub으로 `/api/codex-proxy/logout` 응답 `200 True`를 확인했다.
+  - `python -m py_compile app.py work/run_server.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py release/WebGrok-v3-Hermes/work/run_server.py` 통과.
+  - `node --check static/app.js`와 `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - 릴리즈 앱/정적 파일/매뉴얼에 로그아웃 버튼과 `/api/codex-proxy/logout` 포함을 확인했다.
+  - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 로그, bootstrap marker, hint 파일, 세션 DB, 쿠키/토큰 파일이 포함되지 않았음을 확인했다.

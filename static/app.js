@@ -284,8 +284,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260614-v3-72";
-const appShellCacheName = "webgui-shell-v3-72";
+const appStaticVersion = "20260614-v3-73";
+const appShellCacheName = "webgui-shell-v3-73";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -8247,6 +8247,7 @@ function installCodexProxyPanel() {
     <p class="note">Codex OAuth 로컬 프록시 연결 상태를 확인합니다. 이미지 생성/편집에서 gpt-5 모델을 쓰려면 Provider를 Codex/ChatGPT OAuth Local Proxy로 선택하세요.</p>
     <div class="button-row">
       <button type="button" id="codexProxyStartPanel">Codex Proxy 시작</button>
+      <button type="button" id="codexProxyLogout" class="secondary danger-btn">로그아웃</button>
       <button type="button" id="codexProxyRefresh" class="secondary">상태 새로고침</button>
     </div>
     <dl class="status-list" id="codexProxyStatusList">
@@ -8431,6 +8432,28 @@ function bindCodexProxyPanel() {
       button.textContent = original;
     }
   });
+  document.querySelector("#codexProxyLogout")?.addEventListener("click", async () => {
+    if (!confirm("Codex/ChatGPT OAuth 세션을 삭제하고 로컬 프록시를 종료할까요?")) return;
+    const button = document.querySelector("#codexProxyLogout");
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "로그아웃 중";
+    try {
+      const response = await fetch("/api/codex-proxy/logout", { method: "POST" });
+      const data = await readJsonResponse(response, "요청 실패");
+      if (!data.ok) throw new Error(data.error || data.detail || "Codex OAuth 로그아웃 실패");
+      showToast(data.message || "Codex/ChatGPT OAuth에서 로그아웃했습니다.");
+      setCodexProxyStatus("Codex/ChatGPT OAuth 로그아웃됨");
+      await refreshCodexProxyPanel();
+      await loadHealth();
+    } catch (error) {
+      showToast(error.message, true);
+      setCodexProxyStatus(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  });
   document.querySelector("#codexProxyRefresh")?.addEventListener("click", refreshCodexProxyPanel);
   refreshCodexProxyPanel();
   if (!codexProxyPanelRefreshTimer) {
@@ -8476,6 +8499,7 @@ function installConnectionActionFallback() {
       "logoutHermesAuth",
       "submitHermesCode",
       "codexProxyStartPanel",
+      "codexProxyLogout",
       "codexProxyRefresh",
     ].includes(id)) return;
     event.preventDefault();
@@ -8572,6 +8596,17 @@ function installConnectionActionFallback() {
     if (id === "codexProxyStartPanel") {
       await postPanelAction(button, "/api/codex-proxy/start", "시작 중", async data => {
         showToast(data.message || "Codex Proxy를 시작했습니다.");
+        await refreshCodexProxyPanel();
+        await loadHealth();
+      });
+      return;
+    }
+
+    if (id === "codexProxyLogout") {
+      if (!confirm("Codex/ChatGPT OAuth 세션을 삭제하고 로컬 프록시를 종료할까요?")) return;
+      await postPanelAction(button, "/api/codex-proxy/logout", "로그아웃 중", async data => {
+        setCodexProxyStatus("Codex/ChatGPT OAuth 로그아웃됨");
+        showToast(data.message || "Codex/ChatGPT OAuth에서 로그아웃했습니다.");
         await refreshCodexProxyPanel();
         await loadHealth();
       });
@@ -8686,6 +8721,7 @@ function installConnectionStatusPanel() {
         <span class="connection-state" data-connection-label>연결안됨</span>
         <div class="connection-actions">
           <button type="button" id="codexProxyStartPanel" class="secondary">시작</button>
+          <button type="button" id="codexProxyLogout" class="secondary danger-btn">로그아웃</button>
           <button type="button" id="codexProxyRefresh" class="secondary">새로고침</button>
         </div>
       </div>

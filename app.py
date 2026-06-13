@@ -5860,6 +5860,120 @@ def codex_proxy_log_path():
     return path
 
 
+def codex_proxy_session_paths():
+    cfg_dir = codex_proxy_config_dir()
+    return [
+        cfg_dir / "sessions.db",
+        cfg_dir / "sessions.db-shm",
+        cfg_dir / "sessions.db-wal",
+        cfg_dir / "session.db",
+        cfg_dir / "session.db-shm",
+        cfg_dir / "session.db-wal",
+        cfg_dir / "tokens.json",
+        cfg_dir / "oauth-token.json",
+        cfg_dir / "oauth.json",
+    ]
+
+
+def stop_codex_proxy_process():
+    global CODEX_PROXY_PROCESS
+    stopped = []
+    process = CODEX_PROXY_PROCESS
+    CODEX_PROXY_PROCESS = None
+    if process and process.poll() is None:
+        try:
+            pid = process.pid
+            process.terminate()
+            process.wait(timeout=5)
+            stopped.append(pid)
+        except Exception:
+            try:
+                process.kill()
+                stopped.append(process.pid)
+            except Exception:
+                pass
+    return stopped
+
+
+def stop_codex_proxy_advertised_process():
+    cfg = config()
+    base = (cfg.get("codex_proxy_base_url") or "").rstrip("/")
+    server_path = codex_proxy_config_dir() / "server.json"
+    try:
+        data = json.loads(server_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    advertised_url = (data.get("url") or ((data.get("backend") or {}).get("url")) or "").rstrip("/")
+    if base and advertised_url and base != advertised_url:
+        return []
+    pid = int(data.get("pid") or 0)
+    if pid <= 0 or pid == os.getpid():
+        return []
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                **hidden_process_kwargs(),
+            )
+        else:
+            os.kill(pid, 15)
+        return [pid]
+    except Exception:
+        return []
+
+
+def codex_proxy_remote_logout(base):
+    if not base:
+        return []
+    results = []
+    for path in ("/api/auth/logout", "/api/logout", "/api/oauth/logout"):
+        try:
+            response = requests.post(base.rstrip("/") + path, timeout=3)
+            results.append({"path": path, "status": response.status_code})
+            if response.status_code < 400:
+                break
+        except Exception as exc:
+            results.append({"path": path, "error": str(exc)[:200]})
+    return results
+
+
+def codex_proxy_logout_state():
+    cfg = config()
+    base = (cfg.get("codex_proxy_base_url") or "").rstrip("/")
+    remote = codex_proxy_remote_logout(base)
+    stopped = stop_codex_proxy_process()
+    stopped.extend(pid for pid in stop_codex_proxy_advertised_process() if pid not in stopped)
+    removed = []
+    failed = []
+    for path in codex_proxy_session_paths():
+        try:
+            if path.exists():
+                path.unlink()
+                removed.append(str(path))
+        except Exception as exc:
+            failed.append({"path": str(path), "error": str(exc)})
+    server_path = codex_proxy_config_dir() / "server.json"
+    try:
+        if server_path.exists():
+            server_path.unlink()
+            removed.append(str(server_path))
+    except Exception as exc:
+        failed.append({"path": str(server_path), "error": str(exc)})
+    ensure_codex_proxy_oauth_config()
+    if failed:
+        raise RuntimeError("Codex OAuth 세션 파일 일부를 삭제하지 못했습니다: " + json.dumps(failed, ensure_ascii=False)[:1000])
+    return {
+        "message": "Codex/ChatGPT OAuth 로그아웃을 완료했습니다.",
+        "proxy_running": codex_proxy_running(cfg, timeout=1),
+        "stopped_pids": stopped,
+        "removed_files": removed,
+        "remote_logout": remote,
+    }
+
+
 def codex_proxy_error(response):
     try:
         data = response.json()
@@ -7895,6 +8009,14 @@ def codex_proxy_start():
     if not result.get("ok"):
         return safe_error(result.get("error") or "Codex OAuth 프록시를 시작하지 못했습니다.", result.get("detail"), result.get("status", 500))
     return jsonify(result)
+
+
+@app.post("/api/codex-proxy/logout")
+def codex_proxy_logout():
+    try:
+        return jsonify({"ok": True, **codex_proxy_logout_state()})
+    except Exception as exc:
+        return safe_error("Codex/ChatGPT OAuth 로그아웃에 실패했습니다.", exc, 502)
 
 
 def start_codex_proxy_background():

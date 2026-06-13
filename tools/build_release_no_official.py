@@ -9,16 +9,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260614-release-hermes-23"
+STATIC_VERSION = "20260614-release-hermes-24"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
     "20260612-v3-70",
+    "20260614-v3-71",
+    "20260614-v3-72",
+    "20260614-v3-73",
 ]
 SOURCE_SHELL_CACHE_NAMES = [
     "webgui-shell-v3-68",
     "webgui-shell-v3-69",
     "webgui-shell-v3-70",
+    "webgui-shell-v3-71",
+    "webgui-shell-v3-72",
+    "webgui-shell-v3-73",
 ]
 
 
@@ -131,6 +137,7 @@ def strip_html_official_quota(html):
               <span class="connection-state" data-connection-label>연결안됨</span>
               <div class="connection-actions">
                 <button type="button" id="codexProxyStartPanel" class="secondary">시작</button>
+                <button type="button" id="codexProxyLogout" class="secondary danger-btn">로그아웃</button>
                 <button type="button" id="codexProxyRefresh" class="secondary">새로고침</button>
               </div>
             </div>
