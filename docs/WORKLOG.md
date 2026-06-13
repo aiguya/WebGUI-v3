@@ -1699,3 +1699,21 @@
   - 실행 중인 앱 `/health`에서 `build_stamp=20260613-release-hermes-18`, `authenticated=false`, `hermes_proxy_running=false`, `codex_proxy_ready=true`, `codex_proxy_oauth_status=ready` 확인. 이 상태에서 전체 pill은 꺼지고 C 개별 아이콘만 ready로 표시되는 기준이다.
   - 릴리즈 zip 안에 `WEBGROK_CHROME_APP.exe`, `README_RELEASE.md`, `USER_MANUAL.md`, `work/run_server.py`, `static/app.js`, `templates/index.html` 포함 확인.
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap 로그/마커, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-13 11:37 KST - 릴리즈 이미지 생성 placeholder NameError 수정
+- 증상:
+  - 릴리즈 이미지 생성 요청 후 `name 'raise_if_removed_provider_unreachable_placeholder' is not defined` 오류가 발생했다.
+- 원인:
+  - Hermes-only 릴리즈 빌드 과정에서 공홈 관련 함수 정의는 제거됐지만, `/api/t2i`, `/api/i2i` 후처리에 남아 있던 `raise_if_grok_official_placeholder(path, extra)` 호출명이 제거용 placeholder 이름으로 치환되어 산출물에 남았다.
+  - 해당 검사는 공홈 생성 결과가 검열 placeholder인지 확인하는 전용 후처리라 Hermes-only 릴리즈에서는 실행할 필요가 없다.
+- 변경:
+  - `tools/build_release_no_official.py`에서 릴리즈 Python 변환 후 `raise_if_removed_provider_unreachable_placeholder(path, extra)` 호출 라인만 제거하도록 추가했다.
+  - 릴리즈 스탬프를 `20260613-release-hermes-19`로 올렸다.
+  - 릴리즈 폴더와 `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile app.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py` 통과.
+  - 릴리즈 테스트 클라이언트에서 `/api/t2i` 후처리 경로를 stub 생성으로 통과시켜 `200 True` 확인.
+  - 최종 릴리즈 산출물과 zip에서 `raise_if_removed_provider_unreachable_placeholder` 미포함 확인.
+  - 최종 zip에서 `20260613-release-hermes-19` 포함 확인.
+  - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap 로그/마커, 쿠키/공식홈 세션 파일, smoke 테스트 파일이 포함되지 않았음을 확인했다.

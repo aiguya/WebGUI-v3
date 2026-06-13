@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260613-release-hermes-18"
+STATIC_VERSION = "20260613-release-hermes-19"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -397,6 +397,11 @@ _disable_grok_official_release_routes()
     py = py.replace('"release_removed_provider"', '"removed_provider_unreachable"')
     py = py.replace("release_removed_provider", "removed_provider_unreachable")
     py = py.replace("release-disabled-route", "removed-route")
+    py = re.sub(
+        r"\n\s*raise_if_removed_provider_unreachable_placeholder\(path, extra\)",
+        "",
+        py,
+    )
     py = py.replace("릴리즈 제외 경로", "제외된 경로")
     return py
 
