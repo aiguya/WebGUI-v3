@@ -3073,6 +3073,15 @@ def official_generated_id_from_url(url):
     return match.group(1) if match else ""
 
 
+def official_asset_content_id_from_url(url):
+    match = re.search(r"assets\.grok\.com/users/[^/]+/([^/?#]+)/content(?:[?#]|$)", url or "")
+    return match.group(1) if match else ""
+
+
+def strip_url_query(url):
+    return str(url or "").split("?", 1)[0]
+
+
 def grok_official_generated_asset_image_url(post_id, account_id=None, source_url=""):
     if not post_id:
         return ""
@@ -4387,6 +4396,36 @@ def grok_official_pipeline_image_fixed_for_path(path, account_id=None):
     return grok_official_blob_ref_for_image(path, account_id=account_id)
 
 
+def grok_official_app_chat_video_reference_for_path(path, account_id=None):
+    source_url, extra = grok_official_generated_source_url_for_path(path, account_id=account_id)
+    source_url = strip_url_query(source_url or extra.get("official_source_url") or extra.get("source_url") or "")
+    parent_post_id = (
+        official_asset_content_id_from_url(source_url)
+        or official_generated_id_from_url(source_url)
+        or official_image_id_from_url(source_url)
+        or extra.get("official_parent_post_id")
+        or extra.get("official_root_post_id")
+        or extra.get("official_image_id")
+        or ""
+    )
+    account_id = account_id or active_grok_account_id()
+    if parent_post_id and not source_url and account_id:
+        source_url = f"https://assets.grok.com/users/{account_id}/{parent_post_id}/content"
+        extra["official_source_type"] = "official_asset_content_url"
+        extra["official_source_mode"] = "official_constructed_asset_content_reference"
+    if parent_post_id and source_url and "imagine-public.x.ai" in source_url and account_id:
+        source_url = f"https://assets.grok.com/users/{account_id}/{parent_post_id}/content"
+        extra["official_source_type"] = "official_asset_content_url"
+        extra["official_source_mode"] = "official_constructed_asset_content_reference"
+    if not (parent_post_id and source_url):
+        return "", "", extra
+    extra["official_source_url"] = source_url
+    extra["official_parent_post_id"] = parent_post_id
+    extra.setdefault("official_root_post_id", parent_post_id)
+    extra.setdefault("official_is_root_user_uploaded", False)
+    return source_url, parent_post_id, extra
+
+
 def grok_official_pipeline_run(spec, kind="video", account_id=None):
     headers = {
         **grok_web_headers(account_id, accept="text/event-stream, application/json"),
@@ -4566,7 +4605,167 @@ def grok_official_post_detail(post_id, account_id=None):
     return {"postId": post_id, "detail_errors": errors}
 
 
+def grok_official_app_chat_video(prompt, source_path, duration=10, resolution="720p", aspect_ratio="2:3", account_id=None):
+    account_id = account_id or active_grok_account_id()
+    aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
+    resolution = valid_video_resolution(resolution)
+    duration = max(2, min(15, int(duration or 6)))
+    source_url, parent_post_id, source_extra = grok_official_app_chat_video_reference_for_path(source_path, account_id=account_id)
+    if not (source_url and parent_post_id):
+        raise RuntimeError("Grok official app-chat video reference could not be resolved.")
+    request_body = {
+        "temporary": True,
+        "modelName": "imagine-video-gen",
+        "message": f"{source_url}  {prompt} --mode=custom".strip(),
+        "fileAttachments": [parent_post_id],
+        "enableSideBySide": True,
+        "responseMetadata": {
+            "experiments": [],
+            "modelConfigOverride": {
+                "modelMap": {
+                    "videoGenModelConfig": {
+                        "parentPostId": parent_post_id,
+                        "aspectRatio": aspect_ratio,
+                        "videoLength": duration,
+                        "isVideoEdit": False,
+                        "resolutionName": resolution,
+                    }
+                }
+            },
+        },
+    }
+    reset_grok_official_progress(
+        status="running",
+        stage="app-chat-video",
+        message="Grok official app-chat video request sent",
+        prompt_preview=prompt[:120],
+        duration=duration,
+        resolution=resolution,
+        aspect_ratio=aspect_ratio,
+        source_mode=source_extra.get("official_source_mode") or "",
+        official_source_url=source_url,
+        official_parent_post_id=parent_post_id,
+        account_id_present=bool(account_id),
+    )
+    browser_response = grok_official_browser_fetch(
+        "https://grok.com/rest/app-chat/conversations/new",
+        body=request_body,
+        timeout=420,
+        target_post_id=parent_post_id,
+    )
+    status = int(browser_response.get("status") or 0)
+    text = browser_response.get("text") or ""
+    if status >= 400:
+        raise RuntimeError(f"Grok official app-chat video request failed: {status} {text[:1200]}")
+
+    events = grok_agent_parse_json_lines(text)
+    video_urls = []
+    video_ids = []
+    moderated = []
+    r_rated = []
+    progress = 0
+    conversation_id = ""
+    for event in events:
+        result = event.get("result") if isinstance(event, dict) else None
+        if not isinstance(result, dict):
+            continue
+        conversation = result.get("conversation")
+        if isinstance(conversation, dict) and conversation.get("conversationId"):
+            conversation_id = conversation.get("conversationId")
+        response_payload = result.get("response") if isinstance(result.get("response"), dict) else {}
+        stream = response_payload.get("streamingVideoGenerationResponse") if isinstance(response_payload, dict) else None
+        if not isinstance(stream, dict):
+            continue
+        stream_progress = stream.get("progress")
+        if isinstance(stream_progress, (int, float)):
+            progress = max(progress, int(stream_progress))
+        if stream.get("videoId") and stream.get("videoId") not in video_ids:
+            video_ids.append(stream.get("videoId"))
+        if stream.get("videoPostId") and stream.get("videoPostId") not in video_ids:
+            video_ids.append(stream.get("videoPostId"))
+        if "moderated" in stream:
+            moderated.append(bool(stream.get("moderated")))
+        if "rRated" in stream:
+            r_rated.append(bool(stream.get("rRated")))
+        for key in ("videoUrl", "video_url", "mediaUrl", "media_url"):
+            url = stream.get(key)
+            if isinstance(url, str) and url and url not in video_urls:
+                video_urls.append(url)
+        update_grok_official_progress(
+            status="running",
+            stage="app-chat-video",
+            message="Grok official app-chat video streaming",
+            progress=progress,
+            event_count=len(events),
+            video_url_found=bool(video_urls),
+            moderated=moderated[-1] if moderated else False,
+            r_rated=r_rated[-1] if r_rated else False,
+            official_parent_post_id=parent_post_id,
+        )
+
+    if not video_urls:
+        parsed = grok_agent_parse_stream(text)
+        for candidate in parsed.get("media_candidates") or []:
+            if candidate.get("kind") == "video" and candidate.get("url") not in video_urls:
+                video_urls.append(candidate.get("url"))
+    if not video_urls:
+        if moderated and moderated[-1]:
+            raise RuntimeError("Grok official app-chat video was moderated and no downloadable video URL was returned.")
+        raise RuntimeError("Grok official app-chat video response did not include a downloadable video URL.")
+
+    download_errors = []
+    path = None
+    used_url = ""
+    for video_url in reversed(video_urls):
+        try:
+            path, used_url = grok_official_download(video_url, media_path("video"), kind="video", return_url=True)
+            break
+        except Exception as exc:
+            download_errors.append(f"{video_url}: {str(exc)[:500]}")
+    if not path:
+        raise RuntimeError("Grok official app-chat video download failed. " + "; ".join(download_errors[-5:]))
+    update_grok_official_progress(
+        status="done",
+        stage="app-chat-video",
+        message="Grok official app-chat video completed",
+        progress=100,
+        official_media_url=used_url,
+        official_parent_post_id=parent_post_id,
+        official_video_ids=video_ids,
+    )
+    return path, {
+        "source": "grok_official_web",
+        "official_transport": "app_chat",
+        "official_pipeline": "video_gen",
+        "official_media_url": used_url,
+        "official_video_ids": video_ids,
+        "official_parent_post_id": parent_post_id,
+        "official_completed": True,
+        "official_events": len(events),
+        "official_request_body": request_body,
+        "official_response_moderated": moderated[-1] if moderated else False,
+        "official_response_r_rated": r_rated[-1] if r_rated else False,
+        "official_conversation_id": conversation_id,
+        "duration": duration,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        "grok_account_id": account_id,
+        **source_extra,
+    }
+
+
 def grok_official_pipeline_video(prompt, source_url="", source_path=None, duration=10, resolution="720p", aspect_ratio="2:3", account_id=None):
+    if source_path:
+        app_source_url, parent_post_id, _ = grok_official_app_chat_video_reference_for_path(source_path, account_id=account_id)
+        if app_source_url and parent_post_id:
+            return grok_official_app_chat_video(
+                prompt,
+                source_path,
+                duration=duration,
+                resolution=resolution,
+                aspect_ratio=aspect_ratio,
+                account_id=account_id,
+            )
     aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
     resolution = valid_video_resolution(resolution)
     duration = max(2, min(15, int(duration or 6)))

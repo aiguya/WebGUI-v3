@@ -2000,3 +2000,20 @@
   - `python -m py_compile app.py` 통과.
   - 공식 생성 이미지 source 선택 테스트에서 `fixed.type == "blob_ref"`, `key == imagine-public URL`, `upload=False` 확인.
   - 공식 생성 영상 연장 spec 테스트에서 `source_video.fixed.type == "blob_ref"`, `key == assets.grok.com generated_video.mp4` 확인.
+
+### 2026-06-14 08:05 KST - 공식홈 내부 이미지→영상 app-chat 루트 반영
+- 캡처:
+  - Grok 공식홈 Imagine post 탭에 `fetch`/XHR/WebSocket hook을 주입하고 내부 이미지 영상화를 재시도했다.
+  - 실제 요청은 `/rest/media/pipeline/run`이 아니라 `POST https://grok.com/rest/app-chat/conversations/new`였다.
+  - 요청 body 핵심값은 `modelName: "imagine-video-gen"`, `message: "<assets.grok.com/.../137ec400.../content>  dance. --mode=custom"`, `fileAttachments: ["137ec400-..."]`, `responseMetadata.modelConfigOverride.modelMap.videoGenModelConfig.parentPostId`였다.
+  - 응답 metadata에서 `isRootUserUploaded=false`, `rootPostId=137ec400-...`, `resolvedImageReferences=[assets.grok.com/.../content]`가 확인되었다.
+  - 성공 응답은 `streamingVideoGenerationResponse.videoUrl=users/.../generated/9423cbae-.../generated_video.mp4`, `rRated=true`, `moderated=false`를 반환했다.
+- 변경:
+  - `official_asset_content_id_from_url()`와 `strip_url_query()`를 추가했다.
+  - `grok_official_app_chat_video_reference_for_path()`를 추가해 공식 내부 이미지 URL과 parent post id를 추출/구성하도록 했다.
+  - `grok_official_app_chat_video()`를 추가해 공식홈 내부 이미지 i2v를 캡처된 app-chat 형식으로 요청하도록 했다.
+  - `grok_official_pipeline_video()`는 source image가 공식 내부 참조로 해석될 때 app-chat 루트를 먼저 사용하고, 참조를 만들 수 없을 때만 기존 pipeline 루트를 유지하도록 했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - 캡처된 `assets.grok.com/users/.../137ec400.../content?cache=1` URL에서 parent id와 query 제거가 정상 동작함을 확인했다.
+  - 실제 생성 요청은 크레딧 소모 방지를 위해 자동 실행하지 않았다.
