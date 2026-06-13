@@ -20,6 +20,10 @@ class AppendLogWriter:
     def write(self, text: str) -> int:
         if not text:
             return 0
+        if isinstance(text, bytes):
+            text = text.decode("utf-8", errors="replace")
+        else:
+            text = str(text)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8", errors="replace") as handle:

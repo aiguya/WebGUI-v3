@@ -1763,3 +1763,23 @@
   - `WEBGROK_CHROME_APP.exe`가 새로 컴파일되어 갱신됨을 확인했다.
   - 최종 zip에서 `20260614-release-hermes-21`, `read_path_hint`, `AppendLogWriter` 포함 확인.
   - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap/server/launcher 로그, bootstrap marker, hint 파일, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-14 01:08 KST - 원본 WebGUI.v3.exe 서버 시작 실패 수정
+- 증상:
+  - 원본 `WebGUI.v3.exe` 실행 시 `WebGUI.v3 server did not start` 팝업이 표시됐다.
+  - `work/server-runner.log`에는 `AppendLogWriter.write()`가 `bytes`를 받아 `TypeError: write() argument must be str, not bytes`로 종료된 기록이 있었다.
+- 원인:
+  - 서버 로그 파일 잠금 문제를 줄이려고 `work/run_server.py`의 stdout/stderr writer를 교체했지만, Flask/click이 banner 출력 중 bytes를 write하는 경우를 처리하지 못했다.
+- 변경:
+  - `work/run_server.py`: `AppendLogWriter.write()`가 `bytes` 입력을 UTF-8 replacement로 decode하고, 그 외 입력도 `str()`로 안전 변환하도록 수정했다.
+  - `tools/WebGuiLauncher.cs`: 원본 `WebGUI.v3.exe`도 `work/webgui-launcher.log`를 남기도록 추가했다.
+  - `tools/WebGuiLauncher.cs`: 서버 시작 실패 팝업에 `webgui-launcher.log`와 `server-runner.log` 최근 내용을 함께 표시하도록 보강했다.
+  - `WebGUI.v3.exe`를 새 런처 코드로 재빌드했다.
+  - 릴리즈 `release/WebGrok-v3-Hermes`와 `release/WebGrok-v3-Hermes-20260611.zip`도 같은 runner 수정이 포함되도록 다시 생성했다.
+- 검증:
+  - `python -m py_compile app.py work/run_server.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py release/WebGrok-v3-Hermes/work/run_server.py` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `work/run_server.py` 직접 실행 시 `* Running on http://127.0.0.1:7863` 로그가 기록되어 TypeError가 재발하지 않음을 확인했다.
+  - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
+  - 최종 zip에서 runner bytes 처리, `AppendLogWriter`, `20260614-release-hermes-21` 포함 확인.
+  - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap/server/launcher 로그, bootstrap marker, hint 파일, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.

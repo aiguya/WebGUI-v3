@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -12,6 +13,7 @@ internal static class Program
     private const string StaticVersion = "20260612-v3-70";
     private const string HealthUrl = "http://127.0.0.1:" + Port + "/health";
     private const string AppUrl = "http://127.0.0.1:" + Port + "/?v=" + StaticVersion;
+    private static string LastHealthError = "";
 
     [STAThread]
     private static int Main()
@@ -21,35 +23,46 @@ internal static class Program
         bool startedServer = false;
         try
         {
+            Log(root, "launcher start version=" + StaticVersion + " root=" + root);
             if (!HealthOk())
             {
+                Log(root, "initial health failed: " + LastHealthError);
                 serverProcess = StartServer(root);
                 startedServer = serverProcess != null;
+                Log(root, "server start requested pid=" + (serverProcess == null ? "none" : serverProcess.Id.ToString()));
+            }
+            else
+            {
+                Log(root, "initial health ok");
             }
 
-            if (!WaitForHealth())
+            if (!WaitForHealth(root))
             {
-                string logPath = Path.Combine(root, "work", "server-runner.log");
                 MessageBox.Show(
-                    "WebGUI.v3 server did not start.\r\n\r\nCheck the log:\r\n" + logPath + "\r\n\r\nIf this is the first run, run run_webgork_app.bat once to install dependencies.",
+                    "WebGUI.v3 server did not start.\r\n\r\n" + ReadFailureLogs(root) + "\r\n\r\nIf this is the first run, run run_webgork_app.bat once to install dependencies.",
                     "WebGUI.v3",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
                 return 1;
             }
 
+            Log(root, "health ok");
             Process chromeProcess = OpenChromeApp(root);
+            Log(root, "chrome app opened pid=" + (chromeProcess == null ? "external-or-default-browser" : chromeProcess.Id.ToString()));
             if (startedServer)
             {
                 WaitForChromeAppExit(chromeProcess);
+                Log(root, "chrome app exited; stopping started server");
                 StopStartedServer(serverProcess);
             }
+            Log(root, "launcher finished");
             return 0;
         }
         catch (Exception ex)
         {
+            Log(root, "fatal exception: " + ex.ToString());
             MessageBox.Show(
-                "Failed to start WebGUI.v3.\r\n\r\n" + ex.Message,
+                "Failed to start WebGUI.v3.\r\n\r\n" + ex.Message + "\r\n\r\n" + ReadFailureLogs(root),
                 "WebGUI.v3",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
@@ -69,17 +82,22 @@ internal static class Program
                 return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            LastHealthError = ex.GetType().Name + ": " + ex.Message;
             return false;
         }
     }
 
-    private static bool WaitForHealth()
+    private static bool WaitForHealth(string root)
     {
         for (int i = 0; i < 80; i++)
         {
             if (HealthOk()) return true;
+            if (i == 0 || i % 10 == 9)
+            {
+                Log(root, "waiting for health attempt=" + (i + 1).ToString() + " last_error=" + LastHealthError);
+            }
             Thread.Sleep(500);
         }
         return false;
@@ -91,6 +109,7 @@ internal static class Program
         string python = FindPython();
         if (String.IsNullOrEmpty(python))
         {
+            Log(root, "python not found before server start");
             throw new InvalidOperationException("Python was not found. Install Python 3.11+ or run run_webgork_app.bat for setup.");
         }
 
@@ -117,7 +136,73 @@ internal static class Program
             info.Arguments = script;
         }
 
+        Log(root, "starting server with " + info.FileName + " " + info.Arguments);
         return Process.Start(info);
+    }
+
+    private static string ReadFailureLogs(string root)
+    {
+        string launcher = TailFile(Path.Combine(root, "work", "webgui-launcher.log"), 5000);
+        string server = TailFile(Path.Combine(root, "work", "server-runner.log"), 5000);
+        string message = "";
+        if (!String.IsNullOrEmpty(launcher))
+        {
+            message += "Recent webgui-launcher.log:\r\n" + launcher + "\r\n\r\n";
+        }
+        if (!String.IsNullOrEmpty(server))
+        {
+            message += "Recent server-runner.log:\r\n" + server + "\r\n";
+        }
+        if (String.IsNullOrEmpty(message))
+        {
+            message = "No launcher/server log was found yet. Check the work folder.";
+        }
+        return message;
+    }
+
+    private static string TailFile(string path, int maxChars)
+    {
+        try
+        {
+            if (!File.Exists(path)) return "";
+            string text = Encoding.UTF8.GetString(ReadAllBytesShared(path));
+            text = text.Replace("\n", "\r\n").Replace("\r\r\n", "\r\n");
+            if (text.Length <= maxChars) return text;
+            return text.Substring(text.Length - maxChars);
+        }
+        catch (Exception ex)
+        {
+            return "Could not read " + path + ": " + ex.Message;
+        }
+    }
+
+    private static byte[] ReadAllBytesShared(string path)
+    {
+        using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        using (MemoryStream memory = new MemoryStream())
+        {
+            stream.CopyTo(memory);
+            return memory.ToArray();
+        }
+    }
+
+    private static void Log(string root, string message)
+    {
+        try
+        {
+            string work = Path.Combine(root, "work");
+            Directory.CreateDirectory(work);
+            string path = Path.Combine(work, "webgui-launcher.log");
+            string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz") + " " + message + Environment.NewLine;
+            byte[] bytes = Encoding.UTF8.GetBytes(line);
+            using (FileStream stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            {
+                stream.Write(bytes, 0, bytes.Length);
+            }
+        }
+        catch
+        {
+        }
     }
 
     private static string FindPython()
