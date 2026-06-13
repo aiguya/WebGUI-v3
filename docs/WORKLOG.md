@@ -1899,3 +1899,29 @@
   - 테스트 클라이언트에서 Chrome 실행 중 상태를 stub 처리해 `/api/grok-official/chrome/start-default`가 `409`와 `can_restart_default=True`를 반환함을 확인했다.
   - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
   - 내부 브라우저 UI 확인은 Windows 샌드박스의 `spawn setup refresh` 오류로 도구가 두 번 종료되어 생략했다.
+
+### 2026-06-14 04:04 KST - 구버전 서버/서비스워커 캐시 재사용 수정
+- 증상:
+  - `내 Chrome` 클릭 시 `기본 Chrome 프로필로 Grok 공식홈을 시작하지 못했습니다.` 오류가 뜨고 `detail`이 비어 있었다.
+  - 파일은 `20260614-v3-74`로 갱신되어 있었지만, 실행 중인 7863 서버는 `/`에서 `app.js?v=20260614-v3-73`을 내려주고 있었다.
+  - Chrome App 프로필의 서비스워커가 더 오래된 `app.js?v=20260612-v3-70`까지 요청하는 로그가 확인되었다.
+- 원인:
+  - 원본 런처의 `/startup` 확인이 서버 생존 여부만 보고 정적 버전 불일치를 감지하지 못했다.
+  - `static/service-worker.js`가 `webgui-shell-v3-70`과 오래된 앱 셸 파일을 프리캐시하고 있어 구버전 UI를 다시 살릴 수 있었다.
+  - 예외 문자열이 비어 있는 경우 `safe_error` detail에도 예외 타입이 남지 않았다.
+- 변경:
+  - `APP_STATIC_VERSION = "20260614-v3-75"`를 추가하고 `/startup`, `/health` 응답에 `static_version`을 포함했다.
+  - 원본 `WebGUI.v3.exe` 런처가 `/startup.static_version`과 자체 `StaticVersion`을 비교해 불일치하면 기존 포트 점유 서버를 종료하고 새 서버를 띄우도록 했다.
+  - 서비스워커를 네트워크 우선/무저장 형태로 바꾸고 기존 `webgui-shell-*` 캐시를 모두 삭제하도록 했다.
+  - 정적 캐시 버전을 `20260614-v3-75`로 올리고 원본 `WebGUI.v3.exe`를 다시 빌드했다.
+  - 빈 예외 detail에는 `ExceptionType: repr(...)` 형태가 남도록 했다.
+  - 릴리즈 생성 스크립트의 원본 정적 버전 치환 목록과 `APP_STATIC_VERSION` 치환을 갱신했다.
+  - 현재 떠 있던 구버전 7863 서버(PID 51108)를 종료하고 새 서버를 시작했다.
+- 검증:
+  - `python -m py_compile app.py tools/build_release_no_official.py` 통과.
+  - `node --check static/app.js` 통과.
+  - 테스트 클라이언트에서 `/startup`이 `static_version=20260614-v3-75`를 반환함을 확인했다.
+  - 테스트 클라이언트에서 `/`가 `app.js?v=20260614-v3-75`를 포함하고 `v3-74`를 포함하지 않음을 확인했다.
+  - 테스트 클라이언트에서 `/sw.js?v=20260614-v3-75`가 `webgui-shell-v3-75`를 포함하고 `v3-70`을 포함하지 않음을 확인했다.
+  - 실제 7863 서버 재시작 후 `/startup`, `/`, `/sw.js` 응답이 모두 `20260614-v3-75`로 맞춰졌음을 확인했다.
+  - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.

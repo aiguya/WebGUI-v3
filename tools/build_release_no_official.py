@@ -17,6 +17,8 @@ SOURCE_STATIC_VERSIONS = [
     "20260614-v3-71",
     "20260614-v3-72",
     "20260614-v3-73",
+    "20260614-v3-74",
+    "20260614-v3-75",
 ]
 SOURCE_SHELL_CACHE_NAMES = [
     "webgui-shell-v3-68",
@@ -25,6 +27,8 @@ SOURCE_SHELL_CACHE_NAMES = [
     "webgui-shell-v3-71",
     "webgui-shell-v3-72",
     "webgui-shell-v3-73",
+    "webgui-shell-v3-74",
+    "webgui-shell-v3-75",
 ]
 
 
@@ -341,6 +345,7 @@ function renderStatus(data) {
 def strip_app_official_quota(py):
     py = remove_official_python_defs(py)
     py = py.replace('APP_BUILD_STAMP = "dev"', f'APP_BUILD_STAMP = "{STATIC_VERSION}"')
+    py = re.sub(r'APP_STATIC_VERSION = "[^"]+"', f'APP_STATIC_VERSION = "{STATIC_VERSION}"', py)
     py = py.replace(
         '    "grok_official_image_candidates": unique_model_ids(GROK_OFFICIAL_IMAGE_MODEL_CANDIDATES),\n'
         '        "grok_official_video_candidates": unique_model_ids(GROK_OFFICIAL_VIDEO_MODEL_CANDIDATES),\n',

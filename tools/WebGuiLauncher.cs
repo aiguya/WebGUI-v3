@@ -10,7 +10,7 @@ using System.Windows.Forms;
 internal static class Program
 {
     private const string Port = "7863";
-    private const string StaticVersion = "20260614-v3-74";
+    private const string StaticVersion = "20260614-v3-75";
     private const string HealthUrl = "http://127.0.0.1:" + Port + "/startup";
     private const string AppUrl = "http://127.0.0.1:" + Port + "/?v=" + StaticVersion;
     private static string LastHealthError = "";
@@ -84,7 +84,24 @@ internal static class Program
             request.Timeout = 1500;
             using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
             {
-                return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
+                if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300) return false;
+                string body = "";
+                Stream stream = response.GetResponseStream();
+                if (stream != null)
+                {
+                    using (stream)
+                    using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                    {
+                        body = reader.ReadToEnd();
+                    }
+                }
+                string expected = "\"static_version\":\"" + StaticVersion + "\"";
+                if (body.IndexOf(expected, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    LastHealthError = "startup static version mismatch. expected=" + StaticVersion + " response=" + TrimForLog(body, 500);
+                    return false;
+                }
+                return true;
             }
         }
         catch (Exception ex)
@@ -92,6 +109,14 @@ internal static class Program
             LastHealthError = ex.GetType().Name + ": " + ex.Message;
             return false;
         }
+    }
+
+    private static string TrimForLog(string value, int maxChars)
+    {
+        if (String.IsNullOrEmpty(value)) return "";
+        value = value.Replace("\r", " ").Replace("\n", " ").Trim();
+        if (value.Length <= maxChars) return value;
+        return value.Substring(0, maxChars);
     }
 
     private static bool WaitForHealth(string root, Process serverProcess)

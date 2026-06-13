@@ -36,6 +36,7 @@ load_dotenv()
 APP_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 APP_BUILD_STAMP = "dev"
+APP_STATIC_VERSION = "20260614-v3-75"
 SETTINGS_PATH = ROOT / "webgork-settings.json"
 PRIVATE_STATE_DIR = Path(os.getenv("WEBGORK_CONFIG_DIR") or (ROOT / ".webgork-private")).expanduser().resolve()
 SENSITIVE_MEDIA_FILENAMES = {
@@ -409,7 +410,7 @@ def error_detail_text(detail):
         if response_detail:
             text = f"{text} {response_detail}".strip()
     if not text:
-        text = repr(detail)
+        text = f"{type(detail).__name__}: {repr(detail)}"
     return text[:4000]
 
 
@@ -7599,7 +7600,7 @@ def settings_page():
 
 @app.get("/startup")
 def startup():
-    return jsonify({"ok": True, "build_stamp": APP_BUILD_STAMP})
+    return jsonify({"ok": True, "build_stamp": APP_BUILD_STAMP, "static_version": APP_STATIC_VERSION})
 
 
 @app.get("/health")
@@ -7619,6 +7620,7 @@ def health():
     return jsonify({
         "ok": True,
         "build_stamp": APP_BUILD_STAMP,
+        "static_version": APP_STATIC_VERSION,
         "mode": cfg["mode"],
         "provider": cfg["provider"],
         "hermes_configured": bool(cfg["hermes_base_url"]),
