@@ -1986,3 +1986,17 @@
   - `python -m py_compile app.py` 통과.
   - 라이브러리 공식홈 영상 28개에서 `official_media_url` 메타데이터가 남아 있음을 확인했다.
   - monkeypatch 테스트로 공홈 쿼타 연장 spec의 `gen_video.inputs.video == "$input.source_video"` 및 `source_video.fixed.type == "video_url"` 구성을 확인했다.
+
+### 2026-06-14 07:25 KST - 공식홈 pipeline URL source fixed variant 수정
+- 증상:
+  - 공식홈 이미지→영상 요청이 `invalid pipeline spec: unknown variant image_url, expected text or blob_ref` 400 오류로 실패했다.
+  - 공식홈 pipeline의 `fixed` variant는 URL을 쓰는 경우에도 `image_url`/`video_url`이 아니라 `blob_ref`를 요구한다.
+- 변경:
+  - 공식홈 이미지 source URL은 `{"type":"blob_ref","key": official_url,"mime_type":"image/jpeg"}`로 보내도록 수정했다.
+  - `/api/grok-official-i2v`와 일반 i2v의 Grok 공식홈 provider 경로가 같은 `blob_ref` source helper를 사용한다.
+  - `source_url` 직접 입력 경로도 `image_url` variant 대신 `blob_ref` key URL로 보낸다.
+  - 공식홈 쿼타 영상 연장 후보 spec도 `video_url` variant 대신 `{"type":"blob_ref","key": official_media_url,"mime_type":"video/mp4"}`를 사용하도록 수정했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - 공식 생성 이미지 source 선택 테스트에서 `fixed.type == "blob_ref"`, `key == imagine-public URL`, `upload=False` 확인.
+  - 공식 생성 영상 연장 spec 테스트에서 `source_video.fixed.type == "blob_ref"`, `key == assets.grok.com generated_video.mp4` 확인.

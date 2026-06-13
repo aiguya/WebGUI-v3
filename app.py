@@ -4383,7 +4383,7 @@ def grok_official_generated_source_url_for_path(path, account_id=None):
 def grok_official_pipeline_image_fixed_for_path(path, account_id=None):
     official_source_url, source_extra = grok_official_generated_source_url_for_path(path, account_id=account_id)
     if official_source_url:
-        return {"type": "image_url", "url": official_source_url}, source_extra
+        return {"type": "blob_ref", "key": official_source_url, "mime_type": "image/jpeg"}, source_extra
     return grok_official_blob_ref_for_image(path, account_id=account_id)
 
 
@@ -4583,11 +4583,11 @@ def grok_official_pipeline_video(prompt, source_url="", source_path=None, durati
         inputs["photo"] = {"type": "image", "label": "First frame", "fixed": fixed}
         node_inputs["image"] = "$input.photo"
     elif source_url:
-        inputs["photo"] = {"type": "image", "label": "First frame", "fixed": {"type": "image_url", "url": source_url}}
+        inputs["photo"] = {"type": "image", "label": "First frame", "fixed": {"type": "blob_ref", "key": source_url, "mime_type": "image/jpeg"}}
         node_inputs["image"] = "$input.photo"
         source_extra["source_url"] = source_url
-        source_extra["official_source_type"] = "image_url"
-        source_extra["official_source_mode"] = "external_image_url"
+        source_extra["official_source_type"] = "blob_ref_url"
+        source_extra["official_source_mode"] = "external_image_url_blob_ref"
     spec = {
         "version": 1,
         "inputs": inputs,
@@ -4681,7 +4681,7 @@ def grok_official_pipeline_video_extend(prompt, source_video, duration=10, resol
         "source_video": {
             "type": "video",
             "label": "Source video",
-            "fixed": {"type": "video_url", "url": source_url},
+            "fixed": {"type": "blob_ref", "key": source_url, "mime_type": "video/mp4"},
         },
     }
     spec = {
