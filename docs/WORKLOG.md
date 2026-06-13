@@ -1620,3 +1620,28 @@
   - 릴리즈 zip 안에 `WEBGROK_BOOTSTRAP.bat`, `WEBGROK_CHROME_APP.exe`, `RUN_WEBGROK_HERMES_ONLY.bat`, `README_RELEASE.md`, `USER_MANUAL.md`가 포함됨을 확인했다.
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, 크롬 앱 프로필 폴더, OAuth 토큰/쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
   - `git diff --check` 통과.
+
+### 2026-06-13 10:46 KST - 릴리즈 연결 버튼 무반응 및 사용량 표시 누락 수정
+- 목표: 릴리즈 Chrome 앱에서 `인증`, `PROXY`, `리셋`, `로그아웃` 등 연결 상태 버튼이 아무 동작하지 않고, 원본에 있던 상단 사용량/상태 표시와 설정의 사용량 패널이 빠진 문제를 수정한다.
+- 확인:
+  - 현재 Chrome 앱은 `WEBGROK_CHROME_APP.exe`와 `http://127.0.0.1:7863/?v=20260613-release-hermes-15`로 실행 중이었다.
+  - `/health`는 응답했고 서버는 살아 있었으므로 서버 미기동 문제가 아니었다.
+  - 릴리즈 HTML에서는 직접 OAuth 로그인 폼을 제거했지만, 릴리즈 JS에는 `document.querySelector("#loginForm").addEventListener(...)`, `document.querySelector("#logoutButton").addEventListener(...)`가 남아 있었다.
+  - 이 런타임 오류 때문에 이후 연결 패널 바인딩과 fallback 바인딩까지 실행되지 않아 모든 연결 버튼이 무반응이었다.
+- 변경:
+  - `static/app.js`: `#loginForm`, `#logoutButton` 바인딩을 optional chaining으로 바꿔 릴리즈처럼 해당 DOM이 제거된 화면에서도 JS 초기화가 멈추지 않게 했다.
+  - `tools/build_release_no_official.py`: 릴리즈 스탬프를 `20260613-release-hermes-16`으로 올렸다.
+  - `tools/build_release_no_official.py`: 공홈 quota/billing 호출은 계속 제거하되, 릴리즈에 상단 token 표시와 설정의 `토큰 사용량` 패널을 다시 추가했다.
+  - `tools/build_release_no_official.py`: 사용량 표시는 `/health`의 로컬 `usage` 값만 사용하도록 `renderReleaseUsage()`를 릴리즈 JS에 주입했다.
+  - 현재 릴리즈 앱/서버 프로세스가 `work\server-runner.log`를 잡고 있어 종료 후 릴리즈 폴더를 재생성하고 Chrome 앱을 다시 실행했다.
+  - `release/WebGrok-v3-Hermes-20260611.zip`는 실행 로그/마커를 제외한 스테이징 폴더 기준으로 다시 압축했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile app.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py` 통과.
+  - 릴리즈 HTML/JS에 `20260613-release-hermes-16`, `tokenUsagePanel`, `quotaPill`, `renderReleaseUsage`, `installConnectionActionFallback` 포함 확인.
+  - 릴리즈 JS에서 제거된 DOM에 대한 직접 `document.querySelector(...).addEventListener` 누락 참조가 없음을 확인했다.
+  - `/health`에서 `build_stamp=20260613-release-hermes-16`, `codex_proxy_running=true`, `hermes_logged_in=false`, `hermes_proxy_running=false` 확인.
+  - `POST /api/hermes/auth/start`가 정상적으로 auth URL을 반환함을 확인했다.
+  - 릴리즈 zip 안에 `WEBGROK_CHROME_APP.exe`, `README_RELEASE.md`, `USER_MANUAL.md`, `work/run_server.py`, `static/app.js`, `templates/index.html` 포함 확인.
+  - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap 로그/마커, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.

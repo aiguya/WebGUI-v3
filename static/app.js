@@ -7774,7 +7774,7 @@ document.querySelector("#addDiscoveredHermesModels")?.addEventListener("click", 
   }
 });
 
-document.querySelector("#loginForm").addEventListener("submit", async event => {
+document.querySelector("#loginForm")?.addEventListener("submit", async event => {
   event.preventDefault();
   const form = event.currentTarget;
   const payload = Object.fromEntries(new FormData(form).entries());
@@ -7794,7 +7794,7 @@ document.querySelector("#loginForm").addEventListener("submit", async event => {
   }
 });
 
-document.querySelector("#logoutButton").addEventListener("click", async () => {
+document.querySelector("#logoutButton")?.addEventListener("click", async () => {
   await fetch("/api/auth/logout", { method: "POST" });
   showToast("로그아웃되었습니다.");
   await loadAuthStatus();
