@@ -1,4 +1,4 @@
-const CACHE_NAME = "webgui-shell-v3-75";
+const CACHE_NAME = "webgui-shell-v3-76";
 
 self.addEventListener("install", event => {
   event.waitUntil(self.skipWaiting());

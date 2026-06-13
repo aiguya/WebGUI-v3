@@ -36,7 +36,7 @@ load_dotenv()
 APP_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 APP_BUILD_STAMP = "dev"
-APP_STATIC_VERSION = "20260614-v3-75"
+APP_STATIC_VERSION = "20260614-v3-76"
 SETTINGS_PATH = ROOT / "webgork-settings.json"
 PRIVATE_STATE_DIR = Path(os.getenv("WEBGORK_CONFIG_DIR") or (ROOT / ".webgork-private")).expanduser().resolve()
 SENSITIVE_MEDIA_FILENAMES = {
@@ -305,7 +305,6 @@ GROK_OFFICIAL_PROGRESS = {
 }
 GROK_OFFICIAL_PROGRESS_LOCK = Lock()
 GROK_CHROME_UA_CACHE = {"value": "", "expires_at": 0.0}
-GROK_SYSTEM_COOKIE_CACHE = {"cookies": [], "source": "", "error": "", "expires_at": 0.0}
 OAUTH_PENDING = {}
 OAUTH_CALLBACK_SERVER = None
 MANGA_BATCH_JOBS = {}
@@ -2591,15 +2590,11 @@ def grok_default_chrome_profile_name():
 
 
 def chrome_process_count():
-    return process_count_for_image("chrome.exe")
-
-
-def process_count_for_image(image_name):
     if os.name != "nt":
         return 0
     try:
         output = subprocess.check_output(
-            ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
+            ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/FO", "CSV", "/NH"],
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=3,
@@ -2608,12 +2603,7 @@ def process_count_for_image(image_name):
         return 0
     if "INFO:" in output:
         return 0
-    prefix = f'"{image_name.lower()}"'
-    return sum(1 for line in output.splitlines() if line.strip().lower().startswith(prefix))
-
-
-def clear_grok_system_cookie_cache():
-    GROK_SYSTEM_COOKIE_CACHE.update({"cookies": [], "source": "", "error": "", "expires_at": 0.0})
+    return sum(1 for line in output.splitlines() if line.strip().lower().startswith('"chrome.exe"'))
 
 
 def stop_chrome_processes():
@@ -2637,40 +2627,6 @@ def stop_chrome_processes():
         "stopped": before,
         "remaining": after,
         "message": f"Chrome 프로세스 {before}개를 종료했습니다.",
-    }
-
-
-def stop_default_browser_processes():
-    if os.name != "nt":
-        raise RuntimeError("브라우저 자동 종료는 Windows에서만 지원합니다.")
-    names = ["chrome.exe", "msedge.exe", "brave.exe", "opera.exe", "opera_gx.exe"]
-    stopped = {}
-    remaining = {}
-    errors = []
-    for name in names:
-        before = process_count_for_image(name)
-        if not before:
-            continue
-        proc = subprocess.run(
-            ["taskkill", "/IM", name, "/T", "/F"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        time.sleep(0.4)
-        after = process_count_for_image(name)
-        stopped[name] = before
-        remaining[name] = after
-        if proc.returncode != 0 and after:
-            detail = (proc.stderr or proc.stdout or "").strip()
-            errors.append(f"{name}: {detail[:300]}")
-    if errors:
-        raise RuntimeError("; ".join(errors))
-    total = sum(stopped.values())
-    return {
-        "stopped": stopped,
-        "remaining": remaining,
-        "message": f"브라우저 프로세스 {total}개를 종료했습니다." if total else "실행 중인 Chromium 브라우저가 없습니다.",
     }
 
 
@@ -2724,21 +2680,6 @@ def reset_grok_official_progress(**fields):
 def grok_official_progress_payload():
     with GROK_OFFICIAL_PROGRESS_LOCK:
         return dict(GROK_OFFICIAL_PROGRESS)
-
-
-def open_grok_official_default_browser():
-    url = "https://grok.com/"
-    if os.name == "nt" and hasattr(os, "startfile"):
-        os.startfile(url)  # pylint: disable=no-member
-    else:
-        opened = webbrowser.open(url, new=2)
-        if not opened:
-            raise RuntimeError("기본 브라우저를 열지 못했습니다.")
-    return {
-        "url": url,
-        "message": "Windows 기본 브라우저로 Grok 공식홈을 열었습니다. 로그인 후 브라우저를 완전히 종료하고 새로고침하면 쿠키를 확인합니다.",
-        "browser_mode": "system_default",
-    }
 
 
 def ensure_grok_chrome(use_default_profile=False):
@@ -3010,318 +2951,16 @@ def grok_official_browser_fetch(url, body=None, method="POST", timeout=360, targ
     return value
 
 
-def windows_dpapi_unprotect(data):
-    if os.name != "nt" or not data:
-        return b""
-    try:
-        import ctypes
-        from ctypes import wintypes
-    except Exception:
-        return b""
-
-    class DataBlob(ctypes.Structure):
-        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
-
-    in_buffer = ctypes.create_string_buffer(data)
-    in_blob = DataBlob(len(data), ctypes.cast(in_buffer, ctypes.POINTER(ctypes.c_char)))
-    out_blob = DataBlob()
-    crypt32 = ctypes.windll.crypt32
-    kernel32 = ctypes.windll.kernel32
-    if not crypt32.CryptUnprotectData(ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)):
-        return b""
-    try:
-        return ctypes.string_at(out_blob.pbData, out_blob.cbData)
-    finally:
-        kernel32.LocalFree(out_blob.pbData)
-
-
-def chromium_user_data_roots():
-    roots = []
-    local_app_data = os.getenv("LOCALAPPDATA")
-    app_data = os.getenv("APPDATA")
-    if local_app_data:
-        base = Path(local_app_data)
-        roots.extend([
-            ("Chrome", base / "Google" / "Chrome" / "User Data"),
-            ("Edge", base / "Microsoft" / "Edge" / "User Data"),
-            ("Brave", base / "BraveSoftware" / "Brave-Browser" / "User Data"),
-            ("Chrome Beta", base / "Google" / "Chrome Beta" / "User Data"),
-            ("Chrome Dev", base / "Google" / "Chrome Dev" / "User Data"),
-        ])
-    if app_data:
-        roots.append(("Opera", Path(app_data) / "Opera Software" / "Opera Stable"))
-    return [(name, root) for name, root in roots if root.exists()]
-
-
-def chromium_profile_dirs(user_data_dir):
-    profiles = []
-    local_state = user_data_dir / "Local State"
-    try:
-        state = json.loads(local_state.read_text(encoding="utf-8"))
-        info_cache = ((state.get("profile") or {}).get("info_cache") or {})
-        for profile_name in info_cache.keys():
-            profile_dir = user_data_dir / profile_name
-            if profile_dir.exists():
-                profiles.append(profile_dir)
-    except Exception:
-        pass
-    for child in user_data_dir.iterdir() if user_data_dir.exists() else []:
-        if not child.is_dir():
-            continue
-        if child.name == "Default" or child.name.startswith("Profile ") or child.name in {"Guest Profile", "System Profile"}:
-            profiles.append(child)
-    seen = set()
-    unique = []
-    for profile in profiles:
-        resolved = str(profile.resolve())
-        if resolved not in seen:
-            seen.add(resolved)
-            unique.append(profile)
-    return unique
-
-
-def chromium_cookie_db_paths(profile_dir):
-    candidates = [profile_dir / "Network" / "Cookies", profile_dir / "Cookies"]
-    return [path for path in candidates if path.exists()]
-
-
-def chromium_master_key(user_data_dir):
-    local_state = user_data_dir / "Local State"
-    if not local_state.exists():
-        return b""
-    try:
-        state = json.loads(local_state.read_text(encoding="utf-8"))
-        encrypted_key = ((state.get("os_crypt") or {}).get("encrypted_key") or "").strip()
-        if not encrypted_key:
-            return b""
-        key = base64.b64decode(encrypted_key)
-        if key.startswith(b"DPAPI"):
-            key = key[5:]
-        return windows_dpapi_unprotect(key)
-    except Exception:
-        return b""
-
-
-def chromium_decrypt_cookie_value(encrypted_value, master_key):
-    if not encrypted_value:
-        return ""
-    encrypted = bytes(encrypted_value)
-    if encrypted.startswith((b"v10", b"v11", b"v20")):
-        if not master_key:
-            return ""
-        try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        except Exception:
-            GROK_SYSTEM_COOKIE_CACHE["error"] = "cryptography 패키지가 없어 Chromium AES-GCM 쿠키를 복호화하지 못했습니다."
-            return ""
-        try:
-            nonce = encrypted[3:15]
-            ciphertext_and_tag = encrypted[15:]
-            plain = AESGCM(master_key).decrypt(nonce, ciphertext_and_tag, None)
-            if len(plain) > 32 and any(byte < 32 or byte > 126 for byte in plain[:32]):
-                plain = plain[32:]
-            return plain.decode("utf-8", errors="replace")
-        except Exception:
-            return ""
-    try:
-        return windows_dpapi_unprotect(encrypted).decode("utf-8", errors="replace")
-    except Exception:
-        return ""
-
-
-def read_shared_file_bytes(path):
-    if os.name != "nt":
-        return path.read_bytes()
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    create_file = kernel32.CreateFileW
-    create_file.argtypes = [
-        wintypes.LPCWSTR,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.HANDLE,
-    ]
-    create_file.restype = wintypes.HANDLE
-    read_file = kernel32.ReadFile
-    read_file.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
-    read_file.restype = wintypes.BOOL
-    close_handle = kernel32.CloseHandle
-
-    generic_read = 0x80000000
-    file_share_read = 0x00000001
-    file_share_write = 0x00000002
-    file_share_delete = 0x00000004
-    open_existing = 3
-    file_attribute_normal = 0x00000080
-    invalid_handle = ctypes.c_void_p(-1).value
-
-    handle = create_file(
-        str(path),
-        generic_read,
-        file_share_read | file_share_write | file_share_delete,
-        None,
-        open_existing,
-        file_attribute_normal,
-        None,
-    )
-    if handle == invalid_handle:
-        raise OSError(ctypes.get_last_error(), f"공유 읽기로 파일을 열지 못했습니다: {path}")
-    try:
-        chunks = []
-        chunk_size = 1024 * 1024
-        buffer = ctypes.create_string_buffer(chunk_size)
-        bytes_read = wintypes.DWORD()
-        while True:
-            ok = read_file(handle, buffer, chunk_size, ctypes.byref(bytes_read), None)
-            if not ok:
-                raise OSError(ctypes.get_last_error(), f"공유 읽기 중 오류가 발생했습니다: {path}")
-            if bytes_read.value == 0:
-                break
-            chunks.append(buffer.raw[:bytes_read.value])
-        return b"".join(chunks)
-    finally:
-        close_handle(handle)
-
-
-def copy_chromium_cookie_db_snapshot(db_path, temp_path):
-    temp = Path(temp_path)
-    temp.write_bytes(read_shared_file_bytes(db_path))
-    for suffix in ("-wal", "-shm"):
-        sidecar = Path(str(db_path) + suffix)
-        if sidecar.exists():
-            Path(str(temp) + suffix).write_bytes(read_shared_file_bytes(sidecar))
-
-
-def load_chromium_cookies_from_db(db_path, user_data_dir):
-    import sqlite3
-    import tempfile
-
-    master_key = chromium_master_key(user_data_dir)
-    temp_path = None
-    cookies = []
-    query = """
-        SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly
-        FROM cookies
-        WHERE host_key LIKE '%grok.com'
-           OR host_key LIKE '%.grok.com'
-    """
-    try:
-        db_uri = "file:" + quote(str(db_path.resolve()).replace("\\", "/"), safe="/:") + "?mode=ro&immutable=1"
-        try:
-            with sqlite3.connect(db_uri, uri=True) as conn:
-                conn.row_factory = sqlite3.Row
-                rows = conn.execute(query).fetchall()
-        except Exception:
-            fd, temp_path = tempfile.mkstemp(prefix="webgrok-cookies-", suffix=".sqlite")
-            os.close(fd)
-            copy_chromium_cookie_db_snapshot(db_path, temp_path)
-            with sqlite3.connect(temp_path) as conn:
-                conn.row_factory = sqlite3.Row
-                rows = conn.execute(query).fetchall()
-        for row in rows:
-            name = row["name"]
-            value = row["value"] or chromium_decrypt_cookie_value(row["encrypted_value"], master_key)
-            if not name or value is None or value == "":
-                continue
-            cookies.append({
-                "name": name,
-                "value": value,
-                "domain": row["host_key"],
-                "path": row["path"] or "/",
-                "expires": row["expires_utc"],
-                "secure": bool(row["is_secure"]),
-                "httpOnly": bool(row["is_httponly"]),
-                "source": str(db_path),
-            })
-    finally:
-        if temp_path:
-            try:
-                Path(temp_path).unlink(missing_ok=True)
-                Path(str(temp_path) + "-wal").unlink(missing_ok=True)
-                Path(str(temp_path) + "-shm").unlink(missing_ok=True)
-            except Exception:
-                pass
-    return cookies
-
-
-def grok_system_browser_cookies():
-    now = time.time()
-    cached = GROK_SYSTEM_COOKIE_CACHE.get("cookies") or []
-    if cached and now < float(GROK_SYSTEM_COOKIE_CACHE.get("expires_at") or 0):
-        return [dict(cookie) for cookie in cached]
-    all_cookies = []
-    sources = []
-    errors = []
-    GROK_SYSTEM_COOKIE_CACHE.update({"cookies": [], "source": "", "error": "", "expires_at": 0.0})
-    for browser_name, user_data_dir in chromium_user_data_roots():
-        try:
-            profiles = chromium_profile_dirs(user_data_dir)
-        except Exception as exc:
-            errors.append(f"{browser_name}: profile scan failed: {exc}")
-            continue
-        for profile_dir in profiles:
-            for db_path in chromium_cookie_db_paths(profile_dir):
-                try:
-                    cookies = load_chromium_cookies_from_db(db_path, user_data_dir)
-                except Exception as exc:
-                    errors.append(f"{browser_name}/{profile_dir.name}: {exc}")
-                    continue
-                if cookies:
-                    all_cookies.extend(cookies)
-                    sources.append(f"{browser_name}/{profile_dir.name}")
-    deduped = {}
-    for cookie in all_cookies:
-        key = (cookie.get("domain"), cookie.get("path"), cookie.get("name"))
-        deduped[key] = cookie
-    cookies = list(deduped.values())
-    error_text = "; ".join(errors[-3:])
-    lower_error = error_text.lower()
-    if (
-        "errno 32" in lower_error
-        or "winerror 32" in lower_error
-        or "permission denied" in lower_error
-        or "다른 프로세스가 파일을 사용 중" in error_text
-    ):
-        error_text = "기본 브라우저가 쿠키 DB를 잠그고 있습니다. grok.com 로그인 후 기본 브라우저를 완전히 종료하고 새로고침하거나, '내 Chrome'으로 디버그 Chrome을 열어 주세요."
-    GROK_SYSTEM_COOKIE_CACHE.update({
-        "cookies": [dict(cookie) for cookie in cookies],
-        "source": ", ".join(sorted(set(sources))),
-        "error": error_text,
-        "expires_at": now + 15,
-    })
-    return cookies
-
-
 def grok_chrome_cookies(start_chrome=False):
     if start_chrome:
         ensure_grok_chrome()
-    if port_open("127.0.0.1", grok_official_port()):
-        try:
-            tab = grok_imagine_tab()
-            with CdpWebSocket(tab["webSocketDebuggerUrl"]) as cdp:
-                result = cdp.call("Network.getAllCookies")
-            cookies = [cookie for cookie in (result.get("cookies") or []) if "grok.com" in (cookie.get("domain") or "")]
-            if cookies:
-                GROK_SYSTEM_COOKIE_CACHE.update({
-                    "source": f"cdp:{grok_official_port()}",
-                    "error": "",
-                    "expires_at": time.time() + 15,
-                })
-                return cookies
-        except Exception as exc:
-            GROK_SYSTEM_COOKIE_CACHE["error"] = f"CDP 쿠키 읽기 실패: {exc}"
-            if start_chrome:
-                raise
-    if not start_chrome:
-        cookies = grok_system_browser_cookies()
-        if cookies:
-            return cookies
-    raise RuntimeError("Grok 공식홈 쿠키를 읽지 못했습니다. 기본 브라우저에서 grok.com 로그인 후 새로고침하거나, '내 Chrome'으로 디버그 Chrome을 열어 주세요.")
+    elif not port_open("127.0.0.1", grok_official_port()):
+        raise RuntimeError("Grok 공식홈 Chrome이 실행 중이 아닙니다.")
+    tab = grok_imagine_tab()
+    with CdpWebSocket(tab["webSocketDebuggerUrl"]) as cdp:
+        result = cdp.call("Network.getAllCookies")
+    cookies = result.get("cookies") or []
+    return [cookie for cookie in cookies if "grok.com" in (cookie.get("domain") or "")]
 
 
 def active_grok_account_id():
@@ -3349,13 +2988,9 @@ def grok_web_cookie_for(account_id=None, start_chrome=False):
     try:
         cookies = grok_chrome_cookies(start_chrome=start_chrome)
     except Exception as exc:
-        detail = GROK_SYSTEM_COOKIE_CACHE.get("error") or str(exc)
-        raise RuntimeError(
-            "Grok 공식홈 세션 쿠키를 읽지 못했습니다. 기본 브라우저에서 grok.com 로그인 후 브라우저를 완전히 종료하고 새로고침하거나, '내 Chrome'으로 디버그 Chrome을 열어 주세요."
-            + (f" / {detail}" if detail else "")
-        ) from exc
+        raise RuntimeError("Grok 공식홈 세션 쿠키를 읽지 못했습니다. 설정에서 Grok 공식홈 Chrome을 열고 로그인해 주세요.") from exc
     if not cookies:
-        raise RuntimeError("Grok 공식홈 세션 쿠키가 없습니다. 기본 브라우저에서 grok.com 로그인 후 브라우저를 완전히 종료하고 새로고침하거나, '내 Chrome'으로 디버그 Chrome을 열어 주세요.")
+        raise RuntimeError("Grok 공식홈 세션 쿠키가 없습니다. 설정에서 Grok 공식홈 Chrome을 열고 로그인해 주세요.")
     pairs = []
     for cookie in cookies:
         name = cookie.get("name")
@@ -3698,8 +3333,6 @@ def grok_official_status_payload(check_cookie=False):
         "default_profile_dir": str(grok_default_chrome_user_data_dir() or ""),
         "default_profile_name": grok_default_chrome_profile_name(),
         "session_cookie": False,
-        "cookie_source": "",
-        "cookie_error": "",
         "account_id": "",
         "message": "",
         "progress": grok_official_progress_payload(),
@@ -3708,16 +3341,12 @@ def grok_official_status_payload(check_cookie=False):
         try:
             cookie = grok_web_cookie_for()
             payload["session_cookie"] = bool(cookie)
-            payload["cookie_source"] = GROK_SYSTEM_COOKIE_CACHE.get("source") or ""
-            payload["cookie_error"] = GROK_SYSTEM_COOKIE_CACHE.get("error") or ""
             payload["account_id"] = active_grok_account_id()
-            source = payload["cookie_source"]
-            payload["message"] = f"Grok 공식홈 세션 쿠키를 확인했습니다.{f' ({source})' if source else ''}"
+            payload["message"] = "Grok 공식홈 세션 쿠키를 확인했습니다."
         except Exception as exc:
             payload["message"] = str(exc)
-            payload["cookie_error"] = GROK_SYSTEM_COOKIE_CACHE.get("error") or ""
-            if payload["cookie_error"] and payload["cookie_error"] not in payload["message"]:
-                payload["message"] = f"{payload['message']} / {payload['cookie_error']}"
+            if not running and payload["chrome_processes"]:
+                payload["message"] = "일반 Chrome은 실행 중이지만 9227 디버그 연결이 없습니다. 설정에서 'Chrome'을 열어 주세요."
     return payload
 
 
@@ -7997,35 +7626,6 @@ def grok_official_status():
 @app.get("/api/grok-official/progress")
 def grok_official_progress():
     return jsonify({"ok": True, "progress": grok_official_progress_payload()})
-
-
-@app.post("/api/grok-official/browser/open")
-def grok_official_browser_open():
-    try:
-        result = open_grok_official_default_browser()
-        return jsonify({"ok": True, **result, "status": grok_official_status_payload(check_cookie=False)})
-    except Exception as exc:
-        return safe_error("Grok 공식홈을 기본 브라우저로 열지 못했습니다.", exc, 502)
-
-
-@app.post("/api/grok-official/browser/close-and-check")
-def grok_official_browser_close_and_check():
-    try:
-        stopped = stop_default_browser_processes()
-        clear_grok_system_cookie_cache()
-        status = grok_official_status_payload(check_cookie=True)
-        if status.get("session_cookie"):
-            message = "기본 브라우저 쿠키에서 Grok 공식홈 세션을 확인했습니다."
-        else:
-            message = status.get("cookie_error") or "브라우저를 종료했지만 Grok 공식홈 세션 쿠키를 찾지 못했습니다. 기본 브라우저에서 grok.com 로그인 상태를 다시 확인해 주세요."
-        return jsonify({
-            "ok": True,
-            "message": message,
-            "stopped_browsers": stopped,
-            "status": status,
-        })
-    except Exception as exc:
-        return safe_error("기본 브라우저 종료 후 Grok 공식홈 쿠키 확인에 실패했습니다.", exc, 502)
 
 
 @app.post("/api/grok-official/chrome/start")

@@ -19,6 +19,7 @@ SOURCE_STATIC_VERSIONS = [
     "20260614-v3-73",
     "20260614-v3-74",
     "20260614-v3-75",
+    "20260614-v3-76",
 ]
 SOURCE_SHELL_CACHE_NAMES = [
     "webgui-shell-v3-68",
@@ -29,6 +30,7 @@ SOURCE_SHELL_CACHE_NAMES = [
     "webgui-shell-v3-73",
     "webgui-shell-v3-74",
     "webgui-shell-v3-75",
+    "webgui-shell-v3-76",
 ]
 
 

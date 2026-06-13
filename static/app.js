@@ -284,8 +284,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260614-v3-75";
-const appShellCacheName = "webgui-shell-v3-75";
+const appStaticVersion = "20260614-v3-76";
+const appShellCacheName = "webgui-shell-v3-76";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {
@@ -7430,7 +7430,7 @@ function renderStatus(data) {
     <dt>모드</dt><dd>${data.mode}</dd>
     <dt>Provider</dt><dd>${data.provider || "direct"}</dd>
     <dt>Hermes Proxy</dt><dd>${data.hermes_configured ? data.hermes_base_url : "없음"}</dd>
-    <dt>Grok Official</dt><dd>${data.grok_official?.session_cookie ? `Cookie ${data.grok_official.cookie_source || ""}` : "없음"}</dd>
+    <dt>Grok Official</dt><dd>${data.grok_official?.session_cookie ? "CDP Cookie" : "없음"}</dd>
     <dt>Codex Proxy</dt><dd>${codexReady ? `연결됨 · ${data.codex_proxy_base_url || ""}` : (data.codex_proxy_running ? `OAuth 확인 중 · ${data.codex_proxy_oauth_status || "unknown"}` : (data.codex_proxy_configured ? `대기 · ${data.codex_proxy_base_url || ""}` : "없음"))}</dd>
     <dt>OAuth</dt><dd>${data.oauth_configured ? "연결됨" : "없음"}</dd>
     <dt>만료 시각</dt><dd>${data.oauth_expires_at ? new Date(data.oauth_expires_at * 1000).toLocaleString() : "없음"}</dd>
@@ -8278,7 +8278,7 @@ async function refreshGrokOfficialPanel() {
     const response = await fetch("/api/grok-official/status");
     const data = await readJsonResponse(response, "Grok 공식홈 상태 확인 실패");
     if (!data.ok) throw new Error(data.error || "Grok 공식홈 상태 확인 실패");
-    const ready = Boolean(data.session_cookie);
+    const ready = Boolean(data.chrome_running && data.session_cookie);
     const progress = data.progress || {};
     const hasProgress = progress.status && progress.status !== "idle";
     const progressDetail = hasProgress
@@ -8286,7 +8286,7 @@ async function refreshGrokOfficialPanel() {
       : "";
     const label = ready
       ? "연결됨"
-      : (data.chrome_running ? "로그인 필요" : (data.chrome_processes ? "쿠키 확인 필요" : "쿠키 없음"));
+      : (data.chrome_running ? "로그인 필요" : (data.chrome_processes ? "재시작 필요" : "Chrome 꺼짐"));
     setConnectionBadge("grokOfficial", ready, label);
     setGrokOfficialStatus(
       progressDetail || data.message || (ready ? "Grok 공식홈 세션 준비됨" : "Grok 공식홈 Chrome에서 로그인해 주세요."),
@@ -8329,33 +8329,11 @@ function bindGrokOfficialPanel() {
     button.disabled = true;
     button.textContent = "시작 중";
     try {
-      const response = await fetch("/api/grok-official/browser/open", { method: "POST" });
-      const data = await readJsonResponse(response, "Grok 공식홈 기본 브라우저 열기 실패");
-      if (!data.ok) throw new Error(data.error || data.detail || "Grok 공식홈 기본 브라우저 열기 실패");
-      showToast(data.message || "Grok 공식홈을 기본 브라우저로 열었습니다. 로그인 후 브라우저를 완전히 종료하고 새로고침을 눌러 주세요.");
-      setGrokOfficialStatus(data.message || "기본 브라우저에서 Grok 로그인 후 브라우저를 완전히 종료하고 새로고침을 눌러 주세요.");
-      await refreshGrokOfficialPanel();
-      await loadHealth();
-    } catch (error) {
-      showToast(error.message, true);
-      setGrokOfficialStatus(error.message, true);
-    } finally {
-      button.disabled = false;
-      button.textContent = original;
-    }
-  });
-  document.querySelector("#grokOfficialCloseAndCheck")?.addEventListener("click", async () => {
-    if (!confirm("기본 브라우저 쿠키를 읽기 위해 Chrome/Edge/Brave/Opera를 종료하고 Grok 세션을 다시 확인합니다. 계속할까요?")) return;
-    const button = document.querySelector("#grokOfficialCloseAndCheck");
-    const original = button.textContent;
-    button.disabled = true;
-    button.textContent = "확인 중";
-    try {
-      const response = await fetch("/api/grok-official/browser/close-and-check", { method: "POST" });
-      const data = await readJsonResponse(response, "기본 브라우저 쿠키 확인 실패");
-      if (!data.ok) throw new Error(data.error || data.detail || "기본 브라우저 쿠키 확인 실패");
-      showToast(data.message || "Grok 공식홈 쿠키를 다시 확인했습니다.");
-      setGrokOfficialStatus(data.message || "Grok 공식홈 쿠키를 다시 확인했습니다.", !data.status?.session_cookie);
+      const response = await fetch("/api/grok-official/chrome/start", { method: "POST" });
+      const data = await readJsonResponse(response, "Grok 공식홈 Chrome 시작 실패");
+      if (!data.ok) throw new Error(data.error || data.detail || "Grok 공식홈 Chrome 시작 실패");
+      showToast(data.message || "Grok 공식홈 Chrome을 열었습니다. 열린 창에서 로그인해 주세요.");
+      setGrokOfficialStatus(data.message || "Grok 공식홈 Chrome에서 로그인한 뒤 새로고침을 눌러 주세요.");
       await refreshGrokOfficialPanel();
       await loadHealth();
     } catch (error) {
@@ -8741,8 +8719,7 @@ function installConnectionStatusPanel() {
         </div>
         <span class="connection-state" data-connection-label>연결안됨</span>
         <div class="connection-actions">
-          <button type="button" id="grokOfficialStart" class="secondary">기본 브라우저</button>
-          <button type="button" id="grokOfficialCloseAndCheck" class="secondary danger-btn">종료+쿠키 확인</button>
+          <button type="button" id="grokOfficialStart" class="secondary">Chrome</button>
           <button type="button" id="grokOfficialStartDefault" class="secondary">내 Chrome</button>
           <button type="button" id="grokOfficialRestartDefault" class="secondary danger-btn">종료+내 Chrome</button>
           <button type="button" id="grokOfficialUse" class="secondary">Provider</button>

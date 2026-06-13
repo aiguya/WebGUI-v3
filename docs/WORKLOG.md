@@ -1925,3 +1925,27 @@
   - 테스트 클라이언트에서 `/sw.js?v=20260614-v3-75`가 `webgui-shell-v3-75`를 포함하고 `v3-70`을 포함하지 않음을 확인했다.
   - 실제 7863 서버 재시작 후 `/startup`, `/`, `/sw.js` 응답이 모두 `20260614-v3-75`로 맞춰졌음을 확인했다.
   - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
+
+### 2026-06-14 05:30 KST - Grok 공식홈 쿠키 확인을 CDP Chrome 방식으로 복원
+- 요청:
+  - 기본 브라우저 쿠키 DB를 읽는 방식 대신, 이전처럼 앱이 직접 띄운 Grok 공식홈 Chrome에서 쿠키를 가져오도록 되돌린다.
+- 변경:
+  - Windows/Chromium 쿠키 DB 직접 스캔, DPAPI/AES-GCM 복호화, SQLite 쿠키 snapshot 관련 코드를 제거했다.
+  - `/api/grok-official/browser/open`과 `/api/grok-official/browser/close-and-check` 엔드포인트를 제거했다.
+  - `grok_chrome_cookies()`를 9227 CDP `Network.getAllCookies` 기반으로만 동작하도록 복원했다.
+  - Grok 공식홈 연결 상태의 첫 버튼을 `기본 브라우저`에서 `Chrome`으로 되돌리고 `/api/grok-official/chrome/start`를 호출하도록 했다.
+  - 설정 연결 상태 패널에서 `종료+쿠키 확인` 버튼을 제거했다.
+  - 상태 표시는 `chrome_running && session_cookie`일 때만 연결됨으로 판단하게 되돌렸다.
+  - 더 이상 필요 없는 `cryptography` 의존성을 `requirements.txt`에서 제거했다.
+  - 정적 캐시 버전을 `20260614-v3-76`으로 올리고 원본 `WebGUI.v3.exe`를 다시 빌드했다.
+  - 릴리즈 생성 스크립트의 원본 정적 버전 치환 목록에 `v3-76`을 추가했다.
+  - 현재 떠 있던 구버전 7863 서버(PID 70312)를 종료하고 새 서버를 시작했다.
+- 검증:
+  - `python -m py_compile app.py tools/build_release_no_official.py` 통과.
+  - `node --check static/app.js` 통과.
+  - 테스트 클라이언트에서 `/startup`이 `static_version=20260614-v3-76`을 반환함을 확인했다.
+  - 테스트 클라이언트에서 `/`가 `20260614-v3-76`을 포함하고 `기본 브라우저` 문구를 포함하지 않음을 확인했다.
+  - 테스트 클라이언트에서 `/api/grok-official/status`가 CDP Chrome 미실행 시 "설정에서 Grok 공식홈 Chrome을 열고 로그인" 안내를 반환함을 확인했다.
+  - 테스트 클라이언트에서 `/api/grok-official/chrome/start`가 `200 True`와 port `9227`을 반환함을 확인했다.
+  - 실제 7863 서버 재시작 후 `/startup`과 `/` 응답이 모두 `20260614-v3-76`으로 맞춰졌음을 확인했다.
+  - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
