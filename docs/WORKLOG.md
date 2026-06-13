@@ -1673,3 +1673,29 @@
   - `POST /api/system/open-url`이 허용되지 않은 `file://` URL을 차단함을 확인했다.
   - 릴리즈 zip 안에 `WEBGROK_CHROME_APP.exe`, `README_RELEASE.md`, `USER_MANUAL.md`, `work/run_server.py`, `static/app.js`, `templates/index.html` 포함 확인.
   - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap 로그/마커, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-13 11:24 KST - 릴리즈 Provider 패널 제거 및 상단 상태등 기준 보정
+- 목표: Hermes-only 릴리즈 설정 화면에서 실제로 사용하지 않는 `Provider` 설정 패널을 제거하고, 상단 연결 상태 표시가 단순 프로세스 실행 여부가 아니라 실제 연결 준비 상태를 따르도록 수정한다.
+- 확인:
+  - 릴리즈 화면에는 `Provider` 카드가 남아 있었지만, Hermes-only 릴리즈에서는 연결 상태 패널에서 인증/Proxy를 처리하므로 해당 카드가 사용자에게 혼동을 줬다.
+  - 상단 상태등은 `codex_proxy_running=true`만 보고 Codex를 연결로 표시했다. Codex는 `/api/codex-proxy/status`의 `oauth_status=ready`까지 확인해야 실제 사용 가능 상태다.
+  - 앱 전체 연결 상태는 현재 provider 기준 `/health.authenticated`가 맞다. 예를 들어 provider가 Hermes인데 Hermes proxy가 꺼져 있으면 Codex가 ready여도 앱 전체 pill은 연결로 표시되면 안 된다.
+- 변경:
+  - `tools/build_release_no_official.py`: `remove_settings_card_containing()`을 추가해 릴리즈 HTML 생성 단계에서 `id="providerForm"`을 포함한 `settings-card`만 제거했다.
+  - `tools/build_release_no_official.py`: 릴리즈 스탬프를 `20260613-release-hermes-18`로 올렸다.
+  - `app.py`: `codex_proxy_status_payload(include_log=True, timeout=5)`로 상세 조회 옵션을 분리하고, `/health`에서는 로그 tail 없이 짧게 Codex 상태를 확인하도록 했다.
+  - `app.py`: `/health`에 `codex_proxy_ready`, `codex_proxy_oauth_status`, `codex_proxy_provider`를 추가했다.
+  - `static/app.js`: `codexProxyReadyFromHealth()`를 추가해 Codex 상단/연결 패널 상태를 `running && oauth_status === "ready"` 기준으로 표시하게 했다.
+  - `static/app.js`: 상단 pill 전체 연결 상태는 `/health.authenticated`를 따르고, H/C 개별 아이콘은 각 서비스의 실제 ready 상태를 따르도록 분리했다.
+  - `tools/build_release_no_official.py`: 릴리즈에서 공홈 G 아이콘 블록이 남지 않도록 `data-top-service="grok"` 블록 제거 패턴을 보강했다.
+  - `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `node --check static/app.js` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `python -m py_compile app.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py` 통과.
+  - 릴리즈 HTML에서 `providerForm` 제거, `connectionStatusPanel`, `quotaPill`, `20260613-release-hermes-18` 포함 확인.
+  - 릴리즈 JS에서 `grokReady`, `data-top-service="grok"` 미포함 확인.
+  - 릴리즈 JS/App에서 `codex_proxy_ready`, `codex_proxy_oauth_status`, `codexProxyReadyFromHealth` 포함 확인.
+  - 실행 중인 앱 `/health`에서 `build_stamp=20260613-release-hermes-18`, `authenticated=false`, `hermes_proxy_running=false`, `codex_proxy_ready=true`, `codex_proxy_oauth_status=ready` 확인. 이 상태에서 전체 pill은 꺼지고 C 개별 아이콘만 ready로 표시되는 기준이다.
+  - 릴리즈 zip 안에 `WEBGROK_CHROME_APP.exe`, `README_RELEASE.md`, `USER_MANUAL.md`, `work/run_server.py`, `static/app.js`, `templates/index.html` 포함 확인.
+  - 릴리즈 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap 로그/마커, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.

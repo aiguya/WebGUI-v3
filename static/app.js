@@ -7388,22 +7388,32 @@ function applyHermesModelCandidates(models = {}) {
   applyOfficialModelCandidates(models);
 }
 
+function codexProxyReadyFromHealth(data = {}) {
+  if ("codex_proxy_ready" in data) return Boolean(data.codex_proxy_ready);
+  if ("codex_proxy_oauth_status" in data) {
+    return Boolean(data.codex_proxy_running && data.codex_proxy_oauth_status === "ready");
+  }
+  return Boolean(data.codex_proxy_running);
+}
+
 function renderStatus(data) {
   const hermesReady = Boolean(data.hermes_logged_in && data.hermes_proxy_running);
-  const codexReady = Boolean(data.codex_proxy_running);
+  const codexReady = codexProxyReadyFromHealth(data);
   const grokReady = Boolean(data.grok_official?.chrome_running);
+  const appReady = "authenticated" in data ? Boolean(data.authenticated) : Boolean(hermesReady || codexReady || grokReady);
   const statusPill = document.querySelector("#statusPill");
   if (!statusPill) return;
-  statusPill.classList.toggle("is-live", hermesReady || codexReady || grokReady);
-  statusPill.classList.toggle("is-mock", !(hermesReady || codexReady || grokReady));
+  statusPill.dataset.appReady = appReady ? "true" : "false";
+  statusPill.classList.toggle("is-live", appReady);
+  statusPill.classList.toggle("is-mock", !appReady);
   statusPill.innerHTML = `
-    <span class="mini-service ${grokReady ? "is-live" : "is-off"}" title="Grok Official ${grokReady ? "Chrome ready" : "not ready"}">
+    <span data-top-service="grok" class="mini-service ${grokReady ? "is-live" : "is-off"}" title="Grok Official ${grokReady ? "Chrome ready" : "not ready"}">
       <span class="status-dot"></span><span>G</span>
     </span>
-    <span class="mini-service ${hermesReady ? "is-live" : "is-off"}" title="Hermes ${hermesReady ? "연결됨" : "연결안됨"}">
+    <span data-top-service="hermes" class="mini-service ${hermesReady ? "is-live" : "is-off"}" title="Hermes ${hermesReady ? "연결됨" : "연결안됨"}">
       <span class="status-dot"></span><span>H</span>
     </span>
-    <span class="mini-service ${codexReady ? "is-live" : "is-off"}" title="Codex ${codexReady ? "연결됨" : "연결안됨"}">
+    <span data-top-service="codex" class="mini-service ${codexReady ? "is-live" : "is-off"}" title="Codex ${codexReady ? "연결됨" : (data.codex_proxy_running ? "OAuth 확인 중" : "연결안됨")}">
       <span class="status-dot"></span><span>C</span>
     </span>`;
   const list = document.querySelector("#settingsList");
@@ -7421,7 +7431,7 @@ function renderStatus(data) {
     <dt>Provider</dt><dd>${data.provider || "direct"}</dd>
     <dt>Hermes Proxy</dt><dd>${data.hermes_configured ? data.hermes_base_url : "없음"}</dd>
     <dt>Grok Official</dt><dd>${data.grok_official?.chrome_running ? `Chrome ${data.grok_official.chrome_port}` : "없음"}</dd>
-    <dt>Codex Proxy</dt><dd>${data.codex_proxy_running ? `실행 중 · ${data.codex_proxy_base_url || ""}` : (data.codex_proxy_configured ? `대기 · ${data.codex_proxy_base_url || ""}` : "없음")}</dd>
+    <dt>Codex Proxy</dt><dd>${codexReady ? `연결됨 · ${data.codex_proxy_base_url || ""}` : (data.codex_proxy_running ? `OAuth 확인 중 · ${data.codex_proxy_oauth_status || "unknown"}` : (data.codex_proxy_configured ? `대기 · ${data.codex_proxy_base_url || ""}` : "없음"))}</dd>
     <dt>OAuth</dt><dd>${data.oauth_configured ? "연결됨" : "없음"}</dd>
     <dt>만료 시각</dt><dd>${data.oauth_expires_at ? new Date(data.oauth_expires_at * 1000).toLocaleString() : "없음"}</dd>
     <dt>API 키</dt><dd>${data.api_key_configured ? (data.session_login ? "세션 로그인" : "환경변수") : "없음"}</dd>
@@ -7483,16 +7493,19 @@ function syncConnectionPanelFromHealth(data = {}) {
   }
 
   const codexRunning = Boolean(data.codex_proxy_running);
+  const codexReady = codexProxyReadyFromHealth(data);
   if (typeof setTopServiceBadge === "function") {
-    setTopServiceBadge("codex", codexRunning, codexRunning ? "Codex connected" : "Codex disconnected");
+    setTopServiceBadge("codex", codexReady, codexReady ? "Codex connected" : (codexRunning ? "Codex OAuth checking" : "Codex disconnected"));
   }
   if (document.querySelector('[data-connection-service="codex"]')) {
-    setConnectionBadge("codex", codexRunning, codexRunning ? "연결됨" : "연결안됨");
+    setConnectionBadge("codex", codexReady, codexReady ? "연결됨" : "연결안됨");
   }
   const codexStatus = document.querySelector("#codexProxyStatusText");
   if (codexStatus) {
-    codexStatus.textContent = codexRunning
-      ? `Codex OAuth Proxy 실행 중${data.codex_proxy_base_url ? ` · ${data.codex_proxy_base_url}` : ""}`
+    codexStatus.textContent = codexReady
+      ? `Codex OAuth Proxy 연결됨${data.codex_proxy_base_url ? ` · ${data.codex_proxy_base_url}` : ""}`
+      : codexRunning
+        ? `Codex Proxy 실행 중 · OAuth ${data.codex_proxy_oauth_status || "확인 중"}`
       : (data.codex_proxy_configured ? "Codex Proxy가 꺼져 있습니다." : "Codex Proxy URL이 설정되지 않았습니다.");
     codexStatus.classList.remove("error-text");
   }

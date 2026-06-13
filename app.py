@@ -5427,7 +5427,7 @@ def codex_proxy_running(cfg=None, timeout=3):
         return False
 
 
-def codex_proxy_status_payload():
+def codex_proxy_status_payload(include_log=True, timeout=5):
     cfg = config()
     base = (cfg.get("codex_proxy_base_url") or "").rstrip("/")
     payload = {
@@ -5442,15 +5442,16 @@ def codex_proxy_status_payload():
         "log_path": str(codex_proxy_log_path()),
         "log_tail": "",
     }
-    try:
-        log_text = codex_proxy_log_path().read_text(encoding="utf-8", errors="replace")
-        payload["log_tail"] = log_text[-2000:]
-    except OSError:
-        pass
+    if include_log:
+        try:
+            log_text = codex_proxy_log_path().read_text(encoding="utf-8", errors="replace")
+            payload["log_tail"] = log_text[-2000:]
+        except OSError:
+            pass
     if not base:
         return payload
     try:
-        response = requests.get(base + "/api/health", timeout=5)
+        response = requests.get(base + "/api/health", timeout=timeout)
         payload["running"] = response.status_code < 500
         payload["detail"] = response.text[:1000]
         if response.headers.get("content-type", "").startswith("application/json"):
@@ -7106,7 +7107,9 @@ def health():
     if cfg["provider"] == "hermes_proxy":
         hermes_logged_in, _ = hermes_auth_logged_in()
         hermes_proxy_running = port_open("127.0.0.1", 8645)
-    codex_running = codex_proxy_running(cfg)
+    codex_status = codex_proxy_status_payload(include_log=False, timeout=1.5)
+    codex_running = bool(codex_status.get("running"))
+    codex_ready = codex_running and codex_status.get("oauth_status") == "ready"
     grok_official = grok_official_status_payload(check_cookie=cfg["provider"] == "grok_official")
     return jsonify({
         "ok": True,
@@ -7119,6 +7122,9 @@ def health():
         "codex_proxy_configured": bool(cfg["codex_proxy_base_url"]),
         "codex_proxy_base_url": cfg["codex_proxy_base_url"],
         "codex_proxy_running": codex_running,
+        "codex_proxy_ready": codex_ready,
+        "codex_proxy_oauth_status": codex_status.get("oauth_status"),
+        "codex_proxy_provider": codex_status.get("provider"),
         "grok_official": grok_official,
         "hermes_logged_in": hermes_logged_in,
         "hermes_proxy_running": hermes_proxy_running,

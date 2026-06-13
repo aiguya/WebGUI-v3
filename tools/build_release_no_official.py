@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260613-release-hermes-17"
+STATIC_VERSION = "20260613-release-hermes-18"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -50,6 +50,33 @@ def write(path, text):
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
+def remove_settings_card_containing(html, marker):
+    marker_index = html.find(marker)
+    if marker_index < 0:
+        return html
+    start = html.rfind('<div class="settings-card"', 0, marker_index)
+    if start < 0:
+        return html
+    depth = 0
+    cursor = start
+    while cursor < len(html):
+        next_open = html.find("<div", cursor)
+        next_close = html.find("</div>", cursor)
+        if next_close < 0:
+            return html
+        if next_open >= 0 and next_open < next_close:
+            depth += 1
+            cursor = next_open + 4
+            continue
+        depth -= 1
+        cursor = next_close + len("</div>")
+        if depth <= 0:
+            line_start = html.rfind("\n", 0, start)
+            remove_start = line_start if line_start >= 0 else start
+            return html[:remove_start] + html[cursor:]
+    return html
+
+
 def strip_html_official_quota(html):
     html = re.sub(r'\n\s*<option value="grok_official">.*?</option>', "", html)
     html = re.sub(r'\n\s*<option value="direct">.*?</option>', "", html)
@@ -70,6 +97,7 @@ def strip_html_official_quota(html):
         "",
         html,
     )
+    html = remove_settings_card_containing(html, 'id="providerForm"')
     connection_card = '''
         <div class="settings-card connection-card" id="connectionStatusPanel">
           <h2>연결 상태</h2>
@@ -167,6 +195,12 @@ def strip_js_official_quota(js):
         "",
     )
     js = re.sub(
+        r'\n\s*<span[^>]*data-top-service="grok"[\s\S]*?\n\s*</span>\s*(?=\n\s*<span[^>]*data-top-service="hermes")',
+        "",
+        js,
+        count=1,
+    )
+    js = re.sub(
         r'    <span class="mini-service \$\{hermesReady \? "is-live" : "is-off"\}" title="Hermes \$\{hermesReady \? "[^"]*" : "[^"]*"\}">',
         '    <span data-top-service="hermes" class="mini-service ${hermesReady ? "is-live" : "is-off"}" title="Hermes ${hermesReady ? "connected" : "disconnected"}">',
         js,
@@ -188,7 +222,9 @@ function setTopServiceBadge(service, connected, title) {
   if (title) item.title = title;
   const statusPill = document.querySelector("#statusPill");
   if (!statusPill) return;
-  const live = Boolean(statusPill.querySelector(".mini-service.is-live"));
+  const live = statusPill.dataset.appReady
+    ? statusPill.dataset.appReady === "true"
+    : Boolean(statusPill.querySelector(".mini-service.is-live"));
   statusPill.classList.toggle("is-live", live);
   statusPill.classList.toggle("is-mock", !live);
 }
