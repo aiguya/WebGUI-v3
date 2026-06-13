@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260613-release-hermes-20"
+STATIC_VERSION = "20260614-release-hermes-21"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -472,8 +472,8 @@ if exist work\bootstrap-ok.txt (
   call :find_python
   call :find_hermes
   if defined PYTHON_CMD if defined HERMES_EXE (
-    echo %PYTHON_CMD%>work\python-cmd.txt
-    echo %HERMES_EXE%>work\hermes-exe.txt
+    call :write_env_utf8 "work\python-cmd.txt" "PYTHON_CMD"
+    call :write_env_utf8 "work\hermes-exe.txt" "HERMES_EXE"
     echo Dependencies already prepared.>>"%LOG%"
     exit /b 0
   )
@@ -496,7 +496,7 @@ if not defined PYTHON_CMD (
 )
 
 echo Using Python: %PYTHON_CMD%
-echo %PYTHON_CMD%>work\python-cmd.txt
+call :write_env_utf8 "work\python-cmd.txt" "PYTHON_CMD"
 call :run %PYTHON_CMD% -m pip --version
 if errorlevel 1 (
   call :run %PYTHON_CMD% -m ensurepip --upgrade
@@ -521,7 +521,7 @@ call :find_hermes
 if defined HERMES_EXE (
   echo Using existing Hermes Agent: %HERMES_EXE%
   echo Using existing Hermes Agent: %HERMES_EXE%>>"%LOG%"
-  echo %HERMES_EXE%>work\hermes-exe.txt
+  call :write_env_utf8 "work\hermes-exe.txt" "HERMES_EXE"
 ) else (
   echo Hermes Agent was not found.
   echo Hermes Agent was not found.>>"%LOG%"
@@ -551,7 +551,7 @@ if defined HERMES_EXE (
 
 call :find_hermes
 if defined HERMES_EXE (
-  echo %HERMES_EXE%>work\hermes-exe.txt
+  call :write_env_utf8 "work\hermes-exe.txt" "HERMES_EXE"
 ) else (
   echo Hermes Agent executable is still missing. See %LOG%
   call :show_log
@@ -573,6 +573,15 @@ if errorlevel 1 (
 
 echo ok>work\bootstrap-ok.txt
 echo [%date% %time%] WebGrok bootstrap finished>>"%LOG%"
+exit /b 0
+
+:write_env_utf8
+set "WRITE_FILE=%~1"
+set "WRITE_VAR=%~2"
+powershell -NoProfile -Command "$v=[Environment]::GetEnvironmentVariable('%WRITE_VAR%','Process'); [IO.File]::WriteAllText((Join-Path (Get-Location) '%WRITE_FILE%'), ($v + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))" 2>nul
+if errorlevel 1 (
+  call echo %%%WRITE_VAR%%%>"%WRITE_FILE%"
+)
 exit /b 0
 
 :find_python
@@ -856,6 +865,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -865,6 +875,7 @@ internal static class WebGrokChromeAppLauncher
     private const string BuildStamp = "{STATIC_VERSION}";
     private const string HealthUrl = "http://127.0.0.1:" + Port + "/health";
     private const string AppUrl = "http://127.0.0.1:" + Port + "/?v={STATIC_VERSION}";
+    private static string LastHealthError = "";
 
     [STAThread]
     private static int Main()
@@ -874,11 +885,15 @@ internal static class WebGrokChromeAppLauncher
         bool startedServer = false;
         try
         {{
+            Log(root, "launcher start build=" + BuildStamp + " root=" + root);
             bool serverResponding = HealthResponds();
+            Log(root, "initial health responds=" + serverResponding.ToString());
             if (!HealthMatchesBuild())
             {{
+                Log(root, "health does not match current build");
                 if (serverResponding)
                 {{
+                    Log(root, "stale or different server is occupying port " + Port);
                     MessageBox.Show(
                         "Another or older WebGrok server is already running on 127.0.0.1:" + Port + ".\\r\\n\\r\\nClose the existing WebGrok server, then run this launcher again.",
                         "WebGrok Chrome App",
@@ -889,9 +904,11 @@ internal static class WebGrokChromeAppLauncher
                 EnsureBootstrap(root);
                 serverProcess = StartServer(root);
                 startedServer = serverProcess != null;
+                Log(root, "server start requested pid=" + (serverProcess == null ? "none" : serverProcess.Id.ToString()));
             }}
-            if (!WaitForHealth())
+            if (!WaitForHealth(root))
             {{
+                Log(root, "health wait timed out");
                 MessageBox.Show(
                     "WebGrok server did not start.\\r\\n\\r\\n" + ReadFailureLogs(root),
                     "WebGrok Chrome App",
@@ -899,16 +916,21 @@ internal static class WebGrokChromeAppLauncher
                     MessageBoxIcon.Error);
                 return 1;
             }}
+            Log(root, "health ok");
             Process chromeProcess = OpenChromeApp(root);
+            Log(root, "chrome app opened pid=" + (chromeProcess == null ? "external-or-default-browser" : chromeProcess.Id.ToString()));
             if (startedServer)
             {{
                 WaitForChromeAppExit(chromeProcess);
+                Log(root, "chrome app exited; stopping started server");
                 StopStartedServer(serverProcess);
             }}
+            Log(root, "launcher finished");
             return 0;
         }}
         catch (Exception ex)
         {{
+            Log(root, "fatal exception: " + ex.ToString());
             MessageBox.Show(
                 ex.Message + "\\r\\n\\r\\n" + ReadFailureLogs(root),
                 "WebGrok Chrome App",
@@ -932,6 +954,7 @@ internal static class WebGrokChromeAppLauncher
         }}
         catch
         {{
+            LastHealthError = "health request failed";
             return false;
         }}
     }}
@@ -953,17 +976,22 @@ internal static class WebGrokChromeAppLauncher
                     && body.Contains("\\"build_stamp\\":\\"" + BuildStamp + "\\"");
             }}
         }}
-        catch
+        catch (Exception ex)
         {{
+            LastHealthError = ex.GetType().Name + ": " + ex.Message;
             return false;
         }}
     }}
 
-    private static bool WaitForHealth()
+    private static bool WaitForHealth(string root)
     {{
         for (int i = 0; i < 80; i++)
         {{
             if (HealthMatchesBuild()) return true;
+            if (i == 0 || i % 10 == 9)
+            {{
+                Log(root, "waiting for health attempt=" + (i + 1).ToString() + " last_error=" + LastHealthError);
+            }}
             Thread.Sleep(500);
         }}
         return false;
@@ -974,6 +1002,7 @@ internal static class WebGrokChromeAppLauncher
         string python = FindPython();
         if (String.IsNullOrEmpty(python))
         {{
+            Log(root, "python not found before server start");
             throw new InvalidOperationException("Python was not found after bootstrap. Check work\\\\bootstrap.log.");
         }}
 
@@ -994,6 +1023,7 @@ internal static class WebGrokChromeAppLauncher
             info.FileName = python;
             info.Arguments = "work\\\\run_server.py";
         }}
+        Log(root, "starting server with " + info.FileName + " " + info.Arguments);
         return Process.Start(info);
     }}
 
@@ -1068,10 +1098,16 @@ internal static class WebGrokChromeAppLauncher
 
     private static void EnsureBootstrap(string root)
     {{
-        if (!NeedsBootstrap(root)) return;
+        if (!NeedsBootstrap(root))
+        {{
+            Log(root, "bootstrap not needed");
+            return;
+        }}
+        Log(root, "bootstrap needed");
         string bootstrap = Path.Combine(root, "WEBGROK_BOOTSTRAP.bat");
         if (!File.Exists(bootstrap))
         {{
+            Log(root, "bootstrap file missing: " + bootstrap);
             throw new InvalidOperationException("WEBGROK_BOOTSTRAP.bat was not found.");
         }}
         MessageBox.Show(
@@ -1088,9 +1124,12 @@ internal static class WebGrokChromeAppLauncher
         Process process = Process.Start(info);
         if (process == null)
         {{
+            Log(root, "failed to start bootstrap process");
             throw new InvalidOperationException("Failed to start WebGrok bootstrap.");
         }}
+        Log(root, "bootstrap process started pid=" + process.Id.ToString());
         process.WaitForExit();
+        Log(root, "bootstrap process exited code=" + process.ExitCode.ToString());
         if (process.ExitCode != 0)
         {{
             throw new InvalidOperationException("WebGrok bootstrap failed.");
@@ -1099,9 +1138,14 @@ internal static class WebGrokChromeAppLauncher
 
     private static string ReadFailureLogs(string root)
     {{
+        string launcher = TailFile(Path.Combine(root, "work", "chrome-app-launcher.log"), 5000);
         string bootstrap = TailFile(Path.Combine(root, "work", "bootstrap.log"), 5000);
         string server = TailFile(Path.Combine(root, "work", "server-runner.log"), 5000);
         string message = "";
+        if (!String.IsNullOrEmpty(launcher))
+        {{
+            message += "Recent chrome-app-launcher.log:\\r\\n" + launcher + "\\r\\n\\r\\n";
+        }}
         if (!String.IsNullOrEmpty(bootstrap))
         {{
             message += "Recent bootstrap.log:\\r\\n" + bootstrap + "\\r\\n\\r\\n";
@@ -1122,7 +1166,7 @@ internal static class WebGrokChromeAppLauncher
         try
         {{
             if (!File.Exists(path)) return "";
-            string text = File.ReadAllText(path);
+            string text = Encoding.UTF8.GetString(ReadAllBytesShared(path));
             text = text.Replace("\\n", "\\r\\n").Replace("\\r\\r\\n", "\\r\\n");
             if (text.Length <= maxChars) return text;
             return text.Substring(text.Length - maxChars);
@@ -1131,6 +1175,65 @@ internal static class WebGrokChromeAppLauncher
         {{
             return "Could not read " + path + ": " + ex.Message;
         }}
+    }}
+
+    private static void Log(string root, string message)
+    {{
+        try
+        {{
+            string work = Path.Combine(root, "work");
+            Directory.CreateDirectory(work);
+            string path = Path.Combine(work, "chrome-app-launcher.log");
+            string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz") + " " + message + Environment.NewLine;
+            byte[] bytes = Encoding.UTF8.GetBytes(line);
+            using (FileStream stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            {{
+                stream.Write(bytes, 0, bytes.Length);
+            }}
+        }}
+        catch
+        {{
+        }}
+    }}
+
+    private static byte[] ReadAllBytesShared(string path)
+    {{
+        using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        using (MemoryStream memory = new MemoryStream())
+        {{
+            stream.CopyTo(memory);
+            return memory.ToArray();
+        }}
+    }}
+
+    private static string ReadHermesHint(string path)
+    {{
+        try
+        {{
+            if (!File.Exists(path)) return "";
+            byte[] bytes = ReadAllBytesShared(path);
+            Encoding[] encodings = new Encoding[]
+            {{
+                new UTF8Encoding(false, true),
+                Encoding.Default,
+                Encoding.Unicode
+            }};
+            foreach (Encoding encoding in encodings)
+            {{
+                try
+                {{
+                    string value = encoding.GetString(bytes).Trim().Trim('"');
+                    if (File.Exists(value)) return value;
+                }}
+                catch (DecoderFallbackException)
+                {{
+                }}
+            }}
+        }}
+        catch
+        {{
+        }}
+        return "";
     }}
 
     private static bool NeedsBootstrap(string root)
@@ -1148,15 +1251,8 @@ internal static class WebGrokChromeAppLauncher
         string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         string hint = Path.Combine(root, "work", "hermes-exe.txt");
-        if (File.Exists(hint))
-        {{
-            try
-            {{
-                string value = File.ReadAllText(hint).Trim().Trim('"');
-                if (File.Exists(value)) return value;
-            }}
-            catch {{ }}
-        }}
+        string hintValue = ReadHermesHint(hint);
+        if (!String.IsNullOrEmpty(hintValue)) return hintValue;
         string[] candidates = new string[]
         {{
             Path.Combine(root, ".hermes-venv", "Scripts", "hermes.exe"),

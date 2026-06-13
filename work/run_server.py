@@ -13,6 +13,25 @@ os.environ["WEBGORK_OPEN_BROWSER"] = "0"
 os.environ.setdefault("WEBGORK_PORT", "7863")
 
 
+class AppendLogWriter:
+    def __init__(self, path: Path):
+        self.path = path
+
+    def write(self, text: str) -> int:
+        if not text:
+            return 0
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8", errors="replace") as handle:
+                handle.write(text)
+        except OSError:
+            pass
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+
 def port_open(host: str, port: int) -> bool:
     try:
         with socket.create_connection((host, port), timeout=0.5):
@@ -21,9 +40,8 @@ def port_open(host: str, port: int) -> bool:
         return False
 
 
-log_file = LOG.open("a", encoding="utf-8", buffering=1)
-sys.stdout = log_file
-sys.stderr = log_file
+sys.stdout = AppendLogWriter(LOG)
+sys.stderr = AppendLogWriter(LOG)
 
 port = int(os.environ.get("WEBGORK_PORT", "7863"))
 if port_open("127.0.0.1", port):

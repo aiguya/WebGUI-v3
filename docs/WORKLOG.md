@@ -1738,3 +1738,28 @@
   - 최종 zip에서 `raise_if_removed_provider_unreachable_placeholder`, `effective_video_False`, `def cdp_json` 미포함 확인.
   - 최종 zip에서 `def compose_official_connected_result`와 `20260613-release-hermes-20` 포함 확인.
   - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap 로그/마커, 쿠키/공식홈 세션 파일, smoke 테스트 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-14 00:53 KST - 원클릭 exe 실행 실패 로그 및 Hermes hint 인코딩 보강
+- 증상:
+  - 다른 PC에서 `RUN_WEBGROK_HERMES_ONLY.bat` 또는 `WEBGROK_CHROME_APP.exe` 실행 시 서버 health가 500으로 떨어지고 실행 실패 팝업이 표시됐다.
+  - 로그에는 `work/hermes-exe.txt`를 UTF-8로 읽다가 `UnicodeDecodeError`가 발생한 것으로 나타났다.
+  - Chrome 앱 실패 팝업에서는 실행 중인 `server-runner.log`를 읽지 못하는 경우도 있었다.
+- 원인:
+  - bootstrap 배치가 `echo`로 `work/hermes-exe.txt`를 작성해 한글 경로가 있는 PC에서는 Windows 기본 코드페이지로 저장될 수 있었다.
+  - 앱은 해당 hint 파일을 UTF-8로만 읽어 `/health`에서 예외가 발생했다.
+  - 기존 `work/run_server.py`는 `server-runner.log` 파일 핸들을 계속 열어두는 구조라, 실패 팝업의 로그 읽기와 충돌할 수 있었다.
+- 변경:
+  - `app.py`: `read_path_hint()`를 추가해 `utf-8-sig`, OS 기본 인코딩, Windows `mbcs/cp949`, `utf-16` 순서로 hint 파일을 읽도록 했다.
+  - `tools/build_release_no_official.py`: bootstrap 배치가 `python-cmd.txt`, `hermes-exe.txt`를 UTF-8 without BOM으로 쓰도록 `:write_env_utf8`를 추가했다.
+  - `work/run_server.py`: 서버 로그를 장시간 독점하지 않도록 `AppendLogWriter`로 출력 시점마다 append-open/write/close 하게 변경했다.
+  - `tools/build_release_no_official.py`: 원클릭 `WEBGROK_CHROME_APP.exe`가 `work/chrome-app-launcher.log`를 남기도록 추가했다.
+  - `tools/build_release_no_official.py`: exe 실패 팝업에 `chrome-app-launcher.log`, `bootstrap.log`, `server-runner.log`를 함께 보여주도록 보강했다.
+  - `tools/build_release_no_official.py`: exe 로그 파일 읽기를 `FileShare.ReadWrite | FileShare.Delete`로 처리해 실행 중 로그도 읽을 수 있게 했다.
+  - 릴리즈 스탬프를 `20260614-release-hermes-21`로 올리고 릴리즈 폴더 및 zip을 다시 생성했다.
+- 검증:
+  - cp949로 작성한 한글 경로 hint 파일을 `read_path_hint()`가 정상 복원함을 확인했다.
+  - `python -m py_compile app.py work/run_server.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py release/WebGrok-v3-Hermes/work/run_server.py` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `WEBGROK_CHROME_APP.exe`가 새로 컴파일되어 갱신됨을 확인했다.
+  - 최종 zip에서 `20260614-release-hermes-21`, `read_path_hint`, `AppendLogWriter` 포함 확인.
+  - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap/server/launcher 로그, bootstrap marker, hint 파일, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.

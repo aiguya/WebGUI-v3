@@ -2,6 +2,7 @@ import base64
 import hashlib
 import html
 import json
+import locale
 import math
 import mimetypes
 import os
@@ -1358,6 +1359,23 @@ def clear_oauth_token():
         token_path.unlink()
 
 
+def read_path_hint(path):
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return ""
+    encodings = ["utf-8-sig", locale.getpreferredencoding(False)]
+    if os.name == "nt":
+        encodings.extend(["mbcs", "cp949"])
+    encodings.append("utf-16")
+    for encoding in dict.fromkeys(item for item in encodings if item):
+        try:
+            return raw.decode(encoding).strip().strip('"')
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return raw.decode("utf-8", errors="replace").strip().strip('"')
+
+
 def hermes_exe_candidates():
     exe_name = "hermes.exe" if os.name == "nt" else "hermes"
     candidates = []
@@ -1377,10 +1395,7 @@ def hermes_exe_candidates():
         if value:
             candidates.append(Path(value.strip().strip('"')).expanduser())
     bootstrap_hint = ROOT / "work" / "hermes-exe.txt"
-    try:
-        value = bootstrap_hint.read_text(encoding="utf-8").strip().strip('"')
-    except OSError:
-        value = ""
+    value = read_path_hint(bootstrap_hint)
     if value:
         candidates.append(Path(value).expanduser())
     add_hermes_roots(ROOT)
