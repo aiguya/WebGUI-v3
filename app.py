@@ -1472,6 +1472,10 @@ def hermes_proxy_exe_path():
     return None
 
 
+def hermes_auth_exe_path():
+    return hermes_proxy_exe_path() or hermes_exe_path()
+
+
 def hermes_auth_path():
     return Path.home() / ".hermes" / "auth.json"
 
@@ -1502,7 +1506,7 @@ def hidden_process_kwargs():
 
 
 def hermes_auth_logged_in():
-    exe = hermes_exe_path()
+    exe = hermes_auth_exe_path()
     if not exe.exists():
         return False, "Hermes 실행 파일을 찾을 수 없습니다."
     try:
@@ -1554,7 +1558,7 @@ def reset_hermes_login_state():
 
 
 def hermes_auth_logout_state():
-    exe = hermes_exe_path()
+    exe = hermes_auth_exe_path()
     if not exe.exists():
         raise RuntimeError("Hermes 실행 파일을 찾을 수 없습니다.")
     reset_hermes_login_state()
@@ -1583,7 +1587,7 @@ def hermes_auth_logout_state():
 
 
 def hermes_auth_reset_state():
-    exe = hermes_exe_path()
+    exe = hermes_auth_exe_path()
     if not exe.exists():
         raise RuntimeError("Hermes 실행 파일을 찾을 수 없습니다.")
     reset_hermes_login_state()
@@ -7277,7 +7281,7 @@ def auth_status():
 
 @app.post("/api/hermes/auth/start")
 def hermes_auth_start():
-    exe = hermes_exe_path()
+    exe = hermes_auth_exe_path()
     if not exe.exists():
         return safe_error("Hermes 실행 파일을 찾을 수 없습니다. V3 Hermes 설치를 먼저 확인해 주세요.", status=400)
     logged_in, detail = hermes_auth_logged_in()

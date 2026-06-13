@@ -8393,6 +8393,153 @@ function bindCodexProxyPanel() {
   }
 }
 
+let connectionActionFallbackBound = false;
+
+async function postPanelAction(button, url, pendingText, onSuccess) {
+  const original = button.textContent;
+  button.disabled = true;
+  if (pendingText) button.textContent = pendingText;
+  try {
+    const response = await fetch(url, { method: "POST" });
+    const data = await readJsonResponse(response, "요청 실패");
+    if (!data.ok) throw new Error(data.error || data.detail || data.message || "요청 실패");
+    await onSuccess(data);
+  } catch (error) {
+    showToast(error.message, true);
+    if (button.id.startsWith("codex")) {
+      setCodexProxyStatus(error.message, true);
+    } else {
+      setHermesAuthStatus(error.message, true);
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function installConnectionActionFallback() {
+  if (connectionActionFallbackBound) return;
+  connectionActionFallbackBound = true;
+  document.addEventListener("click", async event => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    const id = button.id;
+    if (![
+      "startHermesAuth",
+      "startHermesProxy",
+      "resetHermesAuth",
+      "logoutHermesAuth",
+      "submitHermesCode",
+      "codexProxyStartPanel",
+      "codexProxyRefresh",
+    ].includes(id)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    if (id === "startHermesAuth") {
+      pendingHermesAuthAutoOpen = true;
+      await postPanelAction(button, "/api/hermes/auth/start", "준비 중", async data => {
+        if (data.already_logged_in) {
+          pendingHermesAuthAutoOpen = false;
+          if (data.proxy_running || data.proxy_started) {
+            setHermesAuthStatus("Hermes OAuth 연결됨 · Proxy 실행 중");
+            showToast("Hermes OAuth와 Proxy가 연결되어 있습니다.");
+          } else {
+            const message = data.proxy_message || "Hermes OAuth는 연결되어 있지만 Proxy는 아직 실행되지 않았습니다.";
+            setHermesAuthStatus(message, true);
+            showToast(message, true);
+          }
+        } else if (data.auth_url) {
+          showHermesAuthUrl(data.auth_url, true);
+          setHermesAuthStatus("브라우저 인증 화면의 코드를 복사해 아래에 붙여넣으세요.");
+        } else {
+          setHermesAuthStatus("인증 URL을 준비 중입니다. 잠시 후 다시 확인합니다.");
+        }
+        await loadHealth();
+      });
+      return;
+    }
+
+    if (id === "submitHermesCode") {
+      const input = document.querySelector("#hermesAuthCode");
+      const code = input?.value.trim() || "";
+      if (!code) {
+        showToast("인증 코드를 붙여넣어 주세요.", true);
+        return;
+      }
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = "확인 중";
+      try {
+        const response = await fetch("/api/hermes/auth/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        const data = await readJsonResponse(response, "요청 실패");
+        if (!data.ok) throw new Error(data.error || data.detail || data.status || "Hermes 로그인 실패");
+        input.value = "";
+        setHermesAuthStatus(data.proxy_started ? "Hermes OAuth 연결됨 · Proxy 실행 중" : "Hermes OAuth 연결됨");
+        showToast("Hermes OAuth 로그인이 완료되었습니다.");
+        await loadHealth();
+      } catch (error) {
+        showToast(error.message, true);
+        setHermesAuthStatus(error.message, true);
+      } finally {
+        button.disabled = false;
+        button.textContent = original;
+      }
+      return;
+    }
+
+    if (id === "startHermesProxy") {
+      await postPanelAction(button, "/api/hermes/proxy/start", "시작 중", async data => {
+        setHermesAuthStatus("Hermes Proxy 실행 중");
+        showToast(data.message || "Hermes Proxy를 시작했습니다.");
+        await loadHealth();
+      });
+      return;
+    }
+
+    if (id === "logoutHermesAuth") {
+      await postPanelAction(button, "/api/hermes/auth/logout", "로그아웃 중", async data => {
+        const input = document.querySelector("#hermesAuthCode");
+        if (input) input.value = "";
+        const box = document.querySelector("#hermesAuthBox");
+        if (box) box.hidden = true;
+        setHermesAuthStatus(data.proxy_running ? "Hermes OAuth 로그아웃됨 · Proxy 재시작 필요" : "Hermes OAuth 로그아웃됨");
+        showToast("Hermes OAuth에서 로그아웃했습니다.");
+        await loadHealth();
+      });
+      return;
+    }
+
+    if (id === "resetHermesAuth") {
+      await postPanelAction(button, "/api/hermes/auth/reset", "리셋 중", async data => {
+        setHermesAuthStatus(data.logged_in ? "Hermes OAuth 상태 리셋됨" : "Hermes OAuth 상태 리셋됨 · 다시 인증이 필요합니다.");
+        showToast(data.logged_in ? "Hermes OAuth 상태를 리셋했습니다." : "상태를 리셋했습니다. 다시 인증해 주세요.", !data.logged_in);
+        await loadHealth();
+      });
+      return;
+    }
+
+    if (id === "codexProxyStartPanel") {
+      await postPanelAction(button, "/api/codex-proxy/start", "시작 중", async data => {
+        showToast(data.message || "Codex Proxy를 시작했습니다.");
+        await refreshCodexProxyPanel();
+        await loadHealth();
+      });
+      return;
+    }
+
+    if (id === "codexProxyRefresh") {
+      await refreshCodexProxyPanel();
+      await loadHealth();
+    }
+  }, true);
+}
+
 function removeCardContaining(selector) {
   const node = document.querySelector(selector);
   const card = node?.closest(".settings-card");
@@ -8508,6 +8655,7 @@ function installConnectionStatusPanel() {
 
 compactSettingsLayout();
 installConnectionStatusPanel();
+installConnectionActionFallback();
 installQuotaPanel();
 syncLibraryPreferenceControls();
 renderQueue();

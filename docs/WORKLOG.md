@@ -1477,6 +1477,27 @@
   - 릴리즈 zip 검사 결과 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap marker/log, cookie/official session 파일이 포함되지 않았다.
   - `git diff --check` 통과.
 
+### 2026-06-13 10:30 KST - 현재 앱 연결 버튼 무반응 원인 분리 및 보강
+- 목표: 현재 떠 있는 릴리즈 앱에서 Hermes 인증/Proxy/리셋/로그아웃 버튼이 모두 무반응처럼 보이는 상태를 실제 실행 상태 기준으로 파악하고 보강했다.
+- 확인:
+  - 현재 서버는 `127.0.0.1:7863`, PID 12108, `build_stamp=20260613-release-hermes-14`로 실행 중이었다.
+  - `/health`와 `/api/hermes/auth/status`는 응답했고, Hermes OAuth는 `logged_in=true`, Proxy는 `proxy_running=false`였다.
+  - 서버 로그에는 사용자가 버튼을 눌렀을 때 발생해야 할 `POST /api/hermes/auth/start`, `/api/hermes/proxy/start`, `/api/hermes/auth/logout` 요청이 찍히지 않았다. 즉 백엔드 이전의 프론트 클릭/이벤트 전달 문제가 있었다.
+  - 직접 API 호출 시 `/api/hermes/auth/logout`은 동작했다. 이 확인 과정에서 현재 Hermes OAuth 상태는 실제로 로그아웃으로 바뀌었다.
+  - 기존 코드는 인증 상태 확인/로그아웃은 전역 Hermes를, Proxy 시작은 proxy 가능한 다른 venv Hermes를 사용해 실행 파일 기준이 엇갈렸다.
+- 변경:
+  - `app.py`: Hermes 인증/로그아웃/리셋/상태 확인이 Proxy 시작에 사용할 실행 파일과 같은 `hermes_auth_exe_path()`를 쓰도록 통일했다.
+  - `app.py`: 릴리즈가 repo 내부 `release\WebGrok-v3-Hermes`에서 실행될 때 부모 repo와 형제 `Version-2` Hermes venv 후보까지 검색하도록 유지했다.
+  - `static/app.js`: 연결 카드 버튼에 캡처 단계 이벤트 위임 fallback을 추가해 현재 보이는 버튼이면 개별 리스너가 꼬여도 클릭이 서버로 전달되게 했다.
+  - `static/app.js`: fallback은 Hermes 인증/Proxy/리셋/로그아웃/코드 제출과 Codex 시작/새로고침을 처리한다.
+  - 릴리즈 캐시 스탬프를 `20260613-release-hermes-15`로 올리고, `release/WebGrok-v3-Hermes`, `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - 릴리즈 import 기준 `auth_exe`와 `proxy_exe`가 모두 `C:\Users\aiguy\Documents\Codex\2026-05-28\https-gall-dcinside-com-mgallery-board-Version-2\.hermes-venv\Scripts\hermes.exe`를 선택함을 확인했다.
+  - `node --check static/app.js`, `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `%LOCALAPPDATA%\Python\bin\python.exe -m py_compile app.py tools/build_release_no_official.py release\WebGrok-v3-Hermes\app.py` 통과.
+  - 릴리즈 zip 검사 결과 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap marker/log, cookie/official session 파일이 포함되지 않았다.
+  - `git diff --check` 통과.
+
 ### 2026-06-13 02:23 KST - Hermes 인증 버튼/릴리즈 실행 경로 수정
 - 목표: 릴리즈 앱에서 Hermes 인증 버튼이 동작하지 않는 것처럼 보이고, Proxy가 켜지지 않는 문제를 현재 실행 앱 기준으로 확인해 수정했다.
 - 확인:
