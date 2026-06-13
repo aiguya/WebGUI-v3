@@ -2017,3 +2017,17 @@
   - `python -m py_compile app.py` 통과.
   - 캡처된 `assets.grok.com/users/.../137ec400.../content?cache=1` URL에서 parent id와 query 제거가 정상 동작함을 확인했다.
   - 실제 생성 요청은 크레딧 소모 방지를 위해 자동 실행하지 않았다.
+
+### 2026-06-14 08:22 KST - Grok 공식홈 영상 연장 app-chat 루트 반영
+- 캡처:
+  - 공식홈 Imagine post 탭에서 영상 연장 요청을 추적한 결과, 연장도 `/rest/media/pipeline/run`이 아니라 `POST https://grok.com/rest/app-chat/conversations/new`를 사용함을 확인했다.
+  - 요청 body는 `modelName: "imagine-video-gen"`, `fileAttachments: [원본 이미지 post id]`, `videoGenModelConfig.isVideoExtension: true`, `extendPostId/parentPostId/originalPostId: 연장 대상 video post id`, `stitchWithExtendPostId: true` 구조였다.
+  - 응답 stream은 `streamingVideoGenerationResponse.videoUrl`, `videoPostId`, `moderated`, `rRated`, `resolutionName`을 반환했다.
+- 변경:
+  - `grok_official_video_reference_for_path()`가 공식홈 생성 비디오 URL에서 연장 대상 video post id와 원본 attachment id를 분리해 보관하도록 보강했다.
+  - `grok_official_app_chat_video_extend()`를 추가해 공식홈 연장 요청을 캡처한 app-chat 형식으로 전송하도록 했다.
+  - `/api/v2v-extend`의 `request_provider=grok_official` + 공식 연장 전략만 새 app-chat 연장 함수로 연결했다.
+  - Hermes Proxy 연장, 프레임 캡처 기반 연장, 기존 pipeline helper는 건드리지 않았다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - 로컬 monkeypatch 테스트로 생성 없이 request body 조립을 검증했다. `fileAttachments`는 원본 이미지 id, `extendPostId/parentPostId`는 video post id, `isVideoExtension=true`, `videoExtensionStartTime=6.041667` 형태로 생성됨을 확인했다.
