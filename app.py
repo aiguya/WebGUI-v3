@@ -4640,6 +4640,105 @@ def grok_official_pipeline_video(prompt, source_url="", source_path=None, durati
     }
 
 
+def grok_official_video_reference_for_path(path):
+    source = Path(path)
+    item = find_metadata_by_file_path(source)
+    extra = item.get("extra") if isinstance(item, dict) and isinstance(item.get("extra"), dict) else {}
+    remote_url = remote_url_for_media_path(source)
+    source_url = extra.get("official_media_url") or remote_url or ""
+    if not (source_url and "assets.grok.com" in source_url and "generated_video" in source_url):
+        return "", {}
+    generated_id = (
+        official_generated_id_from_url(source_url)
+        or extra.get("official_post_id")
+        or official_generated_id_from_url(extra.get("official_media_url") or "")
+    )
+    return source_url, {
+        "source_url": remote_url,
+        "official_source_url": source_url,
+        "official_source_type": "official_generated_video_url",
+        "official_source_mode": "official_generated_video_reference",
+        "official_parent_post_id": generated_id or extra.get("official_post_id"),
+        "official_root_post_id": generated_id or extra.get("official_post_id"),
+    }
+
+
+def grok_official_pipeline_video_extend(prompt, source_video, duration=10, resolution="720p", aspect_ratio="2:3", account_id=None):
+    aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
+    resolution = valid_video_resolution(resolution)
+    duration = max(2, min(15, int(duration or 6)))
+    source_url, source_extra = grok_official_video_reference_for_path(source_video)
+    if not source_url:
+        raise RuntimeError(
+            "Grok 공식홈 쿼타 연장은 공식홈에서 생성되어 official_media_url이 남아 있는 라이브러리 영상만 사용할 수 있습니다. "
+            "업로드/외부 영상은 Hermes Proxy 연장 또는 프레임 연장을 사용해 주세요."
+        )
+    inputs = {
+        "video_prompt": {
+            "type": "text",
+            "fixed": {"type": "text", "value": prompt},
+        },
+        "source_video": {
+            "type": "video",
+            "label": "Source video",
+            "fixed": {"type": "video_url", "url": source_url},
+        },
+    }
+    spec = {
+        "version": 1,
+        "inputs": inputs,
+        "nodes": {
+            "gen_video": {
+                "type": "video_gen",
+                "inputs": {
+                    "prompt": "$input.video_prompt",
+                    "video": "$input.source_video",
+                },
+                "params": {
+                    "duration": duration,
+                    "resolution_name": resolution,
+                    "aspect_ratio": aspect_ratio,
+                    "mode": "extend",
+                },
+            },
+        },
+        "outputs": {"video": "$gen_video.video"},
+    }
+    reset_grok_official_progress(
+        status="running",
+        stage="pipeline-video-extend-start",
+        message="Grok official video extend pipeline starting",
+        prompt_preview=prompt[:120],
+        duration=duration,
+        resolution=resolution,
+        aspect_ratio=aspect_ratio,
+        source_mode=source_extra.get("official_source_mode") or "",
+        source_type=source_extra.get("official_source_type") or "",
+        official_source_url=source_url,
+        account_id_present=bool(account_id or active_grok_account_id()),
+        event_count=0,
+        completed=False,
+    )
+    result = grok_official_pipeline_run(spec, kind="video", account_id=account_id)
+    path = grok_official_download(result["media_url"], media_path("video"), kind="video")
+    return path, {
+        "source": "grok_official_web",
+        "official_transport": "pipeline",
+        "official_pipeline": "video_extend",
+        "official_media_url": result["media_url"],
+        "official_post_id": result.get("post_id"),
+        "official_completed": result.get("completed"),
+        "official_events": result.get("events"),
+        "official_spec": spec,
+        "official_request_body": result.get("request_body"),
+        "duration": duration,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        "grok_account_id": account_id or active_grok_account_id(),
+        **source_extra,
+    }
+
+
 def grok_official_pipeline_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
     sources = [Path(path) for path in source_paths if path]
     if not sources:
@@ -9712,7 +9811,25 @@ def handle_v2v_extend(strategy):
         upscale_extra = None
         generated_segment_path = None
         concat_extra = None
-        if cfg["mode"] == "live" and strategy == "official":
+        if (cfg["mode"] == "live" or effective_video_provider == "grok_official") and strategy == "official" and effective_video_provider == "grok_official":
+            official_path, extra = grok_official_pipeline_video_extend(
+                extension_prompt,
+                source_video,
+                duration,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+            )
+            path = official_path
+            source_duration = video_duration_seconds(source_video)
+            official_output_duration = video_duration_seconds(official_path)
+            extra["original_source_duration"] = source_duration
+            extra["official_result_path"] = public_path(official_path)
+            extra["official_output_duration"] = official_output_duration
+            extra["combined"] = False
+            extra["combined_by"] = "grok_official_home_video_extend"
+            extra["source_duration"] = source_duration
+            extra["output_duration"] = official_output_duration
+        elif cfg["mode"] == "live" and strategy == "official":
             if source_video.suffix.lower() != ".mp4":
                 raise ValueError("공식 영상 연장 API는 mp4 원본 영상만 사용할 수 있습니다. 프레임 기반 연장을 사용해 주세요.")
             remote_url = source_video_remote_url(source_video)
@@ -9814,7 +9931,7 @@ def handle_v2v_extend(strategy):
         extra.update(prompt_planner_request_metadata(request.form, prompt))
         extra.update(template_request_metadata(request.form))
         extra.update(project_request_metadata(request.form))
-        item = add_metadata("video", prompt, video_model, path, source_path=prepared_frame, extra=extra)
+        item = add_metadata("video", prompt, video_model, path, source_path=prepared_frame or source_video, extra=extra)
         return jsonify({"ok": True, "item": item, "frame_path": public_path(prepared_frame) if prepared_frame else None, "upscaled": upscaled})
     except ValueError as exc:
         return safe_error(str(exc))

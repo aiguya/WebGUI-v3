@@ -1971,3 +1971,18 @@
   - 방금 생성된 이미지 `grok-official-20260613-205300-fcd04b643fdb492e985f6be3ff67fe19.jpg`에 대해 source 선택 테스트 결과 배치 4번째 URL(`...0a039358...jpg`), `official_public_image_reference`, `fixed.type=image_url`, `upload=False`를 확인했다.
   - 이전 성공 사례 이미지 `grok-official-20260606-180022-5a0ccb972bd147ef9c0a81a89938e1bc.jpg`도 `assets.grok.com/.../content`, `fixed.type=image_url`, `upload=False`로 확인했다.
   - `tools/build_webgui_launcher.ps1`는 현재 `WebGUI.v3.exe`가 실행 중이라 출력 파일 잠금으로 실패했다. 이번 변경은 런처가 아닌 `app.py` 변경이라 exe 재빌드는 보류했다.
+
+### 2026-06-14 06:25 KST - 영상 연장 Hermes/공식홈 쿼타 루트 분리
+- 증상:
+  - 영상 연장 탭에는 `Hermes Proxy`와 `Grok 공식홈 Quota` 선택지가 있지만, 백엔드의 `handle_v2v_extend("official")`는 provider 선택과 무관하게 먼저 `live_video_extension()` 경로를 탔다.
+  - 이 경로는 Hermes/xAI `/videos/extensions` 파일 업로드 루트이므로, 공홈 쿼타를 선택해도 공식홈 내부 영상 URL 기반 연장이 아니었다.
+- 변경:
+  - `grok_official_video_reference_for_path()`를 추가해 라이브러리 영상의 `official_media_url`에서 `assets.grok.com/.../generated_video.mp4` 공식 내부 영상 URL을 찾도록 했다.
+  - `grok_official_pipeline_video_extend()`를 추가해 공식홈 쿼타 선택 시 `/rest/media/pipeline/run`에 `source_video`를 `{"type":"video_url","url": ...}`로 넣는 영상 연장 pipeline spec을 구성하도록 했다.
+  - `/api/v2v-extend`에서 `request_provider=grok_official`이면 공홈 쿼타 영상 URL 루트를 타고, `request_provider=hermes_proxy`이면 기존 `/videos/extensions` 루트를 유지하도록 분리했다.
+  - 공식홈 URL이 없는 업로드/외부 영상은 공홈 내부 영상 연장 루트로 보낼 수 없으므로 Hermes Proxy 연장 또는 프레임 연장을 안내하는 오류를 반환하도록 했다.
+  - 연장 결과 메타데이터의 `source_path`는 추출 프레임이 없을 때 원본 영상으로 남도록 보정했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - 라이브러리 공식홈 영상 28개에서 `official_media_url` 메타데이터가 남아 있음을 확인했다.
+  - monkeypatch 테스트로 공홈 쿼타 연장 spec의 `gen_video.inputs.video == "$input.source_video"` 및 `source_video.fixed.type == "video_url"` 구성을 확인했다.
