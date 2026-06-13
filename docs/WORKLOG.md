@@ -1805,3 +1805,18 @@
   - 릴리즈 앱 테스트 클라이언트에서 `/startup`이 `200 {'build_stamp': '20260614-release-hermes-22', 'ok': True}`를 반환함을 확인했다.
   - 최종 zip 안에 `README_RELEASE.md`, `USER_MANUAL.md`, `WEBGROK_CHROME_APP.exe`, `WEBGROK_BOOTSTRAP.bat`, `RUN_WEBGROK_HERMES_ONLY.bat`, `static/app.js`, `templates/index.html`, `work/run_server.py` 포함을 확인했다.
   - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap/server/launcher 로그, bootstrap marker, hint 파일, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.
+
+### 2026-06-14 02:15 KST - 원본 Grok 공식홈 열기 기본 브라우저 사용
+- 목표:
+  - 원본 소스의 Grok 공식홈 쿠키 연결 패널에서 브라우저를 띄울 때 Chrome 전용 실행 대신 Windows에 설정된 기본 인터넷 브라우저를 사용하도록 변경한다.
+- 변경:
+  - `app.py`에 `open_grok_official_default_browser()`와 `/api/grok-official/browser/open` 엔드포인트를 추가했다.
+  - Windows에서는 `os.startfile("https://grok.com/")`로 시스템 기본 브라우저를 열고, 그 외 환경에서는 `webbrowser.open()`을 사용하도록 했다.
+  - 기존 CDP/Chrome 디버그 기반 `ensure_grok_chrome()` 경로는 공식홈 요청 루트와의 의존성을 건드리지 않기 위해 유지했다.
+  - 설정 연결 상태 패널의 Grok 공식홈 첫 버튼을 `기본 브라우저`로 변경하고, 해당 버튼이 새 엔드포인트를 호출하도록 수정했다.
+  - 정적 캐시 버전을 `20260614-v3-71`로 올리고 원본 `WebGUI.v3.exe`를 다시 빌드했다.
+- 검증:
+  - `python -m py_compile app.py` 통과.
+  - `node --check static/app.js` 통과.
+  - 테스트 클라이언트에서 `/api/grok-official/browser/open`을 stub 처리해 `200 True system_default https://grok.com/` 응답을 확인했다.
+  - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.

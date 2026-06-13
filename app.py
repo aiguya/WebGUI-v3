@@ -2681,6 +2681,21 @@ def grok_official_progress_payload():
         return dict(GROK_OFFICIAL_PROGRESS)
 
 
+def open_grok_official_default_browser():
+    url = "https://grok.com/"
+    if os.name == "nt" and hasattr(os, "startfile"):
+        os.startfile(url)  # pylint: disable=no-member
+    else:
+        opened = webbrowser.open(url, new=2)
+        if not opened:
+            raise RuntimeError("기본 브라우저를 열지 못했습니다.")
+    return {
+        "url": url,
+        "message": "Windows 기본 브라우저로 Grok 공식홈을 열었습니다.",
+        "browser_mode": "system_default",
+    }
+
+
 def ensure_grok_chrome(use_default_profile=False):
     port = grok_official_port()
     if port_open("127.0.0.1", port):
@@ -7511,6 +7526,15 @@ def grok_official_status():
 @app.get("/api/grok-official/progress")
 def grok_official_progress():
     return jsonify({"ok": True, "progress": grok_official_progress_payload()})
+
+
+@app.post("/api/grok-official/browser/open")
+def grok_official_browser_open():
+    try:
+        result = open_grok_official_default_browser()
+        return jsonify({"ok": True, **result, "status": grok_official_status_payload(check_cookie=False)})
+    except Exception as exc:
+        return safe_error("Grok 공식홈을 기본 브라우저로 열지 못했습니다.", exc, 502)
 
 
 @app.post("/api/grok-official/chrome/start")
