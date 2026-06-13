@@ -1820,3 +1820,23 @@
   - `node --check static/app.js` 통과.
   - 테스트 클라이언트에서 `/api/grok-official/browser/open`을 stub 처리해 `200 True system_default https://grok.com/` 응답을 확인했다.
   - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
+
+### 2026-06-14 02:53 KST - 릴리즈 런처 startup 타임아웃 보강
+- 증상:
+  - 다른 PC에서 새 릴리즈 `WEBGROK_CHROME_APP.exe` 실행 시 `chrome-app-launcher.log`에 `/startup` 대기 타임아웃이 80회 반복되고 `startup wait timed out`으로 종료되었다.
+  - bootstrap은 `code=0`으로 완료되었고 서버 시작 요청도 되었지만, 런처가 계속 `WebException timeout`을 받았다.
+- 원인 추정:
+  - 7863 포트에 이전 실행 또는 반쯤 죽은 서버 프로세스가 남아 요청을 붙잡고, 새 서버는 같은 포트에 정상 바인딩하지 못하는 상태로 판단했다.
+  - 기존 릴리즈 런처는 `/startup` 응답이 없을 때 포트 점유 프로세스를 정리하지 않고 곧바로 새 서버를 시작했다.
+- 변경:
+  - 원본 `tools/WebGuiLauncher.cs`에 `StopPortOwners()`를 추가해 시작 확인 실패 시 7863 포트 소유 프로세스를 정리한 뒤 서버를 띄우도록 했다.
+  - 서버 시작 후 `/startup` 준비 전에 서버 프로세스가 종료되면 exit code를 런처 로그에 남기도록 했다.
+  - 대기 실패 시 방금 시작한 서버 프로세스를 종료해 다음 실행에 포트가 남지 않도록 했다.
+  - `tools/build_release_no_official.py`에도 같은 릴리즈 exe 로직을 반영하고, 배치 실행 파일도 시작 전 7863 포트 점유 프로세스를 정리하도록 했다.
+  - 릴리즈 스탬프를 `20260614-release-hermes-23`으로 올리고 `release/WebGrok-v3-Hermes-20260611.zip`을 다시 생성했다.
+- 검증:
+  - `python -m py_compile app.py work/run_server.py tools/build_release_no_official.py release/WebGrok-v3-Hermes/app.py release/WebGrok-v3-Hermes/work/run_server.py` 통과.
+  - `node --check release/WebGrok-v3-Hermes/static/app.js` 통과.
+  - `tools/build_webgui_launcher.ps1`로 원본 `WebGUI.v3.exe` 재빌드 통과.
+  - 릴리즈 앱 테스트 클라이언트에서 `/startup`이 `200 {'build_stamp': '20260614-release-hermes-23', 'ok': True}`를 반환함을 확인했다.
+  - 최종 zip 안에 `__pycache__`, `.webgork-private`, `.hermes-venv`, bootstrap/server/launcher 로그, bootstrap marker, hint 파일, 쿠키/공식홈 세션 파일이 포함되지 않았음을 확인했다.

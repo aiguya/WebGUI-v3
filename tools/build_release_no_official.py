@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / "release" / "WebGrok-v3-Hermes"
 RELEASE_SEED_ROOT = ROOT / "release_seed" / "library"
-STATIC_VERSION = "20260614-release-hermes-22"
+STATIC_VERSION = "20260614-release-hermes-23"
 SOURCE_STATIC_VERSIONS = [
     "20260605-v3-68",
     "20260612-v3-69",
@@ -769,13 +769,10 @@ if not defined PYTHON_CMD (
 if not exist work mkdir work
 set "STARTUP_STATE=missing"
 for /f "delims=" %%S in ('powershell -NoProfile -Command "try {{ $json=(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/startup -TimeoutSec 3).Content ^| ConvertFrom-Json; if($json.build_stamp -eq '{STATIC_VERSION}') {{ 'current' }} else {{ 'stale' }} }} catch {{ 'missing' }}" 2^>nul') do set "STARTUP_STATE=%%S"
-if /I "%STARTUP_STATE%"=="stale" (
-  echo Another or older WebGrok server is already running on 127.0.0.1:7863.
-  echo Close the existing WebGrok server, then run this launcher again.
-  pause
-  exit /b 1
-)
 if /I not "%STARTUP_STATE%"=="current" (
+  echo Clearing stale WebGrok server on port 7863 if present...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -LocalPort 7863 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object {{ if($_){{ Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }} }}"
+  timeout /t 1 /nobreak >nul
   echo Starting WebGrok Hermes-only server...
   start "WebGrok Hermes Server" /min cmd /c "set WEBGORK_OPEN_BROWSER=0&& set WEBGORK_PORT=7863&& %PYTHON_CMD% work\\run_server.py"
   powershell -NoProfile -Command "$ok=$false; for($i=0; $i -lt 60; $i++){{ try {{ $json=(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:7863/startup -TimeoutSec 3).Content | ConvertFrom-Json; if($json.build_stamp -eq '{STATIC_VERSION}'){{ $ok=$true; break }} }} catch {{ }}; Start-Sleep -Milliseconds 500 }}; if($ok){{ exit 0 }} else {{ exit 1 }}"
@@ -893,22 +890,21 @@ internal static class WebGrokChromeAppLauncher
                 Log(root, "startup build stamp does not match current build");
                 if (serverResponding)
                 {{
-                    Log(root, "stale or different server is occupying port " + Port);
-                    MessageBox.Show(
-                        "Another or older WebGrok server is already running on 127.0.0.1:" + Port + ".\\r\\n\\r\\nClose the existing WebGrok server, then run this launcher again.",
-                        "WebGrok Chrome App",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                    return 1;
+                    Log(root, "stale or different server is occupying port " + Port + "; attempting cleanup");
                 }}
+                StopPortOwners(root, serverResponding ? "stale startup response" : "non-responsive startup check");
                 EnsureBootstrap(root);
                 serverProcess = StartServer(root);
                 startedServer = serverProcess != null;
                 Log(root, "server start requested pid=" + (serverProcess == null ? "none" : serverProcess.Id.ToString()));
             }}
-            if (!WaitForHealth(root))
+            if (!WaitForHealth(root, serverProcess))
             {{
                 Log(root, "startup wait timed out");
+                if (startedServer)
+                {{
+                    StopStartedServer(serverProcess);
+                }}
                 MessageBox.Show(
                     "WebGrok server did not start.\\r\\n\\r\\n" + ReadFailureLogs(root),
                     "WebGrok Chrome App",
@@ -983,11 +979,16 @@ internal static class WebGrokChromeAppLauncher
         }}
     }}
 
-    private static bool WaitForHealth(string root)
+    private static bool WaitForHealth(string root, Process serverProcess)
     {{
         for (int i = 0; i < 80; i++)
         {{
             if (HealthMatchesBuild()) return true;
+            if (serverProcess != null && serverProcess.HasExited)
+            {{
+                Log(root, "server process exited before startup became ready; code=" + serverProcess.ExitCode.ToString());
+                return false;
+            }}
             if (i == 0 || i % 10 == 9)
             {{
                 Log(root, "waiting for startup attempt=" + (i + 1).ToString() + " last_error=" + LastHealthError);
@@ -995,6 +996,41 @@ internal static class WebGrokChromeAppLauncher
             Thread.Sleep(500);
         }}
         return false;
+    }}
+
+    private static void StopPortOwners(string root, string reason)
+    {{
+        try
+        {{
+            Log(root, "checking port " + Port + " owners: " + reason);
+            ProcessStartInfo info = new ProcessStartInfo();
+            info.FileName = "powershell.exe";
+            info.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command \\"$owners=Get-NetTCPConnection -LocalPort " + Port + " -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; foreach($owner in $owners){{ if($owner -and $owner -ne 0){{ Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue; Write-Output $owner }} }}\\"";
+            info.UseShellExecute = false;
+            info.CreateNoWindow = true;
+            info.RedirectStandardOutput = true;
+            info.RedirectStandardError = true;
+            using (Process process = Process.Start(info))
+            {{
+                if (process == null) return;
+                if (!process.WaitForExit(6000))
+                {{
+                    try {{ process.Kill(); }} catch {{ }}
+                    Log(root, "port owner cleanup timed out");
+                    return;
+                }}
+                string output = process.StandardOutput.ReadToEnd().Trim();
+                string error = process.StandardError.ReadToEnd().Trim();
+                Log(root, "port owner cleanup exit=" + process.ExitCode.ToString()
+                    + " stopped=" + (String.IsNullOrEmpty(output) ? "none" : output.Replace("\\r", " ").Replace("\\n", ","))
+                    + (String.IsNullOrEmpty(error) ? "" : " error=" + error));
+            }}
+            Thread.Sleep(800);
+        }}
+        catch (Exception ex)
+        {{
+            Log(root, "port owner cleanup failed: " + ex.GetType().Name + ": " + ex.Message);
+        }}
     }}
 
     private static Process StartServer(string root)

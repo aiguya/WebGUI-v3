@@ -27,6 +27,7 @@ internal static class Program
             if (!HealthOk())
             {
                 Log(root, "initial startup check failed: " + LastHealthError);
+                StopPortOwners(root, "startup check failed before server start");
                 serverProcess = StartServer(root);
                 startedServer = serverProcess != null;
                 Log(root, "server start requested pid=" + (serverProcess == null ? "none" : serverProcess.Id.ToString()));
@@ -36,8 +37,12 @@ internal static class Program
                 Log(root, "initial startup check ok");
             }
 
-            if (!WaitForHealth(root))
+            if (!WaitForHealth(root, serverProcess))
             {
+                if (startedServer)
+                {
+                    StopStartedServer(serverProcess);
+                }
                 MessageBox.Show(
                     "WebGUI.v3 server did not start.\r\n\r\n" + ReadFailureLogs(root) + "\r\n\r\nIf this is the first run, run run_webgork_app.bat once to install dependencies.",
                     "WebGUI.v3",
@@ -89,11 +94,16 @@ internal static class Program
         }
     }
 
-    private static bool WaitForHealth(string root)
+    private static bool WaitForHealth(string root, Process serverProcess)
     {
         for (int i = 0; i < 80; i++)
         {
             if (HealthOk()) return true;
+            if (serverProcess != null && serverProcess.HasExited)
+            {
+                Log(root, "server process exited before startup became ready; code=" + serverProcess.ExitCode.ToString());
+                return false;
+            }
             if (i == 0 || i % 10 == 9)
             {
                 Log(root, "waiting for startup attempt=" + (i + 1).ToString() + " last_error=" + LastHealthError);
@@ -101,6 +111,41 @@ internal static class Program
             Thread.Sleep(500);
         }
         return false;
+    }
+
+    private static void StopPortOwners(string root, string reason)
+    {
+        try
+        {
+            Log(root, "checking port " + Port + " owners: " + reason);
+            ProcessStartInfo info = new ProcessStartInfo();
+            info.FileName = "powershell.exe";
+            info.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command \"$owners=Get-NetTCPConnection -LocalPort " + Port + " -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; foreach($owner in $owners){ if($owner -and $owner -ne 0){ Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue; Write-Output $owner } }\"";
+            info.UseShellExecute = false;
+            info.CreateNoWindow = true;
+            info.RedirectStandardOutput = true;
+            info.RedirectStandardError = true;
+            using (Process process = Process.Start(info))
+            {
+                if (process == null) return;
+                if (!process.WaitForExit(6000))
+                {
+                    try { process.Kill(); } catch { }
+                    Log(root, "port owner cleanup timed out");
+                    return;
+                }
+                string output = process.StandardOutput.ReadToEnd().Trim();
+                string error = process.StandardError.ReadToEnd().Trim();
+                Log(root, "port owner cleanup exit=" + process.ExitCode.ToString()
+                    + " stopped=" + (String.IsNullOrEmpty(output) ? "none" : output.Replace("\r", " ").Replace("\n", ","))
+                    + (String.IsNullOrEmpty(error) ? "" : " error=" + error));
+            }
+            Thread.Sleep(800);
+        }
+        catch (Exception ex)
+        {
+            Log(root, "port owner cleanup failed: " + ex.GetType().Name + ": " + ex.Message);
+        }
     }
 
     private static Process StartServer(string root)
