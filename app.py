@@ -2762,11 +2762,22 @@ def cdp_json(path, port=None, method="GET"):
     return response.json()
 
 
-def grok_imagine_tab(port=None, post_id=None):
+def grok_imagine_tab(port=None, post_id=None, fresh=False):
     port = port or grok_official_port()
     tabs = cdp_json("/json/list", port=port)
     if post_id:
         post_token = f"/imagine/post/{post_id}"
+        if fresh:
+            target_url = f"https://grok.com{post_token}"
+            encoded = quote(target_url, safe=":/?=&")
+            for method in ("PUT", "GET"):
+                try:
+                    created = cdp_json("/json/new?" + encoded, port=port, method=method)
+                    if created.get("webSocketDebuggerUrl"):
+                        time.sleep(2)
+                        return created
+                except Exception:
+                    pass
         for tab in tabs:
             if (
                 isinstance(tab, dict)
@@ -2825,6 +2836,8 @@ class CdpWebSocket:
     def __init__(self, ws_url, timeout=20):
         self.ws = MinimalWebSocket(ws_url, timeout=timeout)
         self.next_id = 1
+        self.events = []
+        self.responses = {}
 
     def __enter__(self):
         self.ws.connect()
@@ -2839,16 +2852,43 @@ class CdpWebSocket:
         self.ws.send_json({"id": msg_id, "method": method, "params": params or {}})
         deadline = time.time() + timeout
         while time.time() < deadline:
+            if msg_id in self.responses:
+                payload = self.responses.pop(msg_id)
+                if payload.get("error"):
+                    raise RuntimeError(json.dumps(payload["error"], ensure_ascii=False))
+                return payload.get("result") or {}
             kind, data = self.ws.recv()
             if kind != "text":
                 continue
             payload = json.loads(data)
             if payload.get("id") != msg_id:
+                if payload.get("method"):
+                    self.events.append(payload)
+                elif payload.get("id"):
+                    self.responses[payload["id"]] = payload
                 continue
             if payload.get("error"):
                 raise RuntimeError(json.dumps(payload["error"], ensure_ascii=False))
             return payload.get("result") or {}
         raise TimeoutError(f"CDP call timed out: {method}")
+
+    def event(self, method=None, timeout=20):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for index, payload in enumerate(self.events):
+                if method is None or payload.get("method") == method:
+                    return self.events.pop(index)
+            kind, data = self.ws.recv()
+            if kind != "text":
+                continue
+            payload = json.loads(data)
+            if payload.get("method"):
+                if method is None or payload.get("method") == method:
+                    return payload
+                self.events.append(payload)
+            elif payload.get("id"):
+                self.responses[payload["id"]] = payload
+        raise TimeoutError(f"CDP event timed out: {method or '*'}")
 
 
 def grok_official_is_cloudflare_challenge(text):
@@ -5484,6 +5524,263 @@ def grok_official_wait_linked_video(source_post_id, baseline_ids, duration=0, ti
     )
 
 
+def cdp_value(result):
+    return (result.get("result") or {}).get("value")
+
+
+def grok_imagine_eval(cdp, expression, timeout=20):
+    return cdp_value(cdp.call(
+        "Runtime.evaluate",
+        {"expression": expression, "awaitPromise": True, "returnByValue": True},
+        timeout=timeout,
+    ))
+
+
+def grok_imagine_wait_for(cdp, expression, timeout=30, interval=0.5):
+    deadline = time.time() + max(1, timeout)
+    last_value = None
+    while time.time() < deadline:
+        last_value = grok_imagine_eval(cdp, expression, timeout=10)
+        if last_value:
+            return last_value
+        time.sleep(interval)
+    raise TimeoutError(f"Grok Imagine UI condition timed out: {expression[:120]} last={last_value!r}")
+
+
+def grok_imagine_type_prompt(cdp, prompt):
+    focus_result = grok_imagine_eval(cdp, r"""(() => {
+      const visible = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 10 && r.height > 10 && r.bottom > 0 && r.right > 0;
+      };
+      const boxes = Array.from(document.querySelectorAll('[role="textbox"], textarea, input, [contenteditable="true"]'));
+      const box = boxes.find((el) => visible(el) && ((el.getAttribute('aria-label') || '').includes('Ask Grok') || el.getAttribute('role') === 'textbox'))
+        || boxes.find((el) => visible(el));
+      if (!box) return {ok: false, reason: 'textbox_not_found'};
+      box.scrollIntoView({block: 'center', inline: 'center'});
+      box.focus();
+      if (box.tagName === 'TEXTAREA' || box.tagName === 'INPUT') {
+        box.value = '';
+        box.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'deleteContentBackward'}));
+      } else {
+        box.textContent = '';
+        box.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'deleteContentBackward'}));
+      }
+      const r = box.getBoundingClientRect();
+      return {ok: true, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2)};
+    })()""")
+    if not isinstance(focus_result, dict) or not focus_result.get("ok"):
+        raise RuntimeError(f"Grok Imagine prompt textbox was not found: {focus_result}")
+    cdp.call("Input.insertText", {"text": str(prompt or "")}, timeout=10)
+    time.sleep(0.8)
+    return focus_result
+
+
+def grok_imagine_find_action(cdp, labels):
+    labels_json = json.dumps(labels, ensure_ascii=False)
+    return grok_imagine_eval(cdp, f"""(() => {{
+      const labels = {labels_json};
+      const normalize = (value) => String(value || '').normalize('NFC').replace(/\\s+/g, '');
+      const normalizedLabels = labels.map(normalize).filter(Boolean);
+      const visible = (el) => {{
+        const r = el.getBoundingClientRect();
+        return r.width > 10 && r.height > 10 && r.bottom > 0 && r.right > 0;
+      }};
+      const nameOf = (el) => [
+        el.getAttribute('aria-label') || '',
+        el.getAttribute('title') || '',
+        el.innerText || '',
+        el.textContent || ''
+      ].join(' ').trim();
+      const buttons = Array.from(document.querySelectorAll('button,[role="button"]'));
+      const matches = [];
+      for (const el of buttons) {{
+        if (!visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+        const name = nameOf(el);
+        if (normalizedLabels.some((label) => normalize(name).includes(label))) {{
+          const r = el.getBoundingClientRect();
+          matches.push({{ok: true, name, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2)}});
+        }}
+      }}
+      if (matches.length) {{
+        matches.sort((a, b) => (b.y - a.y) || (b.x - a.x));
+        return matches[0];
+      }}
+      return {{ok: false, buttons: buttons.filter(visible).slice(-20).map((el) => ({{
+        name: nameOf(el).slice(0, 80),
+        disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true'
+      }}))}};
+    }})()""")
+
+
+def grok_imagine_click_action(cdp, labels, timeout=20):
+    deadline = time.time() + max(1, timeout)
+    last = None
+    while time.time() < deadline:
+        last = grok_imagine_find_action(cdp, labels)
+        if isinstance(last, dict) and last.get("ok"):
+            x = int(last.get("x") or 0)
+            y = int(last.get("y") or 0)
+            cdp.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, timeout=10)
+            cdp.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1}, timeout=10)
+            cdp.call("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1}, timeout=10)
+            return last
+        time.sleep(0.5)
+    raise RuntimeError(f"Grok Imagine action button was not found/enabled for {labels}: {last}")
+
+
+def grok_imagine_submit_image_edit_via_ui(source_post_id, prompt, account_id=None, timeout=90):
+    ensure_grok_chrome()
+    tab = grok_imagine_tab(post_id=source_post_id, fresh=True)
+    request_payload = {}
+    request_url = ""
+    with CdpWebSocket(tab["webSocketDebuggerUrl"], timeout=timeout + 30) as cdp:
+        cdp.call("Page.enable", timeout=10)
+        cdp.call("Runtime.enable", timeout=10)
+        try:
+            cdp.call("Fetch.enable", {
+                "patterns": [{
+                    "urlPattern": "*://grok.com/rest/app-chat/conversations/new*",
+                    "requestStage": "Request",
+                }]
+            }, timeout=10)
+            cdp.call("Page.navigate", {"url": grok_official_post_url(source_post_id)}, timeout=20)
+            grok_imagine_wait_for(
+                cdp,
+                """(() => location.href.includes('/imagine/post/') && !!document.querySelector('[role="textbox"], textarea, input, [contenteditable="true"]'))()""",
+                timeout=45,
+            )
+            grok_imagine_type_prompt(cdp, prompt)
+            click_info = grok_imagine_click_action(cdp, ["편집"], timeout=20)
+            paused = cdp.event("Fetch.requestPaused", timeout=timeout)
+            params = paused.get("params") or {}
+            request = params.get("request") or {}
+            request_url = request.get("url") or ""
+            post_data = request.get("postData") or "{}"
+            try:
+                request_payload = json.loads(post_data)
+            except json.JSONDecodeError:
+                request_payload = {}
+            model_map = (
+                ((request_payload.get("responseMetadata") or {}).get("modelConfigOverride") or {}).get("modelMap")
+                or {}
+            )
+            edit_config = model_map.get("imageEditModelConfig") if isinstance(model_map, dict) else {}
+            ui_parent_id = str((edit_config or {}).get("parentPostId") or "")
+            if request_payload.get("modelName") != "imagine-image-edit" or ui_parent_id != str(source_post_id):
+                if params.get("requestId"):
+                    cdp.call("Fetch.failRequest", {"requestId": params.get("requestId"), "errorReason": "Aborted"}, timeout=10)
+                raise RuntimeError(
+                    "Grok Imagine UI created an unexpected image edit request. "
+                    + json.dumps(json_safe({
+                        "request_url": request_url,
+                        "modelName": request_payload.get("modelName"),
+                        "parentPostId": ui_parent_id,
+                        "expectedParentPostId": source_post_id,
+                        "click": click_info,
+                    }), ensure_ascii=False)
+                )
+            cdp.call("Fetch.continueRequest", {"requestId": params.get("requestId")}, timeout=10)
+        finally:
+            try:
+                cdp.call("Fetch.disable", timeout=5)
+            except Exception:
+                pass
+    return {
+        "request_url": request_url,
+        "request_body": request_payload,
+        "click": click_info,
+    }
+
+
+def grok_imagine_submit_image_to_video_via_ui(source_post_id, prompt, duration=10, resolution="720p", account_id=None, timeout=120):
+    ensure_grok_chrome()
+    duration = min(max(int(duration or 10), 6), 15)
+    resolution = valid_video_resolution(resolution)
+    tab = grok_imagine_tab(post_id=source_post_id, fresh=True)
+    request_payload = {}
+    request_url = ""
+    with CdpWebSocket(tab["webSocketDebuggerUrl"], timeout=timeout + 30) as cdp:
+        cdp.call("Page.enable", timeout=10)
+        cdp.call("Runtime.enable", timeout=10)
+        try:
+            cdp.call("Fetch.enable", {
+                "patterns": [{
+                    "urlPattern": "*://grok.com/rest/app-chat/conversations/new*",
+                    "requestStage": "Request",
+                }]
+            }, timeout=10)
+            cdp.call("Page.navigate", {"url": grok_official_post_url(source_post_id)}, timeout=20)
+            grok_imagine_wait_for(
+                cdp,
+                """(() => location.href.includes('/imagine/post/') && !!document.querySelector('[role="textbox"], textarea, input, [contenteditable="true"]'))()""",
+                timeout=45,
+            )
+            grok_imagine_click_action(cdp, ["비디오"], timeout=15)
+            if resolution == "720p":
+                grok_imagine_click_action(cdp, ["720p"], timeout=10)
+            elif resolution == "480p":
+                grok_imagine_click_action(cdp, ["480p"], timeout=10)
+            if duration <= 6:
+                grok_imagine_click_action(cdp, ["6s"], timeout=10)
+            else:
+                grok_imagine_click_action(cdp, ["10s"], timeout=10)
+            grok_imagine_type_prompt(cdp, prompt)
+            click_info = grok_imagine_click_action(cdp, ["동영상 만들기"], timeout=20)
+            paused = cdp.event("Fetch.requestPaused", timeout=timeout)
+            params = paused.get("params") or {}
+            request = params.get("request") or {}
+            request_url = request.get("url") or ""
+            post_data = request.get("postData") or "{}"
+            try:
+                request_payload = json.loads(post_data)
+            except json.JSONDecodeError:
+                request_payload = {}
+            model_map = (
+                ((request_payload.get("responseMetadata") or {}).get("modelConfigOverride") or {}).get("modelMap")
+                or {}
+            )
+            video_config = model_map.get("videoGenModelConfig") if isinstance(model_map, dict) else {}
+            ui_parent_id = str((video_config or {}).get("parentPostId") or "")
+            if request_payload.get("modelName") != "imagine-video-gen" or ui_parent_id != str(source_post_id):
+                if params.get("requestId"):
+                    cdp.call("Fetch.failRequest", {"requestId": params.get("requestId"), "errorReason": "Aborted"}, timeout=10)
+                raise RuntimeError(
+                    "Grok Imagine UI created an unexpected image-to-video request. "
+                    + json.dumps(json_safe({
+                        "request_url": request_url,
+                        "modelName": request_payload.get("modelName"),
+                        "parentPostId": ui_parent_id,
+                        "expectedParentPostId": source_post_id,
+                        "click": click_info,
+                    }), ensure_ascii=False)
+                )
+            if isinstance(video_config, dict):
+                video_config["videoLength"] = duration
+                video_config["resolutionName"] = resolution
+            patched_post_data = base64.b64encode(json.dumps(
+                request_payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")).decode("ascii")
+            cdp.call("Fetch.continueRequest", {
+                "requestId": params.get("requestId"),
+                "postData": patched_post_data,
+            }, timeout=10)
+        finally:
+            try:
+                cdp.call("Fetch.disable", timeout=5)
+            except Exception:
+                pass
+    return {
+        "request_url": request_url,
+        "request_body": request_payload,
+        "duration": duration,
+        "resolution": resolution,
+        "click": click_info,
+    }
+
+
 def grok_official_media_post_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
     sources = [Path(path) for path in source_paths if path]
     if not sources:
@@ -5532,20 +5829,36 @@ def grok_official_media_post_image_edit(prompt, source_paths, dest_dir, aspect_r
     reset_grok_official_progress(
         status="running",
         stage="media-post-edit",
-        message="Grok official media-post image edit request sent",
+        message="Grok official media-post image edit source prepared",
         prompt_preview=clean_prompt[:120],
         official_source_post_id=source_post_id,
         official_source_url=source_info.get("media_url"),
         baseline_count=len(baseline),
         account_id_present=bool(account_id),
     )
-    stream_text = grok_official_app_chat_request(
-        request_body,
-        timeout=360,
-        account_id=account_id,
-        target_post_id=source_post_id,
-    )
-    app_chat_events = grok_agent_parse_json_lines(stream_text)
+    ui_submission = None
+    app_chat_events = []
+    if checked(os.getenv("GROK_OFFICIAL_DIRECT_APP_CHAT_MEDIA_POST", "")):
+        stream_text = grok_official_app_chat_request(
+            request_body,
+            timeout=360,
+            account_id=account_id,
+            target_post_id=source_post_id,
+        )
+        app_chat_events = grok_agent_parse_json_lines(stream_text)
+    else:
+        update_grok_official_progress(
+            stage="ui-submit-edit",
+            message="Submitting Grok official image edit through the real Imagine UI",
+            official_source_post_id=source_post_id,
+        )
+        ui_submission = grok_imagine_submit_image_edit_via_ui(
+            source_post_id,
+            clean_prompt,
+            account_id=account_id,
+            timeout=120,
+        )
+        request_body = ui_submission.get("request_body") or request_body
     result_post_id, media_url, result_post = grok_official_wait_linked_image(
         source_post_id,
         baseline,
@@ -5588,6 +5901,7 @@ def grok_official_media_post_image_edit(prompt, source_paths, dest_dir, aspect_r
         "aspect_ratio": aspect_ratio,
         "official_events": app_chat_events[-20:],
         "official_request_body": request_body,
+        "official_ui_submission": ui_submission,
         "source_count": len(sources),
         "grok_account_id": account_id,
     }
@@ -5642,7 +5956,7 @@ def grok_official_media_post_image_to_video(prompt, source_path, duration=15, re
     reset_grok_official_progress(
         status="running",
         stage="media-post-i2v",
-        message="Grok official media-post image-to-video request sent",
+        message="Grok official media-post image-to-video source prepared",
         prompt_preview=clean_prompt[:120],
         duration=duration,
         resolution=resolution,
@@ -5652,13 +5966,33 @@ def grok_official_media_post_image_to_video(prompt, source_path, duration=15, re
         baseline_count=len(baseline),
         account_id_present=bool(account_id),
     )
-    stream_text = grok_official_app_chat_request(
-        request_body,
-        timeout=650,
-        account_id=account_id,
-        target_post_id=source_post_id,
-    )
-    app_chat_events = grok_agent_parse_json_lines(stream_text)
+    ui_submission = None
+    app_chat_events = []
+    if checked(os.getenv("GROK_OFFICIAL_DIRECT_APP_CHAT_MEDIA_POST", "")):
+        stream_text = grok_official_app_chat_request(
+            request_body,
+            timeout=650,
+            account_id=account_id,
+            target_post_id=source_post_id,
+        )
+        app_chat_events = grok_agent_parse_json_lines(stream_text)
+    else:
+        update_grok_official_progress(
+            stage="ui-submit-i2v",
+            message="Submitting Grok official image-to-video through the real Imagine UI",
+            official_source_post_id=source_post_id,
+            duration=duration,
+            resolution=resolution,
+        )
+        ui_submission = grok_imagine_submit_image_to_video_via_ui(
+            source_post_id,
+            clean_prompt,
+            duration=duration,
+            resolution=resolution,
+            account_id=account_id,
+            timeout=150,
+        )
+        request_body = ui_submission.get("request_body") or request_body
     result_post_id, media_url, actual_duration, result_post = grok_official_wait_linked_video(
         source_post_id,
         baseline,
@@ -5701,6 +6035,7 @@ def grok_official_media_post_image_to_video(prompt, source_path, duration=15, re
         "official_result_post": result_post,
         "official_events": app_chat_events[-20:],
         "official_request_body": request_body,
+        "official_ui_submission": ui_submission,
         "duration": duration,
         "resolution": resolution,
         "aspect_ratio": aspect_ratio,

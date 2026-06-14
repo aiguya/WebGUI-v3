@@ -2292,3 +2292,22 @@
 - Verification:
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` passed.
   - Monkeypatch tests confirmed fallback order: Playwright 403 -> CDP success, and Playwright 403 -> CDP 403 with both attempts reported.
+
+### 2026-06-14 17:57 KST - Grok official edit/i2v real UI submission route
+- Symptom:
+  - Official image edit still returned `Request rejected by anti-bot rules` even after direct HTTP, Playwright browser fetch, and CDP browser fetch all used the same app-chat payload.
+  - The source media post itself was valid: `MEDIA_POST_TYPE_IMAGE`, `likeStatus=true`, `isRootUserUploaded=false`, and `share-images/{post_id}.jpg`.
+- Cause:
+  - The app was still assembling and replaying `/rest/app-chat/conversations/new` directly.
+  - The 2026-06-14 implementation note says edit/video should use the real Imagine UI and only observe/validate the app-chat request made by that UI.
+- Change:
+  - Added CDP event queue support so `Fetch.requestPaused` events are not lost while other CDP calls are in flight.
+  - Added fresh post-tab creation for isolated official Imagine tasks.
+  - Added UI automation helpers for prompt entry, action button selection, and Fetch interception.
+  - Switched official image edit to: source post -> saved -> open `/imagine/post/{source}` -> type prompt -> click real UI `편집` -> validate UI-made app-chat payload -> wait for linked image.
+  - Switched official image-to-video to: source post -> saved -> open post -> choose real UI video mode/options -> type prompt -> click real UI `동영상 만들기` -> patch paused UI-made app-chat video length/resolution -> wait for linked video.
+  - Kept the direct app-chat replay available only behind `GROK_OFFICIAL_DIRECT_APP_CHAT_MEDIA_POST=1`.
+- Verification:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` passed.
+  - Non-generating CDP checks confirmed the real UI `편집` and bottom `동영상 만들기` action buttons are found after prompt/mode setup.
+  - Restarted the local server and confirmed `/health` returns 200.
