@@ -2281,3 +2281,14 @@
 - 검증:
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
   - monkeypatch로 이미지 편집/i2v 모두 source 등록 시 `force_create=True`를 넘기는지 확인.
+
+### 2026-06-14 17:37 KST - Grok official app-chat browser fallback chain
+- Symptom:
+  - Official image edit still failed at `/rest/app-chat/conversations/new` with direct HTTP 403 and Playwright browser HTTP 403.
+- Change:
+  - Kept the minimal-reference Playwright browser fetch as the first browser fallback.
+  - Added an automatic second fallback to the existing Grok Chrome CDP tab when Playwright returns 403 or raises.
+  - Added sanitized failure diagnostics showing fallback engine attempts and app-chat body summary (`modelName`, model map keys, parent post id, reference counts) without dumping cookies.
+- Verification:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` passed.
+  - Monkeypatch tests confirmed fallback order: Playwright 403 -> CDP success, and Playwright 403 -> CDP 403 with both attempts reported.

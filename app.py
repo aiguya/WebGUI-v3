@@ -2943,10 +2943,105 @@ def grok_official_playwright_browser_fetch(path, body=None, timeout=300, account
 
 
 def grok_official_media_browser_fetch(path, body=None, timeout=300, account_id=None, target_post_id=None):
-    engine = os.getenv("GROK_OFFICIAL_BROWSER_FETCH_ENGINE", "playwright").strip().lower()
-    if engine == "cdp":
-        return grok_official_browser_fetch(path, body=body or {}, timeout=timeout, target_post_id=target_post_id)
-    return grok_official_playwright_browser_fetch(path, body=body or {}, timeout=timeout, account_id=account_id)
+    engine = os.getenv("GROK_OFFICIAL_BROWSER_FETCH_ENGINE", "auto").strip().lower()
+    payload = body or {}
+    if engine in {"cdp", "chrome"}:
+        result = grok_official_browser_fetch(path, body=payload, timeout=timeout, target_post_id=target_post_id)
+        if isinstance(result, dict):
+            result["_engine"] = "cdp"
+            result["_fallback_attempts"] = [grok_official_browser_attempt_summary("cdp", result)]
+        return result
+    if engine in {"playwright", "pw"}:
+        result = grok_official_playwright_browser_fetch(path, body=payload, timeout=timeout, account_id=account_id)
+        if isinstance(result, dict):
+            result["_engine"] = "playwright"
+            result["_fallback_attempts"] = [grok_official_browser_attempt_summary("playwright", result)]
+        return result
+
+    attempts = []
+    last_result = None
+    try:
+        last_result = grok_official_playwright_browser_fetch(path, body=payload, timeout=timeout, account_id=account_id)
+        attempts.append(grok_official_browser_attempt_summary("playwright", last_result))
+        playwright_status = int((last_result or {}).get("status") or 0)
+        if 0 < playwright_status < 400:
+            last_result["_engine"] = "playwright"
+            last_result["_fallback_attempts"] = attempts
+            return last_result
+    except Exception as exc:
+        attempts.append(grok_official_browser_attempt_summary("playwright", error=exc))
+
+    try:
+        last_result = grok_official_browser_fetch(path, body=payload, timeout=timeout, target_post_id=target_post_id)
+        attempts.append(grok_official_browser_attempt_summary("cdp", last_result))
+        if isinstance(last_result, dict):
+            last_result["_engine"] = "cdp"
+            last_result["_fallback_attempts"] = attempts
+        return last_result
+    except Exception as exc:
+        attempts.append(grok_official_browser_attempt_summary("cdp", error=exc))
+        if isinstance(last_result, dict):
+            last_result["_fallback_attempts"] = attempts
+            return last_result
+        raise RuntimeError("Grok official browser fallback failed: " + grok_official_browser_attempts_text(attempts)) from exc
+
+
+def grok_official_browser_attempt_summary(engine, result=None, error=None):
+    summary = {"engine": engine}
+    if isinstance(result, dict):
+        summary["status"] = int(result.get("status") or 0)
+        text = " ".join(str(result.get("text") or "").split())
+        if text:
+            summary["text"] = text[:320]
+        href = str(result.get("href") or "")
+        if href:
+            summary["href"] = href[:240]
+    if error is not None:
+        summary["error"] = " ".join(str(error).split())[:320]
+    return summary
+
+
+def grok_official_browser_attempts_text(attempts, limit=1200):
+    parts = []
+    for attempt in attempts or []:
+        engine = attempt.get("engine") or "browser"
+        status = attempt.get("status")
+        label = f"{engine} HTTP {status}" if status else str(engine)
+        detail = attempt.get("text") or attempt.get("error") or ""
+        parts.append((label + (f": {detail}" if detail else "")).strip())
+    return "; ".join(parts)[:limit]
+
+
+def grok_official_app_chat_body_summary(body):
+    body = body if isinstance(body, dict) else {}
+    model_map = (
+        ((body.get("responseMetadata") or {}).get("modelConfigOverride") or {}).get("modelMap")
+        or {}
+    )
+    image_config = model_map.get("imageEditModelConfig") if isinstance(model_map, dict) else {}
+    video_config = model_map.get("videoGenModelConfig") if isinstance(model_map, dict) else {}
+    summary = {
+        "modelName": body.get("modelName"),
+        "message_len": len(str(body.get("message") or "")),
+        "modelMapKeys": sorted(model_map.keys()) if isinstance(model_map, dict) else [],
+    }
+    if isinstance(image_config, dict) and image_config:
+        refs = image_config.get("imageReferences") or []
+        summary["imageEdit"] = {
+            "parentPostId": image_config.get("parentPostId"),
+            "imageReferences": len(refs) if isinstance(refs, list) else 0,
+            "aspectRatio": image_config.get("aspectRatio"),
+        }
+    if isinstance(video_config, dict) and video_config:
+        summary["videoGen"] = {
+            "parentPostId": video_config.get("parentPostId"),
+            "videoLength": video_config.get("videoLength"),
+            "resolutionName": video_config.get("resolutionName"),
+            "aspectRatio": video_config.get("aspectRatio"),
+            "isVideoEdit": video_config.get("isVideoEdit"),
+            "isReferenceToVideo": video_config.get("isReferenceToVideo"),
+        }
+    return json.dumps(json_safe(summary), ensure_ascii=False)
 
 
 def grok_official_browser_fetch(url, body=None, method="POST", timeout=360, target_post_id=None):
@@ -5107,8 +5202,12 @@ def grok_official_rest_post_json(path, body, label="Grok official request", time
             browser_response = grok_official_media_browser_fetch(browser_fetch_url, body=body or {}, timeout=timeout, account_id=account_id)
             status = int(browser_response.get("status") or 0)
             text = browser_response.get("text") or ""
-            if status >= 400:
-                raise RuntimeError(f"{label}: Playwright browser fetch failed with HTTP {status}: {text[:1200]}")
+            if not status or status >= 400:
+                attempts_text = grok_official_browser_attempts_text(browser_response.get("_fallback_attempts") or [])
+                raise RuntimeError(
+                    f"{label}: browser fallback failed with HTTP {status}: "
+                    f"{(attempts_text or text)[:1200]}"
+                )
             try:
                 return json.loads(text or "{}") or {}
             except json.JSONDecodeError as exc:
@@ -5133,10 +5232,12 @@ def grok_official_app_chat_request(body, timeout=650, account_id=None, target_po
             browser_response = grok_official_media_browser_fetch(browser_fetch_url, body=body or {}, timeout=timeout, account_id=account_id)
             status = int(browser_response.get("status") or 0)
             text = browser_response.get("text") or ""
-            if status >= 400:
+            if not status or status >= 400:
+                attempts_text = grok_official_browser_attempts_text(browser_response.get("_fallback_attempts") or [])
                 raise RuntimeError(
-                    f"Grok official app-chat Playwright browser request failed after direct HTTP {response.status_code}: "
-                    f"browser HTTP {status}, fetch_url={browser_fetch_url}. {text[:1200]}"
+                    f"Grok official app-chat browser fallback failed after direct HTTP {response.status_code}: "
+                    f"fetch_url={browser_fetch_url}; attempts={attempts_text or text[:1200]}; "
+                    f"body={grok_official_app_chat_body_summary(body)}"
                 )
             return text
         raise RuntimeError(f"Grok official app-chat request failed: {response.status_code} {detail}")
