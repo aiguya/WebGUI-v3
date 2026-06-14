@@ -5123,7 +5123,7 @@ def grok_official_app_chat_video_reference_for_path(path, account_id=None):
         source_url = f"https://assets.grok.com/users/{account_id}/{parent_post_id}/content"
         extra["official_source_type"] = "official_asset_content_url"
         extra["official_source_mode"] = "official_constructed_asset_content_reference"
-    if parent_post_id and source_url and "imagine-public.x.ai" in source_url and account_id:
+    if parent_post_id and source_url and ("imagine-public.x.ai" in source_url or "/generated/" in source_url) and account_id:
         source_url = f"https://assets.grok.com/users/{account_id}/{parent_post_id}/content"
         extra["official_source_type"] = "official_asset_content_url"
         extra["official_source_mode"] = "official_constructed_asset_content_reference"
@@ -5377,6 +5377,25 @@ def grok_official_app_chat_video(prompt, source_path, duration=10, resolution="7
     r_rated = []
     progress = 0
     conversation_id = ""
+    unlinked_streams = []
+
+    def stream_matches_source(stream):
+        if not parent_post_id:
+            return True
+        direct_keys = (
+            "parentPostId",
+            "originalPostId",
+            "rootPostId",
+            "sourcePostId",
+            "imagePostId",
+        )
+        for key in direct_keys:
+            value = stream.get(key)
+            if value and str(value) == str(parent_post_id):
+                return True
+        text_keys = ("imageReference", "sourceUrl", "source_url", "prompt", "message")
+        return any(parent_post_id in str(stream.get(key) or "") for key in text_keys)
+
     for event in events:
         result = event.get("result") if isinstance(event, dict) else None
         if not isinstance(result, dict):
@@ -5391,6 +5410,34 @@ def grok_official_app_chat_video(prompt, source_path, duration=10, resolution="7
         stream_progress = stream.get("progress")
         if isinstance(stream_progress, (int, float)):
             progress = max(progress, int(stream_progress))
+        linked_to_source = stream_matches_source(stream)
+        if not linked_to_source:
+            unlinked_streams.append({
+                "parentPostId": stream.get("parentPostId"),
+                "originalPostId": stream.get("originalPostId"),
+                "videoId": stream.get("videoId"),
+                "videoPostId": stream.get("videoPostId"),
+                "progress": stream.get("progress"),
+                "hasVideoUrl": bool(stream.get("videoUrl") or stream.get("video_url") or stream.get("mediaUrl") or stream.get("media_url")),
+            })
+            if "moderated" in stream:
+                moderated.append(bool(stream.get("moderated")))
+            if "rRated" in stream:
+                r_rated.append(bool(stream.get("rRated")))
+            update_grok_official_progress(
+                status="running",
+                stage="app-chat-video",
+                message="Grok official app-chat video streaming",
+                progress=progress,
+                event_count=len(events),
+                video_url_found=bool(video_urls),
+                moderated=moderated[-1] if moderated else False,
+                r_rated=r_rated[-1] if r_rated else False,
+                official_parent_post_id=parent_post_id,
+                result_linked_to_source=False,
+                unlinked_stream_count=len(unlinked_streams),
+            )
+            continue
         if stream.get("videoId") and stream.get("videoId") not in video_ids:
             video_ids.append(stream.get("videoId"))
         if stream.get("videoPostId") and stream.get("videoPostId") not in video_ids:
@@ -5413,17 +5460,27 @@ def grok_official_app_chat_video(prompt, source_path, duration=10, resolution="7
             moderated=moderated[-1] if moderated else False,
             r_rated=r_rated[-1] if r_rated else False,
             official_parent_post_id=parent_post_id,
+            result_linked_to_source=True,
         )
 
-    if not video_urls:
+    if not video_urls and checked(os.getenv("GROK_OFFICIAL_UNLINKED_VIDEO_FALLBACK", "")):
         parsed = grok_agent_parse_stream(text)
         for candidate in parsed.get("media_candidates") or []:
             if candidate.get("kind") == "video" and candidate.get("url") not in video_urls:
                 video_urls.append(candidate.get("url"))
     if not video_urls:
+        diagnostic = {
+            "events": len(events),
+            "parent_post_id": parent_post_id,
+            "source_url": source_url,
+            "progress": progress,
+            "moderated": moderated[-8:],
+            "r_rated": r_rated[-8:],
+            "unlinked_streams": unlinked_streams[-8:],
+        }
         if moderated and moderated[-1]:
-            raise RuntimeError("Grok official app-chat video was moderated and no downloadable video URL was returned.")
-        raise RuntimeError("Grok official app-chat video response did not include a downloadable video URL.")
+            raise RuntimeError("Grok official app-chat video was moderated and no linked downloadable video URL was returned. " + json.dumps(json_safe(diagnostic), ensure_ascii=False)[:1800])
+        raise RuntimeError("Grok official app-chat video response did not include a linked downloadable video URL. " + json.dumps(json_safe(diagnostic), ensure_ascii=False)[:1800])
 
     download_errors = []
     path = None
@@ -5452,6 +5509,10 @@ def grok_official_app_chat_video(prompt, source_path, duration=10, resolution="7
         "official_media_url": used_url,
         "official_video_ids": video_ids,
         "official_parent_post_id": parent_post_id,
+        "official_source_post_id": parent_post_id,
+        "official_original_post_id": parent_post_id,
+        "official_result_link_verified": True,
+        "official_source_reference": source_url,
         "official_completed": True,
         "official_events": len(events),
         "official_request_body": request_body,
@@ -5470,6 +5531,29 @@ def grok_official_pipeline_video(prompt, source_url="", source_path=None, durati
     aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
     resolution = valid_video_resolution(resolution)
     duration = max(2, min(15, int(duration or 6)))
+    if source_path and checked(os.getenv("GROK_OFFICIAL_APP_CHAT_I2V_DEFAULT", "1")):
+        try:
+            path, extra = grok_official_app_chat_video(
+                prompt,
+                source_path,
+                duration=duration,
+                resolution=resolution,
+                aspect_ratio=aspect_ratio,
+                account_id=account_id,
+            )
+            extra["official_preferred_transport"] = "app_chat_conversations"
+            extra["official_preferred_reason"] = "official_imagine_post_route"
+            return path, extra
+        except Exception as exc:
+            app_chat_error = error_detail_text(exc)
+            if not checked(os.getenv("GROK_OFFICIAL_PIPELINE_I2V_FALLBACK", "")):
+                raise
+            update_grok_official_progress(
+                status="running",
+                stage="pipeline-i2v-fallback",
+                message="Grok official app-chat i2v failed; trying optional pipeline fallback",
+                app_chat_error=app_chat_error[:1200],
+            )
     inputs = {
         "video_prompt": {
             "type": "text",
@@ -5940,6 +6024,17 @@ def grok_official_image_edit_reference_for_path(path, account_id=None):
     source = Path(path)
     item = find_metadata_by_file_path(source)
     extra = item.get("extra") if isinstance(item, dict) and isinstance(item.get("extra"), dict) else {}
+    app_chat_source_url, app_chat_parent_post_id, app_chat_extra = grok_official_app_chat_video_reference_for_path(source, account_id=account_id)
+    if app_chat_source_url and app_chat_parent_post_id:
+        app_chat_extra.update({
+            "source_url": remote_url_for_media_path(source),
+            "official_source_type": "official_asset_content_url",
+            "official_source_mode": "official_post_image_reference",
+            "official_parent_post_id": app_chat_parent_post_id,
+            "official_root_post_id": app_chat_extra.get("official_root_post_id") or app_chat_parent_post_id,
+            "official_is_root_user_uploaded": False,
+        })
+        return app_chat_source_url, app_chat_extra
     remote_url = remote_url_for_media_path(source)
     generated_id = (
         official_generated_id_from_url(extra.get("official_image_url") or "")
@@ -6085,6 +6180,8 @@ def grok_official_app_chat_image_edit(prompt, source_paths, dest_dir, aspect_rat
     r_rated = []
     messages = []
     stream_errors = []
+    request_parent_validated = False
+    request_parent_mismatches = []
     for raw_line in (browser_response.get("text") or "").splitlines():
         if not raw_line:
             continue
@@ -6108,6 +6205,17 @@ def grok_official_app_chat_image_edit(prompt, source_paths, dest_dir, aspect_rat
         response_payload = result.get("response") if isinstance(result, dict) else None
         if not isinstance(response_payload, dict):
             continue
+        user_response = response_payload.get("userResponse")
+        if isinstance(user_response, dict):
+            metadata = user_response.get("metadata") if isinstance(user_response.get("metadata"), dict) else {}
+            model_map = (((metadata.get("modelConfigOverride") or {}).get("modelMap") or {}) if isinstance(metadata, dict) else {})
+            edit_config = model_map.get("imageEditModelConfig") if isinstance(model_map, dict) else None
+            if isinstance(edit_config, dict):
+                observed_parent = str(edit_config.get("parentPostId") or edit_config.get("rootPostId") or "")
+                if parent_post_id and observed_parent and observed_parent != parent_post_id:
+                    request_parent_mismatches.append(observed_parent)
+                if parent_post_id and observed_parent == parent_post_id:
+                    request_parent_validated = True
         stream = response_payload.get("streamingImageGenerationResponse")
         if isinstance(stream, dict):
             image_url = stream.get("imageUrl") or stream.get("url")
@@ -6150,9 +6258,30 @@ def grok_official_app_chat_image_edit(prompt, source_paths, dest_dir, aspect_rat
         for error in response_payload.get("streamErrors") or []:
             stream_errors.append(error)
     candidate_urls = []
+    source_url_keys = {
+        strip_url_query(image_reference),
+        strip_url_query(source_extra.get("official_source_url") or ""),
+        strip_url_query(source_extra.get("source_url") or ""),
+    }
     for url in final_urls + all_urls + preview_urls:
-        if url and url not in candidate_urls:
+        url_key = strip_url_query(url)
+        if not url:
+            continue
+        if url_key in source_url_keys:
+            continue
+        if parent_post_id and parent_post_id in url and "/generated/" not in url:
+            continue
+        if url not in candidate_urls:
             candidate_urls.append(url)
+    if parent_post_id and request_parent_mismatches and not request_parent_validated:
+        raise RuntimeError(
+            "Grok official image edit request was not linked to the selected source post. "
+            + json.dumps({
+                "expected_parent_post_id": parent_post_id,
+                "observed_parent_post_ids": request_parent_mismatches[-5:],
+                "source_reference": image_reference,
+            }, ensure_ascii=False)
+        )
     if moderated and all(moderated) and not candidate_urls:
         raise RuntimeError("Grok official image edit result was moderated and no downloadable image was returned.")
     download_errors = []
@@ -6173,6 +6302,10 @@ def grok_official_app_chat_image_edit(prompt, source_paths, dest_dir, aspect_rat
             "asset_ids": asset_ids[:8],
             "moderated": moderated[-8:],
             "stream_errors": stream_errors[-5:],
+            "source_reference": image_reference,
+            "parent_post_id": parent_post_id,
+            "request_parent_validated": request_parent_validated,
+            "request_parent_mismatches": request_parent_mismatches[-5:],
             "last_events": [grok_official_pipeline_event_summary(event) for event in events[-5:]],
             "download_errors": download_errors[-5:],
         }
@@ -6200,6 +6333,11 @@ def grok_official_app_chat_image_edit(prompt, source_paths, dest_dir, aspect_rat
         "aspect_ratio": aspect_ratio,
         "official_events": events[-20:],
         "official_request_body": request_body,
+        "official_source_post_id": parent_post_id,
+        "official_original_post_id": parent_post_id,
+        "official_result_link_verified": bool(parent_post_id and not request_parent_mismatches),
+        "official_source_reference": image_reference,
+        "official_request_parent_validated": request_parent_validated,
         "official_moderated_flags": moderated,
         "official_r_rated_flags": r_rated,
         "official_messages": messages[-5:],
@@ -6223,31 +6361,31 @@ def grok_official_is_antibot_error(error):
 def grok_official_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
     sources = [Path(path) for path in source_paths if path]
     try:
-        path, extra = grok_official_pipeline_image_edit(
+        path, extra = grok_official_app_chat_image_edit(
             prompt,
-            sources,
+            source_paths,
             dest_dir,
             aspect_ratio=aspect_ratio,
             resolution=resolution,
             account_id=account_id,
         )
-        extra["official_preferred_transport"] = "pipeline"
-        extra["official_preferred_reason"] = "official_home_pipeline_run"
+        extra["official_preferred_transport"] = "app_chat_conversations"
+        extra["official_preferred_reason"] = "official_imagine_post_route"
         return path, extra
     except Exception as exc:
-        pipeline_error = error_detail_text(exc)
-        if not checked(os.getenv("GROK_OFFICIAL_APP_CHAT_EDIT_FALLBACK", "")):
+        app_chat_error = error_detail_text(exc)
+        if not checked(os.getenv("GROK_OFFICIAL_PIPELINE_EDIT_FALLBACK", "")):
             raise
         update_grok_official_progress(
             status="running",
-            stage="app-chat-edit-fallback",
-            message="Grok official pipeline image edit failed; trying optional app-chat fallback",
-            pipeline_error=pipeline_error[:1200],
+            stage="pipeline-edit-fallback",
+            message="Grok official app-chat image edit failed; trying optional pipeline fallback",
+            app_chat_error=app_chat_error[:1200],
         )
         try:
-            path, extra = grok_official_app_chat_image_edit(
+            path, extra = grok_official_pipeline_image_edit(
                 prompt,
-                source_paths,
+                sources,
                 dest_dir,
                 aspect_ratio=aspect_ratio,
                 resolution=resolution,
@@ -6255,12 +6393,12 @@ def grok_official_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto"
             )
         except Exception as fallback_exc:
             raise RuntimeError(
-                "Grok 공식홈 이미지 편집 pipeline 요청이 실패했고, app-chat fallback도 실패했습니다. "
-                f"pipeline={pipeline_error[:900]} app_chat={error_detail_text(fallback_exc)[:900]}"
+                "Grok official image edit app-chat request failed, and optional pipeline fallback also failed. "
+                f"app_chat={app_chat_error[:900]} pipeline={error_detail_text(fallback_exc)[:900]}"
             ) from fallback_exc
-        extra["official_fallback_from"] = "pipeline_image_edit"
-        extra["official_fallback_reason"] = "pipeline_failed"
-        extra["official_pipeline_error"] = pipeline_error[:1200]
+        extra["official_fallback_from"] = "app_chat_image_edit"
+        extra["official_fallback_reason"] = "app_chat_failed"
+        extra["official_app_chat_error"] = app_chat_error[:1200]
         return path, extra
 
 

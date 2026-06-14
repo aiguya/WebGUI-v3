@@ -2158,3 +2158,19 @@
   - monkeypatch resolver 테스트에서 post id가 있는 이미지와 image id만 있는 공식 이미지가 모두 internal generated asset URL을 선택하는지 확인.
   - synthetic `DRAFT_FAILED` 이벤트에서 failure detail에 `input_refs`와 step error가 포함되는지 확인.
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+
+### 2026-06-14 10:56 KST - Grok 공식홈 i2i/i2v app-chat post reference 기본 경로 복원
+- 증상:
+  - 첨부 문서 기준 공식홈 이미지 편집/이미지->영상은 `/rest/media/pipeline/run` 기본 호출이 아니라, 공식 Imagine post의 `content` URL과 `parentPostId`를 사용하는 app-chat 요청 흐름이어야 했다.
+  - pipeline 기본화 이후 공식 생성 이미지도 편집/영상화에서 `DRAFT_FAILED` 또는 anti-bot 계열 실패가 날 수 있었다.
+- 변경:
+  - 공식홈 이미지 편집 기본 경로를 `grok_official_app_chat_image_edit()`로 되돌리고, pipeline은 `GROK_OFFICIAL_PIPELINE_EDIT_FALLBACK`이 켜진 경우에만 fallback으로 쓰도록 변경.
+  - 공식홈 이미지->영상에서 source image가 있을 때 `grok_official_app_chat_video()`를 기본 호출하도록 변경하고, pipeline fallback은 `GROK_OFFICIAL_PIPELINE_I2V_FALLBACK` 명시 시에만 허용.
+  - 공식 생성 이미지의 `assets.grok.com/.../generated/.../image.jpg` 참조는 app-chat 요청 전에 `assets.grok.com/users/{account}/{post_id}/content`로 변환하도록 보강.
+  - app-chat i2v streaming 결과가 원본 `parentPostId/originalPostId`와 연결된 경우에만 다운로드 후보로 인정하고, 연결되지 않은 URL은 진단 정보로만 남기도록 변경.
+  - 이미지 편집 결과도 source reference URL을 후보에서 제외하고, 응답 metadata의 parent post mismatch를 감지하도록 보강.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - monkeypatch 테스트로 i2v source image 요청이 app-chat 기본 경로를 타는지 확인.
+  - monkeypatch 테스트로 이미지 편집 요청이 app-chat 기본 경로를 타는지 확인.
+  - synthetic streaming 응답에서 linked video URL만 다운로드하고 unlinked-only 응답은 실패시키는지 확인.
