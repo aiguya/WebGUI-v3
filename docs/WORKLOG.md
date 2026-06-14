@@ -2311,3 +2311,19 @@
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` passed.
   - Non-generating CDP checks confirmed the real UI `편집` and bottom `동영상 만들기` action buttons are found after prompt/mode setup.
   - Restarted the local server and confirmed `/health` returns 200.
+
+### 2026-06-14 18:32 KST - Grok official video moderation progress failure handling
+- Symptom:
+  - When an official UI image-to-video request was moderated or produced no linked video post, progress stayed at `wait-linked-video/running`.
+- Cause:
+  - The UI submit path only validated that the real Imagine UI created the app-chat request, then moved directly to linked post polling.
+  - Moderation or block signals in the app-chat response body were not captured, and linked post timeout left the last progress state as running.
+- Change:
+  - Enabled CDP Network monitoring during real UI edit/i2v submission and briefly captured the `/rest/app-chat/conversations/new` response body.
+  - Added response-body moderation/block detection for `moderated`, `blocked`, `policy`, `unsafe`, `not allowed`, and Korean equivalents.
+  - If the app-chat response is blocked/moderated, progress is immediately set to `failed` before raising.
+  - Added linked image/video post failure detection and timeout progress updates so wait loops no longer leave the status as running.
+- Verification:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` passed.
+  - Local parser tests confirmed moderated/blocked response text is detected.
+  - Restarted the local server and confirmed `/health` returns 200 with official progress reset to idle.

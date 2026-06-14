@@ -5456,6 +5456,31 @@ def grok_official_register_source_post(source, account_id=None, force_create=Fal
     }
 
 
+def grok_official_post_failure_reason(post):
+    if not isinstance(post, dict) or not post:
+        return ""
+    reason = grok_official_event_block_reason(post)
+    if reason:
+        return reason
+    status_text = " ".join(
+        str(post.get(key) or "")
+        for key in (
+            "status",
+            "currentStatus",
+            "processingStatus",
+            "pipelineStatus",
+            "failureReason",
+            "error",
+            "message",
+            "moderationReason",
+        )
+    )
+    lowered = status_text.lower()
+    if any(token in lowered for token in ("failed", "failure", "rejected", "blocked", "moderated", "policy", "unsafe", "not allowed", "violation")):
+        return status_text[:500]
+    return ""
+
+
 def grok_official_wait_linked_image(source_post_id, baseline_ids, timeout=180, account_id=None):
     baseline_ids = {str(item) for item in (baseline_ids or set())}
     deadline = time.time() + max(15, int(timeout or 180))
@@ -5468,6 +5493,18 @@ def grok_official_wait_linked_image(source_post_id, baseline_ids, timeout=180, a
             post = grok_official_media_post_get(candidate_id, account_id=account_id)
             if str(post.get("originalPostId") or "") != str(source_post_id):
                 continue
+            failure_reason = grok_official_post_failure_reason(post)
+            if failure_reason:
+                message = f"Grok official linked image-edit post failed or was moderated: {failure_reason}"
+                update_grok_official_progress(
+                    status="failed",
+                    stage="linked-image-failed",
+                    message="Grok official linked image edit failed",
+                    official_source_post_id=source_post_id,
+                    official_result_post_id=candidate_id,
+                    error=message,
+                )
+                raise RuntimeError(message)
             original_ref_type = post.get("originalRefType")
             if original_ref_type and original_ref_type != "ORIGINAL_REF_TYPE_IMAGE_EDIT":
                 continue
@@ -5482,10 +5519,19 @@ def grok_official_wait_linked_image(source_post_id, baseline_ids, timeout=180, a
             linked_candidate_count=len(candidates),
         )
         time.sleep(1.5)
-    raise RuntimeError(
+    message = (
         "No linked Grok official image-edit result appeared before timeout. "
         + json.dumps({"source_post_id": source_post_id, "last_seen": last_seen[-8:]}, ensure_ascii=False)
     )
+    update_grok_official_progress(
+        status="failed",
+        stage="wait-linked-image-timeout",
+        message="Grok official linked image edit result did not appear before timeout",
+        official_source_post_id=source_post_id,
+        linked_candidate_count=len(last_seen),
+        error=message,
+    )
+    raise RuntimeError(message)
 
 
 def grok_official_wait_linked_video(source_post_id, baseline_ids, duration=0, timeout=300, account_id=None):
@@ -5500,6 +5546,18 @@ def grok_official_wait_linked_video(source_post_id, baseline_ids, duration=0, ti
             post = grok_official_media_post_get(candidate_id, account_id=account_id)
             if str(post.get("originalPostId") or "") != str(source_post_id):
                 continue
+            failure_reason = grok_official_post_failure_reason(post)
+            if failure_reason:
+                message = f"Grok official linked image-to-video post failed or was moderated: {failure_reason}"
+                update_grok_official_progress(
+                    status="failed",
+                    stage="linked-video-failed",
+                    message="Grok official linked image-to-video failed",
+                    official_source_post_id=source_post_id,
+                    official_result_post_id=candidate_id,
+                    error=message,
+                )
+                raise RuntimeError(message)
             media_url = grok_official_media_post_video_url(post)
             if not media_url:
                 continue
@@ -5518,10 +5576,19 @@ def grok_official_wait_linked_video(source_post_id, baseline_ids, duration=0, ti
             linked_candidate_count=len(candidates),
         )
         time.sleep(2)
-    raise RuntimeError(
+    message = (
         "No linked Grok official image-to-video result appeared before timeout. "
         + json.dumps({"source_post_id": source_post_id, "last_seen": last_seen[-8:], "duration": duration}, ensure_ascii=False)
     )
+    update_grok_official_progress(
+        status="failed",
+        stage="wait-linked-video-timeout",
+        message="Grok official linked image-to-video result did not appear before timeout",
+        official_source_post_id=source_post_id,
+        linked_candidate_count=len(last_seen),
+        error=message,
+    )
+    raise RuntimeError(message)
 
 
 def cdp_value(result):
@@ -5629,14 +5696,126 @@ def grok_imagine_click_action(cdp, labels, timeout=20):
     raise RuntimeError(f"Grok Imagine action button was not found/enabled for {labels}: {last}")
 
 
+def grok_official_app_chat_block_reason_from_text(text):
+    text = str(text or "")
+    if not text:
+        return ""
+    reasons = []
+    for event in grok_agent_parse_json_lines(text):
+        reason = grok_official_event_block_reason(event)
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    lowered = text.lower()
+    marker_map = (
+        ("moderated", "moderated"),
+        ("blocked", "blocked"),
+        ("policy", "policy"),
+        ("unsafe", "unsafe"),
+        ("not allowed", "not allowed"),
+        ("violation", "violation"),
+        ("request rejected", "request rejected"),
+        ("검열", "검열"),
+        ("차단", "차단"),
+        ("정책", "정책"),
+    )
+    for token, label in marker_map:
+        if token in lowered and label not in reasons:
+            reasons.append(label)
+    return "; ".join(reasons[:8])
+
+
+def grok_imagine_wait_app_chat_response(cdp, timeout=12):
+    deadline = time.time() + max(1, float(timeout or 12))
+    request_id = ""
+    response_url = ""
+    status = None
+    while time.time() < deadline:
+        remaining = max(0.2, deadline - time.time())
+        try:
+            event = cdp.event(timeout=min(remaining, 2))
+        except TimeoutError:
+            continue
+        method = event.get("method")
+        params = event.get("params") or {}
+        if method == "Network.responseReceived":
+            response = params.get("response") or {}
+            url = response.get("url") or ""
+            if "/rest/app-chat/conversations/new" in url:
+                request_id = params.get("requestId") or ""
+                response_url = url
+                status = response.get("status")
+        elif method == "Network.loadingFinished" and request_id and params.get("requestId") == request_id:
+            body = ""
+            base64_encoded = False
+            try:
+                body_result = cdp.call("Network.getResponseBody", {"requestId": request_id}, timeout=10)
+                body = body_result.get("body") or ""
+                base64_encoded = bool(body_result.get("base64Encoded"))
+                if base64_encoded:
+                    body = base64.b64decode(body).decode("utf-8", "replace")
+            except Exception as exc:
+                return {
+                    "request_id": request_id,
+                    "url": response_url,
+                    "status": status,
+                    "body_error": str(exc)[:300],
+                }
+            return {
+                "request_id": request_id,
+                "url": response_url,
+                "status": status,
+                "body": body,
+                "base64Encoded": base64_encoded,
+                "blocked_reason": grok_official_app_chat_block_reason_from_text(body),
+            }
+        elif method == "Network.loadingFailed" and request_id and params.get("requestId") == request_id:
+            return {
+                "request_id": request_id,
+                "url": response_url,
+                "status": status,
+                "failed": True,
+                "errorText": params.get("errorText") or "",
+            }
+    return {
+        "request_id": request_id,
+        "url": response_url,
+        "status": status,
+        "timed_out": True,
+    }
+
+
+def grok_official_raise_if_ui_response_blocked(response_info, stage="ui-submit"):
+    reason = ""
+    if isinstance(response_info, dict):
+        reason = response_info.get("blocked_reason") or ""
+        status = int(response_info.get("status") or 0)
+        if not reason and status >= 400:
+            reason = f"HTTP {status}"
+        if not reason and response_info.get("failed"):
+            reason = response_info.get("errorText") or "network loading failed"
+    if not reason:
+        return
+    message = f"Grok official app-chat response was blocked or moderated: {reason}"
+    update_grok_official_progress(
+        status="failed",
+        stage=stage,
+        message="Grok official request was blocked or moderated",
+        error=message,
+        ui_response_status=(response_info or {}).get("status") if isinstance(response_info, dict) else None,
+    )
+    raise RuntimeError(message)
+
+
 def grok_imagine_submit_image_edit_via_ui(source_post_id, prompt, account_id=None, timeout=90):
     ensure_grok_chrome()
     tab = grok_imagine_tab(post_id=source_post_id, fresh=True)
     request_payload = {}
     request_url = ""
+    response_info = {}
     with CdpWebSocket(tab["webSocketDebuggerUrl"], timeout=timeout + 30) as cdp:
         cdp.call("Page.enable", timeout=10)
         cdp.call("Runtime.enable", timeout=10)
+        cdp.call("Network.enable", timeout=10)
         try:
             cdp.call("Fetch.enable", {
                 "patterns": [{
@@ -5681,6 +5860,8 @@ def grok_imagine_submit_image_edit_via_ui(source_post_id, prompt, account_id=Non
                     }), ensure_ascii=False)
                 )
             cdp.call("Fetch.continueRequest", {"requestId": params.get("requestId")}, timeout=10)
+            response_info = grok_imagine_wait_app_chat_response(cdp, timeout=float(os.getenv("GROK_OFFICIAL_UI_RESPONSE_WAIT_SECONDS", "12") or 12))
+            grok_official_raise_if_ui_response_blocked(response_info, stage="ui-submit-edit")
         finally:
             try:
                 cdp.call("Fetch.disable", timeout=5)
@@ -5689,6 +5870,7 @@ def grok_imagine_submit_image_edit_via_ui(source_post_id, prompt, account_id=Non
     return {
         "request_url": request_url,
         "request_body": request_payload,
+        "response": {k: v for k, v in response_info.items() if k != "body"} if isinstance(response_info, dict) else {},
         "click": click_info,
     }
 
@@ -5700,9 +5882,11 @@ def grok_imagine_submit_image_to_video_via_ui(source_post_id, prompt, duration=1
     tab = grok_imagine_tab(post_id=source_post_id, fresh=True)
     request_payload = {}
     request_url = ""
+    response_info = {}
     with CdpWebSocket(tab["webSocketDebuggerUrl"], timeout=timeout + 30) as cdp:
         cdp.call("Page.enable", timeout=10)
         cdp.call("Runtime.enable", timeout=10)
+        cdp.call("Network.enable", timeout=10)
         try:
             cdp.call("Fetch.enable", {
                 "patterns": [{
@@ -5767,6 +5951,8 @@ def grok_imagine_submit_image_to_video_via_ui(source_post_id, prompt, duration=1
                 "requestId": params.get("requestId"),
                 "postData": patched_post_data,
             }, timeout=10)
+            response_info = grok_imagine_wait_app_chat_response(cdp, timeout=float(os.getenv("GROK_OFFICIAL_UI_RESPONSE_WAIT_SECONDS", "12") or 12))
+            grok_official_raise_if_ui_response_blocked(response_info, stage="ui-submit-i2v")
         finally:
             try:
                 cdp.call("Fetch.disable", timeout=5)
@@ -5775,6 +5961,7 @@ def grok_imagine_submit_image_to_video_via_ui(source_post_id, prompt, duration=1
     return {
         "request_url": request_url,
         "request_body": request_payload,
+        "response": {k: v for k, v in response_info.items() if k != "body"} if isinstance(response_info, dict) else {},
         "duration": duration,
         "resolution": resolution,
         "click": click_info,
