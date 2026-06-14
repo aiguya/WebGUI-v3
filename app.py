@@ -4808,6 +4808,94 @@ def grok_official_pipeline_incomplete_message(kind, events, post_id, last_state)
     )
 
 
+def grok_official_pipeline_input_refs(spec):
+    refs = []
+    inputs = spec.get("inputs") if isinstance(spec, dict) else {}
+    if not isinstance(inputs, dict):
+        return refs
+    for name, config in inputs.items():
+        if not isinstance(config, dict):
+            continue
+        fixed = config.get("fixed")
+        if not isinstance(fixed, dict):
+            continue
+        ref = {
+            "input": name,
+            "type": fixed.get("type") or config.get("type") or "",
+        }
+        key = fixed.get("key")
+        if key:
+            ref["key"] = str(key)[:500]
+        mime_type = fixed.get("mime_type") or fixed.get("mimeType")
+        if mime_type:
+            ref["mime_type"] = mime_type
+        value = fixed.get("value")
+        if isinstance(value, str) and name != "image_prompt" and name != "video_prompt":
+            ref["value"] = value[:300]
+        refs.append(ref)
+    return refs
+
+
+def grok_official_collect_diagnostic_fields(value, limit=30):
+    found = []
+    interesting = (
+        "error",
+        "err",
+        "fail",
+        "reason",
+        "message",
+        "status",
+        "code",
+        "detail",
+        "moderated",
+        "blocked",
+        "unsafe",
+    )
+
+    def walk(node, path=""):
+        if len(found) >= limit:
+            return
+        if isinstance(node, dict):
+            for key, item in node.items():
+                key_text = str(key)
+                next_path = f"{path}.{key_text}" if path else key_text
+                lowered = key_text.lower()
+                if any(token in lowered for token in interesting) and not isinstance(item, (dict, list)):
+                    found.append({"path": next_path, "value": grok_official_preview_value(item)})
+                    if len(found) >= limit:
+                        return
+                walk(item, next_path)
+        elif isinstance(node, list):
+            for index, item in enumerate(node[:30]):
+                walk(item, f"{path}[{index}]")
+
+    walk(value)
+    return found
+
+
+def grok_official_pipeline_failure_detail(kind, events, post_id, last_state, spec):
+    last_events = [grok_official_pipeline_event_summary(event) for event in events[-5:]]
+    diagnostics = []
+    for event in events[-8:]:
+        for field in grok_official_collect_diagnostic_fields(event, limit=12):
+            if field not in diagnostics:
+                diagnostics.append(field)
+            if len(diagnostics) >= 24:
+                break
+        if len(diagnostics) >= 24:
+            break
+    payload = {
+        "kind": kind,
+        "events": len(events),
+        "post_id": post_id,
+        "pipeline_state": last_state,
+        "diagnostics": diagnostics[:24],
+        "input_refs": grok_official_pipeline_input_refs(spec),
+        "last_events": last_events,
+    }
+    return json.dumps(json_safe(payload), ensure_ascii=False)[:2400]
+
+
 def grok_official_upload_file(path, account_id=None):
     source = Path(path)
     if not source.exists():
@@ -4917,12 +5005,43 @@ def grok_official_matched_source_url_for_item(source, item, extra, remote_url=""
     )
 
 
+def grok_official_reference_post_id_from_extra(extra, source_url=""):
+    for key in (
+        "official_post_id",
+        "official_import_root_post_id",
+        "official_root_post_id",
+        "official_parent_post_id",
+    ):
+        value = str((extra or {}).get(key) or "").strip()
+        if value:
+            return value
+    generated_id = official_generated_id_from_url(source_url or "")
+    if generated_id:
+        return generated_id
+    source_url = source_url or ""
+    image_id = (
+        str((extra or {}).get("official_image_id") or "").strip()
+        or official_image_id_from_url(source_url)
+        or official_image_id_from_url((extra or {}).get("official_image_url") or "")
+        or official_image_id_from_url((extra or {}).get("official_media_url") or "")
+    )
+    if image_id and (
+        "imagine-public.x.ai" in source_url
+        or "assets.grok.com" in source_url
+        or (extra or {}).get("source") == "grok_official_web"
+    ):
+        return image_id
+    return ""
+
+
 def grok_official_generated_source_url_for_path(path, account_id=None):
     source = Path(path)
     item = find_metadata_by_file_path(source)
     extra = item.get("extra") if isinstance(item, dict) and isinstance(item.get("extra"), dict) else {}
     remote_url = remote_url_for_media_path(source)
     source_url = grok_official_matched_source_url_for_item(source, item, extra, remote_url=remote_url)
+    reference_post_id = grok_official_reference_post_id_from_extra(extra, source_url=source_url)
+    account_id = account_id or active_grok_account_id()
     generated_id = (
         official_generated_id_from_url(extra.get("official_image_url") or "")
         or official_generated_id_from_url(extra.get("official_media_url") or "")
@@ -4935,6 +5054,22 @@ def grok_official_generated_source_url_for_path(path, account_id=None):
         or official_image_id_from_url(extra.get("official_media_url") or "")
         or official_image_id_from_url(remote_url or "")
     )
+    if reference_post_id and account_id:
+        reference_url = grok_official_generated_asset_image_url(
+            reference_post_id,
+            account_id=account_id,
+            source_url=source_url,
+        )
+        return reference_url, {
+            "source_url": remote_url,
+            "official_source_url": reference_url,
+            "official_original_source_url": source_url,
+            "official_source_type": "official_generated_asset_image_url",
+            "official_source_mode": "official_generated_image_reference",
+            "official_parent_post_id": reference_post_id,
+            "official_root_post_id": reference_post_id,
+            "official_is_root_user_uploaded": False,
+        }
     if source_url and ("imagine-public.x.ai" in source_url or "assets.grok.com" in source_url):
         image_id = official_image_id_from_url(source_url) or official_generated_id_from_url(source_url) or official_id
         return source_url, {
@@ -5087,6 +5222,7 @@ def grok_official_pipeline_run(spec, kind="video", account_id=None):
             completed = True
     detail_payload = None
     if pipeline_failed and not (media_urls or media_blobs):
+        failure_detail = grok_official_pipeline_failure_detail(kind, events, post_id, last_state, spec)
         update_grok_official_progress(
             status="failed",
             stage="pipeline-failed",
@@ -5096,8 +5232,9 @@ def grok_official_pipeline_run(spec, kind="video", account_id=None):
             post_id=post_id,
             completed=completed,
             pipeline_state=last_state,
+            failure_detail=failure_detail,
         )
-        raise RuntimeError(f"Grok 공식홈 pipeline이 실패 상태로 종료되었습니다: {pipeline_failed}")
+        raise RuntimeError(f"Grok 공식홈 pipeline이 실패 상태로 종료되었습니다: {pipeline_failed}. {failure_detail}")
     if not completed and not (media_urls or media_blobs):
         message = grok_official_pipeline_incomplete_message(kind, events, post_id, last_state)
         update_grok_official_progress(
@@ -6185,6 +6322,7 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
     image_url = ""
     image_urls = []
     image_id = ""
+    post_id = ""
     completed = False
     blocked_reason = ""
     ws_error_message = ""
@@ -6283,6 +6421,7 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
             except json.JSONDecodeError:
                 continue
             json_events.append(event)
+            post_id = post_id or grok_official_extract_post_id(event)
             event_error_message = grok_official_ws_error_message(event)
             if event_error_message and not ws_error_message:
                 ws_error_message = event_error_message
@@ -6338,6 +6477,7 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
                 last_event_status=(event.get("current_status") or event.get("status") or "") if isinstance(event, dict) else "",
                 last_error_code=(event.get("err_code") or event.get("code") or "") if isinstance(event, dict) else "",
                 last_error_message=(event.get("err_msg") or event.get("message") or event.get("error") or "") if isinstance(event, dict) else "",
+                post_id=post_id,
             )
             if done_values:
                 if blobs:
@@ -6487,6 +6627,7 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
         saved_count=len(output_paths),
         official_image_url=image_url,
         official_image_id=image_id,
+        post_id=post_id,
     )
     return path, {
         "source": "grok_official_web",
@@ -6505,6 +6646,7 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
         "official_ordered_image_urls": ordered_image_urls,
         "official_preview_like_image_urls": [url for url in ordered_image_urls if grok_official_image_url_rank(url) > 0],
         "official_image_id": image_id,
+        "official_post_id": post_id,
         "official_width": width,
         "official_height": height,
         "official_output_count": len(output_paths),

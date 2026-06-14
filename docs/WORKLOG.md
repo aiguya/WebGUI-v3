@@ -2142,3 +2142,19 @@
   - synthetic Grok post HTML로 전역 `prompt`와 post-local prompt가 섞인 경우 post-local prompt를 선택하는지 확인.
   - monkeypatch import 테스트에서 영상 post 링크가 image item과 video item을 함께 생성하고 video item이 reference image id/path 및 image/video prompt를 저장하는지 확인.
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+
+### 2026-06-14 10:26 KST - Grok 공식홈 pipeline DRAFT_FAILED 원인 진단 및 내부 이미지 참조 우선화
+- 증상:
+  - 공식홈 이미지 편집에서 `MEDIA_POST_MEDIA_STATUS_DRAFT_FAILED`만 표시되어 실제 실패 원인을 확인하기 어려웠다.
+  - 실패 당시 progress 기준 입력 이미지가 `official_public_image_reference`로 잡혀 `imagine-public.x.ai` URL이 pipeline `blob_ref.key`로 전달되고 있었다.
+- 원인:
+  - 공식홈 생성/등록 이미지가 `official_post_id` 또는 `official_image_id`를 갖고 있어도 pipeline source resolver가 public CDN URL을 먼저 반환했다.
+  - pipeline 실패 이벤트에서 마지막 이벤트/입력 reference/세부 오류 필드를 사용자 오류 detail에 포함하지 않았다.
+- 변경:
+  - 공식홈 이미지가 post id 또는 image id를 가진 경우 `assets.grok.com/users/{account}/generated/{id}/image.jpg` 내부 generated asset URL을 우선 사용하도록 했다.
+  - WebSocket 공식 이미지 생성 결과 extra에 추출 가능한 `official_post_id`를 저장하도록 했다.
+  - `DRAFT_FAILED` 등 pipeline 실패 시 마지막 이벤트 요약, 진단 필드, 입력 `blob_ref` 요약을 오류 detail과 progress에 포함하도록 했다.
+- 검증:
+  - monkeypatch resolver 테스트에서 post id가 있는 이미지와 image id만 있는 공식 이미지가 모두 internal generated asset URL을 선택하는지 확인.
+  - synthetic `DRAFT_FAILED` 이벤트에서 failure detail에 `input_refs`와 step error가 포함되는지 확인.
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
