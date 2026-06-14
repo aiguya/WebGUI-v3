@@ -3129,8 +3129,6 @@ def grok_official_download_candidates(url, kind="image"):
             f"https://grok.com/rest/media/download?fileUri={encoded}",
         ])
         return list(dict.fromkeys(candidates))
-    if raw_url:
-        candidates.append(raw_url)
     if kind == "image":
         image_id = official_image_id_from_url(raw_url)
         if image_id:
@@ -3138,6 +3136,8 @@ def grok_official_download_candidates(url, kind="image"):
                 candidate = f"https://imagine-public.x.ai/imagine-public/images/{image_id}{suffix}"
                 if candidate not in candidates:
                     candidates.append(candidate)
+    if raw_url and raw_url not in candidates:
+        candidates.append(raw_url)
     return candidates
 
 
@@ -4281,6 +4281,14 @@ def grok_official_order_image_urls(urls):
             key=lambda pair: (grok_official_image_url_rank(pair[1]), pair[0]),
         )
     ]
+
+
+def grok_official_image_url_key(url):
+    return (
+        official_image_id_from_url(url or "")
+        or official_generated_id_from_url(url or "")
+        or strip_url_query(url or "")
+    )
 
 
 def grok_official_extract_post_id(payload):
@@ -6157,21 +6165,24 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
     downloaded_urls = []
     download_errors = []
     ordered_image_urls = []
-    if blobs:
-        update_grok_official_progress(stage="save", message="Grok 공식홈 WebSocket 이미지 blob 저장 중")
-        seen_blob_hashes = set()
-        for blob in blobs:
-            digest = hashlib.sha1(blob).hexdigest()
-            if digest in seen_blob_hashes:
-                continue
-            seen_blob_hashes.add(digest)
-            output_paths.append(save_response_bytes(blob, dest_dir, suffix=response_suffix_from_bytes(blob, ".jpg")))
-        path = output_paths[0] if output_paths else None
-    elif image_url or image_urls:
+    blob_fallback_used = False
+    if image_url or image_urls:
         ordered_image_urls = grok_official_order_image_urls([*image_urls] if image_urls else [image_url])
+        seen_image_keys = set()
+        if ordered_image_urls:
+            candidates = grok_official_download_candidates(ordered_image_urls[0], kind="image")
+            update_grok_official_progress(
+                stage="download",
+                message="Grok 공식홈 WebSocket 이미지 최종 URL 다운로드 중",
+                download_candidates=candidates,
+                ordered_image_urls=ordered_image_urls[:12],
+            )
         for url in ordered_image_urls:
-            if not url or url in downloaded_urls:
+            key = grok_official_image_url_key(url)
+            if key and key in seen_image_keys:
                 continue
+            if key:
+                seen_image_keys.add(key)
             try:
                 downloaded_path, used_url = grok_official_download(url, dest_dir, kind="image", return_url=True)
                 output_paths.append(downloaded_path)
@@ -6182,18 +6193,25 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
             path = output_paths[0]
             image_url = downloaded_urls[0] if downloaded_urls else image_url
         else:
-            image_url = image_urls[0] if image_urls else image_url
+            image_url = ordered_image_urls[0] if ordered_image_urls else image_url
+    if not output_paths and blobs:
+        blob_fallback_used = True
+        update_grok_official_progress(stage="save", message="Grok 공식홈 WebSocket 이미지 URL 다운로드 실패, blob 저장 중")
+        seen_blob_hashes = set()
+        for blob in blobs:
+            digest = hashlib.sha1(blob).hexdigest()
+            if digest in seen_blob_hashes:
+                continue
+            seen_blob_hashes.add(digest)
+            output_paths.append(save_response_bytes(blob, dest_dir, suffix=response_suffix_from_bytes(blob, ".jpg")))
+        path = output_paths[0] if output_paths else None
+    if not output_paths and (image_url or image_urls):
         candidates = grok_official_download_candidates(image_url, kind="image")
-        update_grok_official_progress(
-            stage="download",
-            message="Grok 공식홈 WebSocket 이미지 URL 다운로드 중",
-            download_candidates=candidates,
-        )
-        if not output_paths and not download_errors:
+        if not download_errors:
             path, image_url = grok_official_download(image_url, dest_dir, kind="image", return_url=True)
             output_paths.append(path)
             downloaded_urls.append(image_url)
-        if not output_paths and download_errors:
+        else:
             update_grok_official_progress(
                 status="failed",
                 stage="failed",
@@ -6206,7 +6224,7 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
                 completed=completed,
             )
             raise RuntimeError("; ".join(download_errors))
-    else:
+    if not output_paths:
         error_message = "Grok 공식홈 WebSocket 응답에서 이미지 blob 또는 URL을 받지 못했습니다."
         update_grok_official_progress(
             status="failed",
@@ -6267,6 +6285,9 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
         "official_output_dimensions": [{"width": item[0], "height": item[1]} for item in output_dimensions],
         "official_downloaded_urls": downloaded_urls,
         "official_download_errors": download_errors,
+        "official_blob_count": len(blobs),
+        "official_blob_fallback_used": blob_fallback_used,
+        "official_url_download_preferred": bool(ordered_image_urls),
         "official_partial_blocked_reason": blocked_reason or "",
         "official_completed": completed,
         "official_events": json_events[-20:],

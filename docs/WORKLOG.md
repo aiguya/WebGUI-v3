@@ -2078,3 +2078,18 @@
   - 최근 이미지 120개 기준 새 placeholder detector 오탐 0개 확인.
   - URL 정렬 helper가 `generated/image.jpg` > `imagine-public` > 일반 asset > `image-part` 순서로 정렬됨을 확인.
   - Flask test client로 `/health` 200, `/api/library?media_type=image&force=1` 200 응답 확인.
+
+### 2026-06-14 09:33 KST - Grok 공식홈 이미지 생성 최종 URL 우선 저장
+- 원인:
+  - 공식홈 WebSocket 이미지 생성은 JSON 이벤트 안에 이미지 `blob`과 `imagine-public` URL을 함께 보낼 수 있다.
+  - 일부 variation은 스트리밍 `blob`/`.png`가 블러 처리된 중간 산출물로 내려오고, 최종 원본은 같은 image id의 `.jpg` URL로 접근 가능한 패턴이 확인되었다.
+  - 기존 코드는 blob이 하나라도 있으면 URL 다운로드를 건너뛰어, 최종 URL 대신 블러 blob을 라이브러리에 저장할 수 있었다.
+- 변경:
+  - 공식홈 WebSocket 이미지 생성 저장 순서를 `최종 URL 다운로드 우선`으로 바꿨다.
+  - URL 다운로드가 모두 실패할 때만 WebSocket blob을 fallback으로 저장하도록 했다.
+  - `imagine-public/images/{id}.png`가 들어와도 다운로드 후보는 `{id}.jpg`, `{id}.jpeg`, `{id}.png`, `{id}.webp` 순서로 시도하도록 바꿨다.
+  - 같은 image id가 `.png`와 `.jpg`로 중복 수집되어도 한 번만 다운로드하도록 image-url key 중복 제거를 추가했다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - 후보 URL 정렬/중복 key/다운로드 후보 순서 로컬 검증 통과.
+  - Flask test client로 `/health` 200 응답 확인.
