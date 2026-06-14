@@ -4556,6 +4556,8 @@ def grok_official_upload_file(path, account_id=None):
         detail = grok_official_json_error(response)
         lowered_detail = detail.lower()
         should_try_browser_upload = (
+            checked(os.getenv("GROK_OFFICIAL_BROWSER_UPLOAD_FALLBACK", ""))
+            and
             response.status_code == 403
             and (
                 "anti-bot" in lowered_detail
@@ -5059,17 +5061,6 @@ def grok_official_app_chat_video(prompt, source_path, duration=10, resolution="7
 
 
 def grok_official_pipeline_video(prompt, source_url="", source_path=None, duration=10, resolution="720p", aspect_ratio="2:3", account_id=None):
-    if source_path:
-        app_source_url, parent_post_id, _ = grok_official_app_chat_video_reference_for_path(source_path, account_id=account_id)
-        if app_source_url and parent_post_id:
-            return grok_official_app_chat_video(
-                prompt,
-                source_path,
-                duration=duration,
-                resolution=resolution,
-                aspect_ratio=aspect_ratio,
-                account_id=account_id,
-            )
     aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
     resolution = valid_video_resolution(resolution)
     duration = max(2, min(15, int(duration or 6)))
@@ -5825,43 +5816,8 @@ def grok_official_is_antibot_error(error):
 
 def grok_official_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
     sources = [Path(path) for path in source_paths if path]
-    if sources and grok_official_path_has_post_reference(sources[0]):
-        try:
-            path, extra = grok_official_app_chat_image_edit(
-                prompt,
-                sources,
-                dest_dir,
-                aspect_ratio=aspect_ratio,
-                resolution=resolution,
-                account_id=account_id,
-            )
-            extra["official_preferred_transport"] = "app_chat_conversations"
-            extra["official_preferred_reason"] = "official_post_reference"
-            return path, extra
-        except Exception as exc:
-            app_chat_error = error_detail_text(exc)
-            if not checked(os.getenv("GROK_OFFICIAL_PIPELINE_EDIT_FALLBACK", "")):
-                raise
-            update_grok_official_progress(
-                status="running",
-                stage="pipeline-edit-fallback",
-                message="Grok official app-chat image edit failed; trying optional pipeline fallback",
-                app_chat_error=app_chat_error[:1200],
-            )
-            path, extra = grok_official_pipeline_image_edit(
-                prompt,
-                sources,
-                dest_dir,
-                aspect_ratio=aspect_ratio,
-                resolution=resolution,
-                account_id=account_id,
-            )
-            extra["official_fallback_from"] = "app_chat_image_edit"
-            extra["official_fallback_reason"] = "app_chat_failed"
-            extra["official_app_chat_error"] = app_chat_error[:1200]
-            return path, extra
     try:
-        return grok_official_pipeline_image_edit(
+        path, extra = grok_official_pipeline_image_edit(
             prompt,
             sources,
             dest_dir,
@@ -5869,6 +5825,9 @@ def grok_official_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto"
             resolution=resolution,
             account_id=account_id,
         )
+        extra["official_preferred_transport"] = "pipeline"
+        extra["official_preferred_reason"] = "official_home_pipeline_run"
+        return path, extra
     except Exception as exc:
         pipeline_error = error_detail_text(exc)
         if not checked(os.getenv("GROK_OFFICIAL_APP_CHAT_EDIT_FALLBACK", "")):
@@ -10586,7 +10545,7 @@ def handle_v2v_extend(strategy):
         generated_segment_path = None
         concat_extra = None
         if (cfg["mode"] == "live" or effective_video_provider == "grok_official") and strategy == "official" and effective_video_provider == "grok_official":
-            official_path, extra = grok_official_app_chat_video_extend(
+            official_path, extra = grok_official_pipeline_video_extend(
                 extension_prompt,
                 source_video,
                 duration,
@@ -10600,7 +10559,7 @@ def handle_v2v_extend(strategy):
             extra["official_result_path"] = public_path(official_path)
             extra["official_output_duration"] = official_output_duration
             extra["combined"] = False
-            extra["combined_by"] = "grok_official_home_video_extend"
+            extra["combined_by"] = "grok_official_home_pipeline_video_extend"
             extra["source_duration"] = source_duration
             extra["output_duration"] = official_output_duration
         elif cfg["mode"] == "live" and strategy == "official":

@@ -2109,3 +2109,21 @@
   - Flask test client로 `/startup` 200 및 `static_version: 20260614-v3-77` 확인.
   - `node --check static/app.js` 통과.
   - `pythoncore-3.14-64\python.exe -m py_compile app.py tools\build_release_no_official.py` 통과.
+
+### 2026-06-14 09:58 KST - Grok 공식홈 쿼타 media pipeline 기본 경로 복원
+- 증상:
+  - 공식홈 쿼타 이미지→영상 요청에서 `Grok official app-chat video request failed: 403 Request rejected by anti-bot rules` 오류가 발생했다.
+  - 이미지 편집/영상 생성/영상 연장이 공식홈 REST pipeline을 재현하는 대신 Chrome/CDP `app-chat` 브라우저 fetch 경로로 빠질 수 있었다.
+- 원인:
+  - `grok_official_pipeline_video()`가 공식홈 이미지 reference를 찾으면 실제 pipeline 실행 전에 `grok_official_app_chat_video()`로 우선 분기했다.
+  - `grok_official_image_edit()`도 공식 post reference가 있으면 `app-chat` 편집을 먼저 시도했다.
+  - 공식 연장 handler가 `grok_official_app_chat_video_extend()`를 직접 호출했다.
+  - 업로드 403 시 browser upload fallback이 기본으로 열릴 수 있었다.
+- 변경:
+  - 공식홈 이미지 편집은 항상 `/rest/media/pipeline/run` 기반 `grok_official_pipeline_image_edit()`를 기본 경로로 사용하도록 했다.
+  - 공식홈 이미지→영상은 `grok_official_pipeline_video()` 내부의 app-chat 우선 분기를 제거하고 pipeline spec 실행만 사용하도록 했다.
+  - 공식홈 영상 연장은 `grok_official_pipeline_video_extend()`를 사용하도록 바꿨다.
+  - 업로드 browser fallback은 `GROK_OFFICIAL_BROWSER_UPLOAD_FALLBACK` 환경변수를 명시한 경우에만 동작하도록 기본 비활성화했다.
+- 검증:
+  - monkeypatch 검증에서 이미지 편집, 이미지→영상, 영상 연장이 모두 `official_transport=pipeline`으로 반환되고 `grok_official_browser_fetch`가 호출되지 않음을 확인.
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
