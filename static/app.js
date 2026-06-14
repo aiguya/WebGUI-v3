@@ -284,8 +284,8 @@ function scheduleWorkspaceHeight() {
   requestAnimationFrame(updateWorkspaceHeight);
 }
 
-const appStaticVersion = "20260614-v3-76";
-const appShellCacheName = "webgui-shell-v3-76";
+const appStaticVersion = "20260614-v3-77";
+const appShellCacheName = "webgui-shell-v3-77";
 
 window.addEventListener("load", () => {
   if ("caches" in window) {

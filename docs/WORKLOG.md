@@ -2093,3 +2093,19 @@
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
   - 후보 URL 정렬/중복 key/다운로드 후보 순서 로컬 검증 통과.
   - Flask test client로 `/health` 200 응답 확인.
+
+### 2026-06-14 09:39 KST - WebGUI.v3 런처 static version 불일치 수정
+- 증상:
+  - `WebGUI.v3.exe` 실행 시 서버는 `/startup` 200을 반환하지만 런처가 `startup static version mismatch`로 판정하며 “server did not start” 오류창을 띄웠다.
+  - 로그상 런처 기대값은 `20260614-v3-76`, 서버 응답은 `static_version: 20260614-v3-77`이었다.
+- 원인:
+  - 앱 정적 버전은 `v3-77`로 갱신되었지만 Chrome app 런처 소스/빌드 exe와 일부 프론트 캐시 상수는 `v3-76`에 머물러 있었다.
+- 변경:
+  - `tools/WebGuiLauncher.cs`의 `StaticVersion`을 `20260614-v3-77`로 갱신하고 `WebGUI.v3.exe`를 재빌드했다.
+  - `static/app.js`의 `appStaticVersion`과 `appShellCacheName`을 `v3-77`로 맞췄다.
+  - 릴리즈 빌더의 치환 대상 목록에 `20260614-v3-77` 및 `webgui-shell-v3-77`을 추가했다.
+- 검증:
+  - 새 `WebGUI.v3.exe` 바이너리에 `20260614-v3-77`이 포함되고 `20260614-v3-76`은 남지 않았음을 확인.
+  - Flask test client로 `/startup` 200 및 `static_version: 20260614-v3-77` 확인.
+  - `node --check static/app.js` 통과.
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py tools\build_release_no_official.py` 통과.
