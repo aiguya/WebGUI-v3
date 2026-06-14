@@ -36,7 +36,7 @@ load_dotenv()
 APP_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 APP_BUILD_STAMP = "dev"
-APP_STATIC_VERSION = "20260614-v3-76"
+APP_STATIC_VERSION = "20260614-v3-77"
 SETTINGS_PATH = ROOT / "webgork-settings.json"
 PRIVATE_STATE_DIR = Path(os.getenv("WEBGORK_CONFIG_DIR") or (ROOT / ".webgork-private")).expanduser().resolve()
 SENSITIVE_MEDIA_FILENAMES = {
@@ -3082,6 +3082,15 @@ def strip_url_query(url):
     return str(url or "").split("?", 1)[0]
 
 
+def grok_official_post_id_from_url(url):
+    match = re.search(r"grok\.com/imagine/post/([0-9a-fA-F-]{36})", str(url or ""))
+    return match.group(1).lower() if match else ""
+
+
+def grok_official_post_url(post_id):
+    return f"https://grok.com/imagine/post/{post_id}" if post_id else ""
+
+
 def grok_official_generated_asset_image_url(post_id, account_id=None, source_url=""):
     if not post_id:
         return ""
@@ -3130,6 +3139,231 @@ def grok_official_download_candidates(url, kind="image"):
                 if candidate not in candidates:
                     candidates.append(candidate)
     return candidates
+
+
+def grok_official_media_probe(url, kind, account_id=None):
+    account_id = account_id or active_grok_account_id()
+    try:
+        headers = grok_web_headers(account_id, accept="*/*")
+    except Exception:
+        headers = {}
+    probe_headers = {**headers, "Range": "bytes=0-2047"} if headers else {"Range": "bytes=0-2047"}
+    try:
+        response = requests.get(url, headers=probe_headers, timeout=20, stream=True)
+        chunk = next(response.iter_content(64), b"")
+        response.close()
+    except Exception as exc:
+        return {"ok": False, "url": url, "error": str(exc)[:300]}
+    content_type = (response.headers.get("content-type") or "").lower()
+    if response.status_code >= 400:
+        return {"ok": False, "url": url, "status": response.status_code, "content_type": content_type}
+    if kind == "video":
+        magic_ok = chunk[4:8] == b"ftyp" or chunk.startswith(b"\x00\x00\x00")
+        ok = "video" in content_type or magic_ok
+    else:
+        magic_ok = chunk.startswith((b"\xff\xd8\xff", b"\x89PNG", b"RIFF"))
+        ok = "image" in content_type or magic_ok
+    return {
+        "ok": bool(ok),
+        "url": url,
+        "status": response.status_code,
+        "content_type": content_type,
+        "content_length": response.headers.get("content-length"),
+    }
+
+
+def grok_official_post_link_candidates(post_id, account_id):
+    if not (post_id and account_id):
+        return {"image": [], "video": [], "thumbnail": []}
+    return {
+        "image": [
+            f"https://assets.grok.com/users/{account_id}/{post_id}/content",
+            f"https://assets.grok.com/users/{account_id}/generated/{post_id}/image.jpg",
+        ],
+        "video": [
+            f"https://assets.grok.com/users/{account_id}/generated/{post_id}/generated_video.mp4",
+        ],
+        "thumbnail": [
+            f"https://assets.grok.com/users/{account_id}/generated/{post_id}/preview_image.jpg",
+            f"https://grok.com/imagine/post/{post_id}/image?v=3&user_id={account_id}",
+        ],
+    }
+
+
+def grok_official_extract_json_string_fields(text, keys):
+    values = {}
+    for key in keys:
+        pattern = r'"' + re.escape(key) + r'"\s*:\s*"((?:\\.|[^"\\]){0,4000})"'
+        matches = []
+        for match in re.finditer(pattern, text or ""):
+            raw = match.group(1)
+            try:
+                value = raw.encode("utf-8").decode("unicode_escape", errors="replace")
+            except Exception:
+                value = raw
+            value = html.unescape(value).strip()
+            if value and value not in matches:
+                matches.append(value)
+        if matches:
+            values[key] = matches[0]
+    return values
+
+
+def grok_official_meta_content(text, name):
+    pattern = (
+        r'<meta[^>]+(?:name|property)=["\']' + re.escape(name) +
+        r'["\'][^>]+content=["\']([^"\']*)["\']'
+    )
+    match = re.search(pattern, text or "", re.IGNORECASE)
+    return html.unescape(match.group(1)).strip() if match else ""
+
+
+def grok_official_post_page_metadata(post_id, account_id=None):
+    post_url = grok_official_post_url(post_id)
+    if not post_url:
+        return {}
+    try:
+        headers = grok_web_headers(account_id, accept="text/html,application/xhtml+xml,application/json,*/*")
+        response = requests.get(post_url, headers=headers, timeout=30)
+        if response.status_code >= 400:
+            return {"post_page_status": response.status_code}
+        text = response.text or ""
+    except Exception as exc:
+        return {"post_page_error": str(exc)[:300]}
+    fields = grok_official_extract_json_string_fields(
+        text,
+        ("videoPrompt", "imagePrompt", "originalPrompt", "prompt"),
+    )
+    description = grok_official_meta_content(text, "description")
+    og_image = grok_official_meta_content(text, "og:image")
+    og_video = grok_official_meta_content(text, "og:video")
+    return {
+        "video_prompt": fields.get("videoPrompt") or fields.get("originalPrompt") or "",
+        "image_prompt": fields.get("imagePrompt") or "",
+        "prompt": fields.get("prompt") or fields.get("imagePrompt") or fields.get("videoPrompt") or description or "",
+        "description": description,
+        "og_image": og_image,
+        "og_video": og_video,
+    }
+
+
+def grok_official_find_existing_import(kind, post_id, official_url=""):
+    official_url = strip_url_query(official_url)
+    for item in read_metadata():
+        if item.get("kind") != kind:
+            continue
+        extra = item.get("extra") if isinstance(item.get("extra"), dict) else {}
+        if post_id and str(extra.get("official_post_id") or "") == post_id:
+            return item
+        for key in ("official_media_url", "official_image_url", "official_source_url", "official_thumbnail_url"):
+            if official_url and strip_url_query(extra.get(key) or "") == official_url:
+                return item
+    return None
+
+
+def grok_official_import_post_link(post_url):
+    post_id = grok_official_post_id_from_url(post_url)
+    if not post_id:
+        raise ValueError("Grok 공식홈 post 링크 형식이 아닙니다. https://grok.com/imagine/post/{post_id} 링크를 붙여 주세요.")
+    account_id = active_grok_account_id()
+    if not account_id:
+        raise RuntimeError("Grok 공식홈 account id를 확인하지 못했습니다. 설정에서 Grok 공식홈 Chrome을 열고 로그인 상태를 확인해 주세요.")
+    canonical_url = grok_official_post_url(post_id)
+    page_meta = grok_official_post_page_metadata(post_id, account_id=account_id)
+    candidates = grok_official_post_link_candidates(post_id, account_id)
+    probes = {}
+    imported = []
+    existing = []
+    errors = []
+
+    image_url = ""
+    for candidate in candidates["image"]:
+        probe = grok_official_media_probe(candidate, "image", account_id=account_id)
+        probes[candidate] = probe
+        if probe.get("ok"):
+            image_url = candidate
+            break
+    if image_url:
+        existing_item = grok_official_find_existing_import("image", post_id, image_url)
+        if existing_item:
+            existing.append(existing_item)
+        else:
+            try:
+                path, used_url = grok_official_download(image_url, media_path("image"), kind="image", return_url=True)
+                prompt = page_meta.get("image_prompt") or page_meta.get("prompt") or f"Grok 공식홈 이미지 {post_id}"
+                item = add_metadata("image", prompt, "grok-official-post-link", path, extra={
+                    "source": "grok_official_web",
+                    "generation_type": "grok_official_post_import",
+                    "official_transport": "post_link_import",
+                    "official_post_id": post_id,
+                    "official_parent_post_id": post_id,
+                    "official_root_post_id": post_id,
+                    "official_image_url": used_url,
+                    "official_media_url": used_url,
+                    "official_source_url": image_url,
+                    "official_import_post_url": canonical_url,
+                    "official_account_id": account_id,
+                    "official_page_metadata": page_meta,
+                })
+                imported.append(item)
+            except Exception as exc:
+                errors.append({"kind": "image", "url": image_url, "error": str(exc)[:500]})
+
+    thumbnail_url = ""
+    for candidate in candidates["thumbnail"]:
+        probe = grok_official_media_probe(candidate, "image", account_id=account_id)
+        probes[candidate] = probe
+        if probe.get("ok"):
+            thumbnail_url = candidate
+            break
+
+    video_url = ""
+    for candidate in candidates["video"]:
+        probe = grok_official_media_probe(candidate, "video", account_id=account_id)
+        probes[candidate] = probe
+        if probe.get("ok"):
+            video_url = candidate
+            break
+    if video_url:
+        existing_item = grok_official_find_existing_import("video", post_id, video_url)
+        if existing_item:
+            existing.append(existing_item)
+        else:
+            try:
+                path, used_url = grok_official_download(video_url, media_path("video"), kind="video", return_url=True)
+                prompt = page_meta.get("video_prompt") or page_meta.get("prompt") or f"Grok 공식홈 영상 {post_id}"
+                item = add_metadata("video", prompt, "grok-official-post-link", path, extra={
+                    "source": "grok_official_web",
+                    "generation_type": "grok_official_post_import",
+                    "official_transport": "post_link_import",
+                    "official_post_id": post_id,
+                    "official_parent_post_id": post_id,
+                    "official_extend_post_id": post_id,
+                    "official_root_post_id": post_id,
+                    "official_root_attachment_id": post_id,
+                    "official_media_url": used_url,
+                    "official_thumbnail_url": thumbnail_url,
+                    "official_source_url": video_url,
+                    "official_import_post_url": canonical_url,
+                    "official_account_id": account_id,
+                    "official_page_metadata": page_meta,
+                })
+                imported.append(item)
+            except Exception as exc:
+                errors.append({"kind": "video", "url": video_url, "error": str(exc)[:500]})
+
+    if imported:
+        invalidate_library_cache()
+    return {
+        "post_id": post_id,
+        "account_id": account_id,
+        "post_url": canonical_url,
+        "items": imported,
+        "existing": existing,
+        "errors": errors,
+        "probes": probes,
+        "page_metadata": page_meta,
+    }
 
 
 def save_response_bytes(blob, dest_dir, suffix=".jpg", filename_prefix="grok-official-"):
@@ -10444,6 +10678,42 @@ def library():
         "include_scanned": include_scanned,
         "compact": compact,
     })
+
+
+@app.post("/api/library/import-grok-post")
+def import_grok_post_to_library():
+    data = request.get_json(silent=True) or {}
+    post_url = (data.get("url") or data.get("post_url") or "").strip()
+    if not post_url:
+        return safe_error("Grok 공식홈 post 링크를 입력해 주세요.")
+    try:
+        result = grok_official_import_post_link(post_url)
+        if not result["items"] and not result["existing"]:
+            detail = {
+                "post_id": result["post_id"],
+                "account_id": result["account_id"],
+                "errors": result["errors"],
+                "probes": result["probes"],
+            }
+            return safe_error(
+                "Grok 공식홈 링크에서 접근 가능한 이미지나 영상을 찾지 못했습니다.",
+                json.dumps(detail, ensure_ascii=False),
+                404,
+            )
+        return jsonify({
+            "ok": True,
+            "items": result["items"],
+            "existing": [compact_library_item(item) for item in result["existing"]],
+            "post_id": result["post_id"],
+            "account_id": result["account_id"],
+            "post_url": result["post_url"],
+            "page_metadata": result["page_metadata"],
+            "errors": result["errors"],
+        })
+    except ValueError as exc:
+        return safe_error(str(exc), status=400)
+    except Exception as exc:
+        return safe_error("Grok 공식홈 링크를 라이브러리에 등록하지 못했습니다.", exc, 502)
 
 
 @app.post("/api/library/favorite")

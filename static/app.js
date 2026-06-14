@@ -6664,6 +6664,40 @@ async function deleteItems(ids) {
 
 document.querySelector("#deleteSelected").addEventListener("click", () => deleteItems([...selectedItems]));
 document.querySelector("#refreshLibrary").addEventListener("click", () => loadLibrary(true, false));
+document.querySelector("#grokPostImportForm")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const input = form.querySelector("#grokPostImportUrl");
+  const button = form.querySelector("button[type='submit']");
+  const url = (input?.value || "").trim();
+  if (!url) {
+    showToast("Grok 공식홈 post 링크를 입력해 주세요.", true);
+    return;
+  }
+  const original = button?.textContent || "공식홈 링크 등록";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "확인 중";
+  }
+  try {
+    const data = await postJson("/api/library/import-grok-post", { url });
+    const created = data.items?.length || 0;
+    const existing = data.existing?.length || 0;
+    const parts = [];
+    if (created) parts.push(`${created}개 등록`);
+    if (existing) parts.push(`${existing}개 기존 항목 확인`);
+    showToast(parts.length ? `Grok 공식홈 링크 처리 완료: ${parts.join(", ")}` : "Grok 공식홈 링크를 확인했습니다.");
+    if (created) input.value = "";
+    await loadLibrary(true, false);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  }
+});
 document.querySelector("#libraryFilter").addEventListener("change", event => {
   libraryFilter = event.target.value;
   rerenderLibrary();

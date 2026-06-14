@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/styles.css?v=20260614-v3-76">
+  <link rel="stylesheet" href="/static/styles.css?v=20260614-v3-77">
 </head>
 <body>
   <header class="topbar">
@@ -986,6 +986,10 @@
             <button type="button" id="deleteSelected" class="danger-btn">선택 삭제</button>
           </div>
         </div>
+        <form class="library-import-bar" id="grokPostImportForm">
+          <input type="url" id="grokPostImportUrl" placeholder="https://grok.com/imagine/post/..." autocomplete="off">
+          <button type="submit" class="secondary">공식홈 링크 등록</button>
+        </form>
         <div class="library-browse-bar">
           <input type="search" id="librarySearch" placeholder="검색">
           <select id="libraryFilter" aria-label="라이브러리 필터">
@@ -1264,6 +1268,6 @@
     </div>
     <div class="media-viewer-stage"></div>
   </dialog>
-  <script src="/static/app.js?v=20260614-v3-76"></script>
+  <script src="/static/app.js?v=20260614-v3-77"></script>
 </body>
 </html>

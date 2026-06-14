@@ -2045,3 +2045,20 @@
 - 검증:
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
   - 기본 timeout 900초, 환경변수 1200초, 잘못된 환경변수 fallback 900초 확인.
+
+### 2026-06-14 09:00 KST - Grok 공식홈 post 링크 라이브러리 등록 추가
+- 목표:
+  - 사용자가 `https://grok.com/imagine/post/{post_id}` 링크를 붙여넣으면 접근 가능한 공식홈 내부 이미지/영상을 라이브러리에 등록한다.
+  - post 페이지에 노출되는 `videoPrompt`/`imagePrompt`를 best-effort로 추출해 라이브러리 prompt 및 공식 메타데이터에 같이 저장한다.
+- 변경:
+  - `app.py`: post id 추출, 공식 asset 후보 URL 생성, Range probe, post 페이지 prompt/meta 추출, 중복 확인, 라이브러리 등록 헬퍼를 추가했다.
+  - `app.py`: `/api/library/import-grok-post` 엔드포인트를 추가했다.
+  - `templates/index.html`: 라이브러리 상단에 공식홈 링크 등록 입력창을 추가하고 정적 버전을 `20260614-v3-77`로 갱신했다.
+  - `static/app.js`: 링크 등록 submit 핸들러를 추가했다.
+  - `static/styles.css`: 라이브러리 링크 등록 바 스타일을 추가했다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - `node --check static/app.js` 통과.
+  - 실제 링크 `https://grok.com/imagine/post/cf54450b-0dbd-4f8b-aa6a-6b0c49d51bc7` 등록 테스트에서 영상 1개 신규 등록, 프롬프트/썸네일/공식 영상 URL 메타데이터 저장 확인.
+  - 같은 링크 재등록 시 신규 0개, 기존 1개로 중복 방지 확인.
+  - 잘못된 링크 입력 시 400 오류로 안내 확인.

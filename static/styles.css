@@ -6349,6 +6349,27 @@ button:not(.secondary):not(.tab):not(.danger-btn):not(.icon-button):hover,
   font-size: 11px !important;
 }
 
+.library-import-bar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) max-content;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 8px;
+}
+
+.library-import-bar input,
+.library-import-bar button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .library-import-bar {
+    grid-template-columns: 1fr;
+  }
+}
+
 #libraryGrid {
   display: grid !important;
   grid-template-columns: repeat(auto-fill, minmax(206px, 1fr)) !important;
