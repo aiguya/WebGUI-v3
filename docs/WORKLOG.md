@@ -2268,3 +2268,16 @@
 - 검증:
   - `from playwright.sync_api import sync_playwright` import 확인.
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+
+### 2026-06-14 17:26 KST - Grok 공식홈 source post 생성 순서 최소 코드와 동일화
+- 증상:
+  - Playwright fallback까지 도달했지만 app-chat 편집 요청이 계속 `Request rejected by anti-bot rules`로 차단됐다.
+- 원인:
+  - 첨부 최소 코드의 `register_source()`는 로컬 파일 입력이면 항상 `upload_image -> create_post`로 새 source post를 만든다.
+  - 앱 구현은 library metadata에 공식 post id가 있으면 기존 post를 재사용하는 최적화가 남아 있어, 첨부 코드의 순서와 달랐다.
+- 변경:
+  - `grok_official_register_source_post()`에 `force_create` 인자를 추가했다.
+  - 공식홈 이미지 편집과 이미지->영상 media-post 경로에서는 항상 `force_create=True`로 호출해 새 source post를 만들도록 했다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - monkeypatch로 이미지 편집/i2v 모두 source 등록 시 `force_create=True`를 넘기는지 확인.

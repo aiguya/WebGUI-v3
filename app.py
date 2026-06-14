@@ -5272,10 +5272,10 @@ def grok_official_existing_source_info(source, account_id=None):
     }
 
 
-def grok_official_register_source_post(source, account_id=None):
+def grok_official_register_source_post(source, account_id=None, force_create=False):
     account_id = account_id or active_grok_account_id()
     existing = grok_official_existing_source_info(source, account_id=account_id)
-    if existing and not checked(os.getenv("GROK_OFFICIAL_FORCE_SOURCE_POST_CREATE", "")):
+    if existing and not force_create and not checked(os.getenv("GROK_OFFICIAL_FORCE_SOURCE_POST_CREATE", "")):
         return existing
     try:
         source_path = Path(source)
@@ -5391,7 +5391,7 @@ def grok_official_media_post_image_edit(prompt, source_paths, dest_dir, aspect_r
     if not clean_prompt:
         raise RuntimeError("Prompt is required for Grok official image edit.")
     account_id = account_id or active_grok_account_id()
-    source_info = grok_official_register_source_post(sources[0], account_id=account_id)
+    source_info = grok_official_register_source_post(sources[0], account_id=account_id, force_create=True)
     source_post_id = source_info.get("post_id") or ""
     if not (source_post_id and source_info.get("media_url")):
         raise RuntimeError("Grok official source post registration did not return a usable media post.")
@@ -5500,7 +5500,7 @@ def grok_official_media_post_image_to_video(prompt, source_path, duration=15, re
     aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
     resolution = valid_video_resolution(resolution)
     duration = min(max(int(duration or 15), 6), 15)
-    source_info = grok_official_register_source_post(source_path, account_id=account_id)
+    source_info = grok_official_register_source_post(source_path, account_id=account_id, force_create=True)
     source_post_id = source_info.get("post_id") or ""
     if not (source_post_id and source_info.get("media_url")):
         raise RuntimeError("Grok official source post registration did not return a usable media post.")
