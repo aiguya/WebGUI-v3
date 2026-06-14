@@ -4955,6 +4955,534 @@ def grok_official_upload_file(path, account_id=None):
     }
 
 
+def grok_official_asset_url(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith(("http://", "https://")):
+        return text
+    return f"https://assets.grok.com/{text.lstrip('/')}"
+
+
+def grok_official_rest_post_json(path, body, label="Grok official request", timeout=120, account_id=None):
+    url = path if str(path).startswith(("http://", "https://")) else f"https://grok.com{path}"
+    headers = {
+        **grok_web_headers(account_id, accept="application/json, text/event-stream, */*"),
+        "Content-Type": "application/json",
+        "x-xai-request-id": uuid.uuid4().hex,
+    }
+    response = requests.post(url, headers=headers, json=body or {}, timeout=timeout)
+    if response.status_code >= 400:
+        detail = grok_official_json_error(response)
+        should_try_browser = (
+            checked(os.getenv("GROK_OFFICIAL_BROWSER_FETCH_FALLBACK", "1"))
+            and response.status_code == 403
+            and ("anti-bot" in detail.lower() or grok_official_is_cloudflare_challenge(detail))
+        )
+        if should_try_browser:
+            browser_response = grok_official_browser_fetch(url, body=body or {}, timeout=timeout)
+            status = int(browser_response.get("status") or 0)
+            text = browser_response.get("text") or ""
+            if status >= 400:
+                raise RuntimeError(f"{label}: browser fetch failed with HTTP {status}: {text[:1200]}")
+            try:
+                return json.loads(text or "{}") or {}
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"{label}: browser fetch returned non-JSON response: {text[:1200]}") from exc
+        raise RuntimeError(f"{label}: HTTP {response.status_code}: {detail}")
+    return response.json() or {}
+
+
+def grok_official_app_chat_request(body, timeout=650, account_id=None, target_post_id=None):
+    url = "https://grok.com/rest/app-chat/conversations/new"
+    headers = {
+        **grok_web_headers(account_id, accept="application/json, text/event-stream, */*"),
+        "Content-Type": "application/json",
+        "x-xai-request-id": uuid.uuid4().hex,
+    }
+    response = requests.post(url, headers=headers, json=body or {}, timeout=timeout, stream=True)
+    if response.status_code >= 400:
+        detail = grok_official_json_error(response)
+        should_try_browser = (
+            checked(os.getenv("GROK_OFFICIAL_BROWSER_FETCH_FALLBACK", "1"))
+            and response.status_code == 403
+            and ("anti-bot" in detail.lower() or grok_official_is_cloudflare_challenge(detail))
+        )
+        if should_try_browser:
+            browser_response = grok_official_browser_fetch(url, body=body or {}, timeout=timeout, target_post_id=target_post_id)
+            status = int(browser_response.get("status") or 0)
+            text = browser_response.get("text") or ""
+            if status >= 400:
+                raise RuntimeError(f"Grok official app-chat browser request failed: {status} {text[:1200]}")
+            return text
+        raise RuntimeError(f"Grok official app-chat request failed: {response.status_code} {detail}")
+    return "".join(
+        chunk
+        for chunk in response.iter_content(chunk_size=65536, decode_unicode=True)
+        if chunk
+    )
+
+
+def grok_official_media_post_get(post_id, account_id=None):
+    if not post_id:
+        return {}
+    payload = grok_official_rest_post_json(
+        "/rest/media/post/get",
+        {"id": post_id},
+        label="Grok official media post get",
+        timeout=60,
+        account_id=account_id,
+    )
+    post = payload.get("post") or payload.get("mediaPost") or payload
+    return post if isinstance(post, dict) else {}
+
+
+def grok_official_media_post_create(media_url, media_type="MEDIA_POST_TYPE_IMAGE", account_id=None):
+    media_url = grok_official_asset_url(media_url)
+    if not media_url:
+        raise RuntimeError("Grok official media post create requires a media URL.")
+    payload = grok_official_rest_post_json(
+        "/rest/media/post/create",
+        {"mediaUrl": media_url, "mediaType": media_type},
+        label="Grok official media post create",
+        timeout=120,
+        account_id=account_id,
+    )
+    post = payload.get("post") or payload.get("mediaPost") or payload
+    if not isinstance(post, dict) or not (post.get("id") or post.get("postId")):
+        raise RuntimeError("Grok official media post create response did not contain a post ID.")
+    return post
+
+
+def grok_official_media_post_save(post_id, account_id=None):
+    post = grok_official_media_post_get(post_id, account_id=account_id)
+    interaction = post.get("userInteractionStatus") if isinstance(post.get("userInteractionStatus"), dict) else {}
+    if interaction.get("likeStatus") is True:
+        return {"saved": True, "already_saved": True}
+    grok_official_rest_post_json(
+        "/rest/media/post/like",
+        {"id": post_id},
+        label="Grok official media post save",
+        timeout=60,
+        account_id=account_id,
+    )
+    refreshed = grok_official_media_post_get(post_id, account_id=account_id)
+    refreshed_interaction = refreshed.get("userInteractionStatus") if isinstance(refreshed.get("userInteractionStatus"), dict) else {}
+    if refreshed_interaction.get("likeStatus") is not True:
+        raise RuntimeError("Grok official media post was not marked as saved.")
+    return {"saved": True, "already_saved": False}
+
+
+def grok_official_media_post_related_ids(post):
+    related = set()
+    if not isinstance(post, dict):
+        return related
+    for key in ("childPosts", "videos"):
+        for item in post.get(key) or []:
+            if isinstance(item, dict):
+                value = item.get("id") or item.get("postId")
+            else:
+                value = item
+            if value:
+                related.add(str(value))
+    return related
+
+
+def grok_official_media_post_video_url(post):
+    if not isinstance(post, dict):
+        return ""
+    media_url = post.get("mediaUrl") or ""
+    media_type = str(post.get("mediaType") or "").upper()
+    if media_url and "VIDEO" in media_type:
+        return grok_official_asset_url(media_url)
+    for item in post.get("videos") or []:
+        if isinstance(item, dict):
+            media_url = item.get("mediaUrl") or item.get("videoUrl") or ""
+            if media_url:
+                return grok_official_asset_url(media_url)
+    return ""
+
+
+def grok_official_existing_source_info(source, account_id=None):
+    try:
+        source_path = Path(source)
+    except (TypeError, ValueError, OSError):
+        return None
+    try:
+        source_path_exists = source_path.exists()
+    except OSError:
+        source_path_exists = False
+    if not source_path_exists:
+        return None
+    item = find_metadata_by_file_path(source_path)
+    extra = item.get("extra") if isinstance(item, dict) and isinstance(item.get("extra"), dict) else {}
+    remote_url = remote_url_for_media_path(source_path)
+    source_url = grok_official_matched_source_url_for_item(source_path, item, extra, remote_url=remote_url)
+    post_id = (
+        extra.get("official_source_post_id")
+        or extra.get("official_post_id")
+        or extra.get("official_parent_post_id")
+        or extra.get("official_root_post_id")
+        or official_asset_content_id_from_url(source_url)
+        or official_generated_id_from_url(source_url)
+        or official_image_id_from_url(source_url)
+    )
+    if not (post_id and source_url):
+        return None
+    try:
+        post = grok_official_media_post_get(post_id, account_id=account_id)
+    except Exception:
+        return None
+    if not post:
+        return None
+    media_url = grok_official_asset_url(post.get("mediaUrl") or source_url)
+    return {
+        "post_id": str(post.get("id") or post.get("postId") or post_id),
+        "media_url": media_url,
+        "asset_id": official_asset_content_id_from_url(media_url) or official_generated_id_from_url(media_url) or official_image_id_from_url(media_url),
+        "post": post,
+        "source_path": str(source_path),
+        "source_url": source_url,
+        "registered_new": False,
+        "used_existing_post": True,
+    }
+
+
+def grok_official_register_source_post(source, account_id=None):
+    account_id = account_id or active_grok_account_id()
+    existing = grok_official_existing_source_info(source, account_id=account_id)
+    if existing and not checked(os.getenv("GROK_OFFICIAL_FORCE_SOURCE_POST_CREATE", "")):
+        return existing
+    try:
+        source_path = Path(source)
+    except (TypeError, ValueError, OSError):
+        source_path = None
+    try:
+        source_path_exists = bool(source_path and source_path.exists())
+    except OSError:
+        source_path_exists = False
+    if source_path and source_path_exists:
+        uploaded = grok_official_upload_file(source_path, account_id=account_id)
+        media_url = grok_official_asset_url(uploaded.get("fileUri"))
+        post = grok_official_media_post_create(media_url, account_id=account_id)
+        post_media_url = grok_official_asset_url(post.get("mediaUrl") or media_url)
+        return {
+            "post_id": str(post.get("id") or post.get("postId") or ""),
+            "media_url": post_media_url,
+            "asset_id": uploaded.get("fileMetadataId") or official_asset_content_id_from_url(post_media_url),
+            "post": post,
+            "source_path": str(source_path),
+            "source_url": media_url,
+            "upload": uploaded,
+            "registered_new": True,
+            "used_existing_post": False,
+        }
+    media_url = grok_official_asset_url(source)
+    post = grok_official_media_post_create(media_url, account_id=account_id)
+    post_media_url = grok_official_asset_url(post.get("mediaUrl") or media_url)
+    return {
+        "post_id": str(post.get("id") or post.get("postId") or ""),
+        "media_url": post_media_url,
+        "asset_id": official_asset_content_id_from_url(post_media_url) or official_generated_id_from_url(post_media_url) or official_image_id_from_url(media_url),
+        "post": post,
+        "source_url": media_url,
+        "registered_new": True,
+        "used_existing_post": False,
+    }
+
+
+def grok_official_wait_linked_image(source_post_id, baseline_ids, timeout=180, account_id=None):
+    baseline_ids = {str(item) for item in (baseline_ids or set())}
+    deadline = time.time() + max(15, int(timeout or 180))
+    last_seen = []
+    while time.time() < deadline:
+        source_post = grok_official_media_post_get(source_post_id, account_id=account_id)
+        candidates = sorted(grok_official_media_post_related_ids(source_post) - baseline_ids)
+        last_seen = candidates
+        for candidate_id in candidates:
+            post = grok_official_media_post_get(candidate_id, account_id=account_id)
+            if str(post.get("originalPostId") or "") != str(source_post_id):
+                continue
+            original_ref_type = post.get("originalRefType")
+            if original_ref_type and original_ref_type != "ORIGINAL_REF_TYPE_IMAGE_EDIT":
+                continue
+            media_url = grok_official_asset_url(post.get("mediaUrl") or "")
+            media_type = str(post.get("mediaType") or "").upper()
+            if media_url and "IMAGE" in media_type:
+                return candidate_id, media_url, post
+        update_grok_official_progress(
+            stage="wait-linked-image",
+            message="Waiting for Grok official linked image edit result",
+            official_source_post_id=source_post_id,
+            linked_candidate_count=len(candidates),
+        )
+        time.sleep(1.5)
+    raise RuntimeError(
+        "No linked Grok official image-edit result appeared before timeout. "
+        + json.dumps({"source_post_id": source_post_id, "last_seen": last_seen[-8:]}, ensure_ascii=False)
+    )
+
+
+def grok_official_wait_linked_video(source_post_id, baseline_ids, duration=0, timeout=300, account_id=None):
+    baseline_ids = {str(item) for item in (baseline_ids or set())}
+    deadline = time.time() + max(30, int(timeout or 300))
+    last_seen = []
+    while time.time() < deadline:
+        source_post = grok_official_media_post_get(source_post_id, account_id=account_id)
+        candidates = sorted(grok_official_media_post_related_ids(source_post) - baseline_ids)
+        last_seen = candidates
+        for candidate_id in candidates:
+            post = grok_official_media_post_get(candidate_id, account_id=account_id)
+            if str(post.get("originalPostId") or "") != str(source_post_id):
+                continue
+            media_url = grok_official_media_post_video_url(post)
+            if not media_url:
+                continue
+            actual_duration = post.get("videoDuration")
+            if duration and actual_duration not in (None, ""):
+                try:
+                    if abs(float(actual_duration) - float(duration)) > 2:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            return candidate_id, media_url, actual_duration, post
+        update_grok_official_progress(
+            stage="wait-linked-video",
+            message="Waiting for Grok official linked image-to-video result",
+            official_source_post_id=source_post_id,
+            linked_candidate_count=len(candidates),
+        )
+        time.sleep(2)
+    raise RuntimeError(
+        "No linked Grok official image-to-video result appeared before timeout. "
+        + json.dumps({"source_post_id": source_post_id, "last_seen": last_seen[-8:], "duration": duration}, ensure_ascii=False)
+    )
+
+
+def grok_official_media_post_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
+    sources = [Path(path) for path in source_paths if path]
+    if not sources:
+        raise RuntimeError("No source image was provided for Grok official image edit.")
+    clean_prompt = str(prompt or "").strip()
+    if not clean_prompt:
+        raise RuntimeError("Prompt is required for Grok official image edit.")
+    account_id = account_id or active_grok_account_id()
+    source_info = grok_official_register_source_post(sources[0], account_id=account_id)
+    source_post_id = source_info.get("post_id") or ""
+    if not (source_post_id and source_info.get("media_url")):
+        raise RuntimeError("Grok official source post registration did not return a usable media post.")
+    save_status = grok_official_media_post_save(source_post_id, account_id=account_id)
+    baseline = grok_official_media_post_related_ids(grok_official_media_post_get(source_post_id, account_id=account_id))
+    image_edit_config = {
+        "imageReferences": [source_info["media_url"]],
+        "parentPostId": source_post_id,
+    }
+    if aspect_ratio and aspect_ratio != "auto":
+        image_edit_config["aspectRatio"] = official_aspect_ratio(aspect_ratio, fallback=aspect_ratio)
+    request_body = {
+        "temporary": True,
+        "modelName": "imagine-image-edit",
+        "message": clean_prompt,
+        "enableImageGeneration": True,
+        "returnImageBytes": False,
+        "returnRawGrokInXaiRequest": False,
+        "enableImageStreaming": True,
+        "imageGenerationCount": 2,
+        "forceConcise": False,
+        "enableSideBySide": True,
+        "sendFinalMetadata": True,
+        "isReasoning": False,
+        "disableTextFollowUps": True,
+        "responseMetadata": {
+            "modelConfigOverride": {
+                "modelMap": {
+                    "imageEditModelConfig": image_edit_config,
+                    "imageEditModel": "imagine",
+                }
+            }
+        },
+        "disableMemory": False,
+        "forceSideBySide": False,
+    }
+    reset_grok_official_progress(
+        status="running",
+        stage="media-post-edit",
+        message="Grok official media-post image edit request sent",
+        prompt_preview=clean_prompt[:120],
+        official_source_post_id=source_post_id,
+        official_source_url=source_info.get("media_url"),
+        baseline_count=len(baseline),
+        account_id_present=bool(account_id),
+    )
+    stream_text = grok_official_app_chat_request(
+        request_body,
+        timeout=360,
+        account_id=account_id,
+        target_post_id=source_post_id,
+    )
+    app_chat_events = grok_agent_parse_json_lines(stream_text)
+    result_post_id, media_url, result_post = grok_official_wait_linked_image(
+        source_post_id,
+        baseline,
+        timeout=180,
+        account_id=account_id,
+    )
+    path, used_media_url = grok_official_download(media_url, dest_dir, kind="image", return_url=True)
+    image_id = official_asset_content_id_from_url(used_media_url) or official_generated_id_from_url(used_media_url) or official_image_id_from_url(used_media_url)
+    update_grok_official_progress(
+        status="done",
+        stage="media-post-edit",
+        message="Grok official media-post image edit completed",
+        output_path=str(path),
+        official_source_post_id=source_post_id,
+        official_result_post_id=result_post_id,
+        official_image_url=used_media_url,
+        official_image_id=image_id,
+    )
+    return path, {
+        "source": "grok_official_web",
+        "official_transport": "app_chat_media_post",
+        "official_pipeline": "image_edit",
+        "official_image_url": used_media_url,
+        "official_media_url": used_media_url,
+        "official_image_id": image_id,
+        "official_post_id": result_post_id,
+        "official_result_post_id": result_post_id,
+        "official_source_post_id": source_post_id,
+        "official_parent_post_id": source_post_id,
+        "official_original_post_id": source_post_id,
+        "official_root_post_id": source_post_id,
+        "official_result_link_verified": True,
+        "official_original_ref_type": result_post.get("originalRefType") if isinstance(result_post, dict) else "",
+        "official_source_reference": source_info.get("media_url"),
+        "official_source_post": source_info,
+        "official_source_saved": save_status,
+        "official_baseline_ids": sorted(baseline),
+        "official_requested_resolution": resolution,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        "official_events": app_chat_events[-20:],
+        "official_request_body": request_body,
+        "source_count": len(sources),
+        "grok_account_id": account_id,
+    }
+
+
+def grok_official_media_post_image_to_video(prompt, source_path, duration=15, resolution="720p", aspect_ratio="2:3", account_id=None):
+    clean_prompt = str(prompt or "").strip()
+    if not clean_prompt:
+        raise RuntimeError("Prompt is required for Grok official image-to-video.")
+    account_id = account_id or active_grok_account_id()
+    aspect_ratio = official_aspect_ratio(aspect_ratio, fallback="2:3")
+    resolution = valid_video_resolution(resolution)
+    duration = min(max(int(duration or 15), 6), 15)
+    source_info = grok_official_register_source_post(source_path, account_id=account_id)
+    source_post_id = source_info.get("post_id") or ""
+    if not (source_post_id and source_info.get("media_url")):
+        raise RuntimeError("Grok official source post registration did not return a usable media post.")
+    save_status = grok_official_media_post_save(source_post_id, account_id=account_id)
+    baseline = grok_official_media_post_related_ids(grok_official_media_post_get(source_post_id, account_id=account_id))
+    request_body = {
+        "modelName": "imagine-video-gen",
+        "temporary": True,
+        "message": f"{clean_prompt} --mode=normal".strip(),
+        "enableImageGeneration": True,
+        "returnImageBytes": False,
+        "returnRawGrokInXaiRequest": False,
+        "enableImageStreaming": True,
+        "imageGenerationCount": 2,
+        "forceConcise": False,
+        "enableSideBySide": True,
+        "sendFinalMetadata": True,
+        "isReasoning": False,
+        "disableTextFollowUps": True,
+        "disableMemory": False,
+        "forceSideBySide": False,
+        "responseMetadata": {
+            "modelConfigOverride": {
+                "modelMap": {
+                    "videoGenModel": "imagine",
+                    "videoGenModelConfig": {
+                        "parentPostId": source_post_id,
+                        "aspectRatio": aspect_ratio,
+                        "videoLength": duration,
+                        "isVideoEdit": False,
+                        "resolutionName": resolution,
+                        "isReferenceToVideo": False,
+                    },
+                }
+            }
+        },
+    }
+    reset_grok_official_progress(
+        status="running",
+        stage="media-post-i2v",
+        message="Grok official media-post image-to-video request sent",
+        prompt_preview=clean_prompt[:120],
+        duration=duration,
+        resolution=resolution,
+        aspect_ratio=aspect_ratio,
+        official_source_post_id=source_post_id,
+        official_source_url=source_info.get("media_url"),
+        baseline_count=len(baseline),
+        account_id_present=bool(account_id),
+    )
+    stream_text = grok_official_app_chat_request(
+        request_body,
+        timeout=650,
+        account_id=account_id,
+        target_post_id=source_post_id,
+    )
+    app_chat_events = grok_agent_parse_json_lines(stream_text)
+    result_post_id, media_url, actual_duration, result_post = grok_official_wait_linked_video(
+        source_post_id,
+        baseline,
+        duration=duration,
+        timeout=300,
+        account_id=account_id,
+    )
+    path, used_media_url = grok_official_download(media_url, media_path("video"), kind="video", return_url=True)
+    video_id = official_asset_content_id_from_url(used_media_url) or official_generated_id_from_url(used_media_url)
+    update_grok_official_progress(
+        status="done",
+        stage="media-post-i2v",
+        message="Grok official media-post image-to-video completed",
+        progress=100,
+        output_path=str(path),
+        official_media_url=used_media_url,
+        official_source_post_id=source_post_id,
+        official_result_post_id=result_post_id,
+        official_video_id=video_id,
+    )
+    return path, {
+        "source": "grok_official_web",
+        "official_transport": "app_chat_media_post",
+        "official_pipeline": "video_gen",
+        "official_media_url": used_media_url,
+        "official_video_id": video_id,
+        "official_video_ids": [value for value in (video_id, result_post_id) if value],
+        "official_post_id": result_post_id,
+        "official_result_post_id": result_post_id,
+        "official_parent_post_id": source_post_id,
+        "official_source_post_id": source_post_id,
+        "official_original_post_id": source_post_id,
+        "official_root_post_id": source_post_id,
+        "official_result_link_verified": True,
+        "official_source_reference": source_info.get("media_url"),
+        "official_source_post": source_info,
+        "official_source_saved": save_status,
+        "official_baseline_ids": sorted(baseline),
+        "official_actual_duration": actual_duration,
+        "official_result_post": result_post,
+        "official_events": app_chat_events[-20:],
+        "official_request_body": request_body,
+        "duration": duration,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        "grok_account_id": account_id,
+    }
+
+
 def grok_official_blob_ref_for_image(path, account_id=None):
     source = Path(path)
     remote_url = remote_url_for_media_path(source)
@@ -5533,7 +6061,7 @@ def grok_official_pipeline_video(prompt, source_url="", source_path=None, durati
     duration = max(2, min(15, int(duration or 6)))
     if source_path and checked(os.getenv("GROK_OFFICIAL_APP_CHAT_I2V_DEFAULT", "1")):
         try:
-            path, extra = grok_official_app_chat_video(
+            path, extra = grok_official_media_post_image_to_video(
                 prompt,
                 source_path,
                 duration=duration,
@@ -5541,8 +6069,8 @@ def grok_official_pipeline_video(prompt, source_url="", source_path=None, durati
                 aspect_ratio=aspect_ratio,
                 account_id=account_id,
             )
-            extra["official_preferred_transport"] = "app_chat_conversations"
-            extra["official_preferred_reason"] = "official_imagine_post_route"
+            extra["official_preferred_transport"] = "app_chat_media_post"
+            extra["official_preferred_reason"] = "official_media_post_linked_result_route"
             return path, extra
         except Exception as exc:
             app_chat_error = error_detail_text(exc)
@@ -6361,7 +6889,7 @@ def grok_official_is_antibot_error(error):
 def grok_official_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto", resolution="auto", account_id=None):
     sources = [Path(path) for path in source_paths if path]
     try:
-        path, extra = grok_official_app_chat_image_edit(
+        path, extra = grok_official_media_post_image_edit(
             prompt,
             source_paths,
             dest_dir,
@@ -6369,8 +6897,8 @@ def grok_official_image_edit(prompt, source_paths, dest_dir, aspect_ratio="auto"
             resolution=resolution,
             account_id=account_id,
         )
-        extra["official_preferred_transport"] = "app_chat_conversations"
-        extra["official_preferred_reason"] = "official_imagine_post_route"
+        extra["official_preferred_transport"] = "app_chat_media_post"
+        extra["official_preferred_reason"] = "official_media_post_linked_result_route"
         return path, extra
     except Exception as exc:
         app_chat_error = error_detail_text(exc)
@@ -6752,6 +7280,27 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
     output_public_paths = [public_path(item) for item in output_paths]
     output_dimensions = [image_dimensions(item) or (None, None) for item in output_paths]
     width, height = image_dimensions(path) or (None, None)
+    output_source_posts = []
+    output_source_post_errors = []
+    for output_index, source_url in enumerate(downloaded_urls, start=1):
+        if not source_url:
+            continue
+        try:
+            source_info = grok_official_register_source_post(source_url, account_id=account_id)
+            output_source_posts.append({
+                "index": output_index,
+                "source_url": source_url,
+                "post_id": source_info.get("post_id"),
+                "media_url": source_info.get("media_url"),
+                "asset_id": source_info.get("asset_id"),
+                "registered_new": source_info.get("registered_new"),
+            })
+        except Exception as exc:
+            output_source_post_errors.append({
+                "index": output_index,
+                "source_url": source_url,
+                "error": str(exc)[:500],
+            })
     update_grok_official_progress(
         status="done",
         stage="done",
@@ -6766,7 +7315,9 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
         official_image_url=image_url,
         official_image_id=image_id,
         post_id=post_id,
+        official_source_post_ids=[item.get("post_id") for item in output_source_posts if item.get("post_id")],
     )
+    primary_source_post_id = output_source_posts[0].get("post_id") if output_source_posts else post_id
     return path, {
         "source": "grok_official_web",
         "official_mode": "quality" if properties.get("enable_pro") else "speed",
@@ -6784,7 +7335,11 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
         "official_ordered_image_urls": ordered_image_urls,
         "official_preview_like_image_urls": [url for url in ordered_image_urls if grok_official_image_url_rank(url) > 0],
         "official_image_id": image_id,
-        "official_post_id": post_id,
+        "official_post_id": primary_source_post_id,
+        "official_ws_post_id": post_id,
+        "official_source_post_id": primary_source_post_id,
+        "official_parent_post_id": primary_source_post_id,
+        "official_root_post_id": primary_source_post_id,
         "official_width": width,
         "official_height": height,
         "official_output_count": len(output_paths),
@@ -6792,6 +7347,9 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
         "official_output_file_paths": [str(item) for item in output_paths],
         "official_output_dimensions": [{"width": item[0], "height": item[1]} for item in output_dimensions],
         "official_downloaded_urls": downloaded_urls,
+        "official_output_source_posts": output_source_posts,
+        "official_output_source_post_ids": [item.get("post_id") for item in output_source_posts if item.get("post_id")],
+        "official_output_source_post_errors": output_source_post_errors,
         "official_download_errors": download_errors,
         "official_blob_count": len(blobs),
         "official_blob_fallback_used": blob_fallback_used,
@@ -10009,9 +10567,11 @@ def grok_official_t2i():
         common_extra = dict(extra)
         common_extra.pop("official_output_file_paths", None)
         downloaded_urls = list(common_extra.get("official_downloaded_urls") or [])
+        source_posts = list(common_extra.get("official_output_source_posts") or [])
         skipped_placeholders = []
         filtered_output_paths = []
         filtered_downloaded_urls = []
+        filtered_source_posts = []
         for output_index, output_path in enumerate(output_file_paths):
             placeholder_check = likely_grok_official_censor_placeholder(output_path)
             if placeholder_check.get("is_placeholder"):
@@ -10027,11 +10587,16 @@ def grok_official_t2i():
             filtered_output_paths.append(output_path)
             if output_index < len(downloaded_urls):
                 filtered_downloaded_urls.append(downloaded_urls[output_index])
+            if output_index < len(source_posts):
+                filtered_source_posts.append(source_posts[output_index])
         output_file_paths = filtered_output_paths
         common_extra["official_registered_output_count"] = len(output_file_paths)
         common_extra["official_registered_output_paths"] = [public_path(item) for item in output_file_paths]
         if filtered_downloaded_urls:
             common_extra["official_downloaded_urls"] = filtered_downloaded_urls
+        if filtered_source_posts:
+            common_extra["official_output_source_posts"] = filtered_source_posts
+            common_extra["official_output_source_post_ids"] = [item.get("post_id") for item in filtered_source_posts if item.get("post_id")]
         if skipped_placeholders:
             common_extra["official_skipped_censor_placeholders"] = skipped_placeholders
             common_extra["official_skipped_censor_placeholder_count"] = len(skipped_placeholders)
@@ -10050,6 +10615,18 @@ def grok_official_t2i():
                 "official_width": width,
                 "official_height": height,
             })
+            source_post = filtered_source_posts[index - 1] if index - 1 < len(filtered_source_posts) else {}
+            if source_post:
+                item_extra.update({
+                    "official_post_id": source_post.get("post_id") or item_extra.get("official_post_id"),
+                    "official_source_post_id": source_post.get("post_id") or item_extra.get("official_source_post_id"),
+                    "official_parent_post_id": source_post.get("post_id") or item_extra.get("official_parent_post_id"),
+                    "official_root_post_id": source_post.get("post_id") or item_extra.get("official_root_post_id"),
+                    "official_image_url": source_post.get("media_url") or item_extra.get("official_image_url"),
+                    "official_media_url": source_post.get("media_url") or item_extra.get("official_media_url"),
+                    "official_source_url": source_post.get("source_url") or item_extra.get("official_source_url"),
+                    "official_registered_media_post": source_post,
+                })
             created.append((index, add_metadata("image", prompt, image_model, output_path, extra=item_extra)))
         items = [item for _, item in sorted(created, key=lambda pair: pair[0])]
         item = items[0]

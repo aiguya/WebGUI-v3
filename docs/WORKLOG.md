@@ -2174,3 +2174,20 @@
   - monkeypatch 테스트로 i2v source image 요청이 app-chat 기본 경로를 타는지 확인.
   - monkeypatch 테스트로 이미지 편집 요청이 app-chat 기본 경로를 타는지 확인.
   - synthetic streaming 응답에서 linked video URL만 다운로드하고 unlinked-only 응답은 실패시키는지 확인.
+
+### 2026-06-14 11:18 KST - Grok 공식홈 media-post 최소 구현 참조 반영
+- 참조:
+  - `grok-official-media-minimal-20260614.zip`의 `grok_official_media.py` 구현을 확인했다.
+  - 핵심 흐름은 `upload/create media post -> save/like -> baseline child/video 목록 확보 -> app-chat 요청 -> /rest/media/post/get polling으로 linked 결과 확정`이었다.
+- 변경:
+  - 공식홈 전용 REST helper를 추가해 `/rest/media/post/get`, `/rest/media/post/create`, `/rest/media/post/like`를 호출하도록 했다.
+  - source 이미지를 공식 media post로 등록하는 `grok_official_register_source_post()`를 추가하고, 기존 공식 이미지 metadata가 있으면 기존 post를 우선 사용하도록 했다.
+  - 이미지 편집 기본 경로를 새 `grok_official_media_post_image_edit()`로 연결해 streaming URL을 직접 신뢰하지 않고 `originalPostId/sourcePostId`가 연결된 결과 post를 polling해 다운로드하도록 했다.
+  - 이미지->영상 기본 경로를 새 `grok_official_media_post_image_to_video()`로 연결하고, 참조 구현의 `imagine-video-gen` payload(`parentPostId`, `isReferenceToVideo: false`, `--mode=normal`)를 사용하도록 했다.
+  - 공식홈 이미지 생성 결과의 다운로드 URL을 media post로 등록해 각 결과 metadata에 `official_source_post_id`, `official_parent_post_id`, `official_output_source_posts`를 저장하도록 했다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - monkeypatch 테스트로 image edit payload가 `imagine-image-edit`, `imageReferences`, `parentPostId`를 참조 구현 형태로 만드는지 확인.
+  - monkeypatch 테스트로 i2v payload가 `imagine-video-gen`, `parentPostId`, `isReferenceToVideo: false`, `--mode=normal`을 사용하는지 확인.
+  - wrapper가 기본적으로 media-post helper를 호출하는지 확인.
+  - 실제 Grok 생성 요청은 크레딧을 쓰지 않기 위해 실행하지 않았다.
