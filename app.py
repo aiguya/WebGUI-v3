@@ -2784,6 +2784,24 @@ def grok_imagine_tab(port=None, post_id=None):
             except Exception:
                 pass
     for tab in tabs:
+        url = tab.get("url") if isinstance(tab, dict) else ""
+        if (
+            isinstance(tab, dict)
+            and "grok.com/imagine" in (url or "")
+            and "/imagine/post/" not in (url or "")
+            and tab.get("webSocketDebuggerUrl")
+        ):
+            return tab
+    encoded = "https://grok.com/imagine"
+    for method in ("PUT", "GET"):
+        try:
+            created = cdp_json("/json/new?" + encoded, port=port, method=method)
+            if created.get("webSocketDebuggerUrl"):
+                time.sleep(2)
+                return created
+        except Exception:
+            pass
+    for tab in tabs:
         if isinstance(tab, dict) and "grok.com" in (tab.get("url") or "") and tab.get("webSocketDebuggerUrl"):
             return tab
     encoded = "https://grok.com/"
@@ -5017,11 +5035,14 @@ def grok_official_app_chat_request(body, timeout=650, account_id=None, target_po
             and ("anti-bot" in detail.lower() or grok_official_is_cloudflare_challenge(detail))
         )
         if should_try_browser:
-            browser_response = grok_official_browser_fetch(browser_fetch_url, body=body or {}, timeout=timeout, target_post_id=target_post_id)
+            browser_response = grok_official_browser_fetch(browser_fetch_url, body=body or {}, timeout=timeout)
             status = int(browser_response.get("status") or 0)
             text = browser_response.get("text") or ""
             if status >= 400:
-                raise RuntimeError(f"Grok official app-chat browser request failed: {status} {text[:1200]}")
+                raise RuntimeError(
+                    f"Grok official app-chat browser request failed after direct HTTP {response.status_code}: "
+                    f"browser HTTP {status}, fetch_url={browser_fetch_url}. {text[:1200]}"
+                )
             return text
         raise RuntimeError(f"Grok official app-chat request failed: {response.status_code} {detail}")
     return "".join(

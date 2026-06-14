@@ -2207,3 +2207,19 @@
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
   - monkeypatch로 최소 구현형 media headers에 `x-statsig-id`가 포함되는지 확인.
   - 실제 Grok 편집 요청은 크레딧/쿼타 보호를 위해 실행하지 않았다.
+
+### 2026-06-14 17:02 KST - Grok 공식홈 app-chat browser fallback 탭 기준 정렬
+- 증상:
+  - media-post 헤더 정렬 후에도 공식홈 이미지 편집에서 `Grok official app-chat browser request failed: 403 Request rejected by anti-bot rules`가 재발했다.
+- 원인:
+  - 첨부 최소 구현의 browser fallback은 항상 `grok.com/imagine`을 연 뒤 same-origin 상대 경로로 fetch한다.
+  - 앱의 fallback은 `target_post_id` 때문에 `/imagine/post/{source_post_id}` 탭을 열고 그 탭에서 app-chat fetch를 실행했다.
+  - 이 차이 때문에 사용 중 새 post 탭이 뜨고, 공식 최소 구현과 다른 브라우저 origin/page context에서 요청이 나갈 수 있었다.
+- 변경:
+  - `grok_imagine_tab()`이 일반 fallback 시 `/imagine` 탭을 우선 사용하고, 없으면 `https://grok.com/imagine`을 새로 열도록 변경했다.
+  - app-chat browser fallback은 더 이상 `target_post_id`를 넘기지 않고 `/rest/app-chat/conversations/new` 상대 경로로 fetch하도록 변경했다.
+  - fallback 실패 메시지에 direct HTTP status와 browser fetch URL을 포함해 다음 403 분석이 가능하도록 했다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - monkeypatch로 direct 403 시 browser fallback이 `/rest/app-chat/conversations/new`를 post target 없이 호출하는지 확인.
+  - 실제 Grok 편집 요청은 크레딧/쿼타 보호를 위해 실행하지 않았다.
