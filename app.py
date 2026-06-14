@@ -14,6 +14,7 @@ import ssl
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 import webbrowser
@@ -2871,6 +2872,83 @@ def grok_official_cloudflare_upload_message(status, detail=""):
     return f"{hint} HTTP {status}" + (f" / {preview}" if preview else "")
 
 
+def grok_official_cookie_items(cookie_header):
+    items = []
+    for part in str(cookie_header or "").split(";"):
+        if "=" not in part:
+            continue
+        name, value = part.strip().split("=", 1)
+        if name:
+            items.append({"name": name, "value": value})
+    return items
+
+
+def grok_official_playwright_browser_fetch(path, body=None, timeout=300, account_id=None):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise RuntimeError("Playwright가 설치되어 있지 않습니다. requirements.txt 설치 후 다시 실행해 주세요.") from exc
+
+    cookie_header = grok_web_cookie_for(account_id)
+    headless = os.environ.get("GROK_BROWSER_HEADLESS", "0") == "1"
+    base_url = "https://grok.com"
+    result = {"status": 0, "text": ""}
+    with tempfile.TemporaryDirectory(prefix="grok-media-") as profile:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch_persistent_context(
+                profile,
+                channel="chrome",
+                headless=headless,
+                viewport={"width": 1400, "height": 1000},
+            )
+            try:
+                cookies = [
+                    {
+                        **item,
+                        "domain": ".grok.com",
+                        "path": "/",
+                        "secure": True,
+                    }
+                    for item in grok_official_cookie_items(cookie_header)
+                ]
+                if cookies:
+                    browser.add_cookies(cookies)
+                page = browser.pages[0] if browser.pages else browser.new_page()
+                page.goto(f"{base_url}/imagine", wait_until="domcontentloaded")
+                result = page.evaluate(
+                    """async ({path, payload}) => {
+                      const response = await fetch(path, {
+                        method: "POST",
+                        credentials: "include",
+                        headers: {
+                          "Accept": "application/json, text/event-stream, */*",
+                          "Content-Type": "application/json",
+                          "x-xai-request-id": crypto.randomUUID(),
+                          "x-statsig-id": "minimal-grok-media-browser"
+                        },
+                        body: JSON.stringify(payload)
+                      });
+                      return {
+                        status: response.status,
+                        text: await response.text()
+                      };
+                    }""",
+                    {"path": path, "payload": body or {}},
+                )
+            finally:
+                browser.close()
+    if not isinstance(result, dict):
+        raise RuntimeError(f"Grok official Playwright browser fetch returned an unexpected response: {result}")
+    return result
+
+
+def grok_official_media_browser_fetch(path, body=None, timeout=300, account_id=None, target_post_id=None):
+    engine = os.getenv("GROK_OFFICIAL_BROWSER_FETCH_ENGINE", "playwright").strip().lower()
+    if engine == "cdp":
+        return grok_official_browser_fetch(path, body=body or {}, timeout=timeout, target_post_id=target_post_id)
+    return grok_official_playwright_browser_fetch(path, body=body or {}, timeout=timeout, account_id=account_id)
+
+
 def grok_official_browser_fetch(url, body=None, method="POST", timeout=360, target_post_id=None):
     ensure_grok_chrome()
     tab = grok_imagine_tab(post_id=target_post_id)
@@ -4955,13 +5033,13 @@ def grok_official_upload_file(path, account_id=None):
         "fileSource": "IMAGINE_SELF_UPLOAD_FILE_SOURCE",
         "content": base64.b64encode(source.read_bytes()).decode("ascii"),
     }
-    headers = {**grok_web_headers(account_id), "Content-Type": "application/json"}
+    headers = grok_official_minimal_media_headers(account_id, accept="application/json, text/event-stream, */*")
     response = requests.post("https://grok.com/rest/app-chat/upload-file", headers=headers, json=body, timeout=240)
     if response.status_code >= 400:
         detail = grok_official_json_error(response)
         lowered_detail = detail.lower()
         should_try_browser_upload = (
-            checked(os.getenv("GROK_OFFICIAL_BROWSER_UPLOAD_FALLBACK", ""))
+            checked(os.getenv("GROK_OFFICIAL_BROWSER_UPLOAD_FALLBACK", "1"))
             and
             response.status_code == 403
             and (
@@ -4970,10 +5048,11 @@ def grok_official_upload_file(path, account_id=None):
             )
         )
         if should_try_browser_upload:
-            browser_response = grok_official_browser_fetch(
-                "https://grok.com/rest/app-chat/upload-file",
+            browser_response = grok_official_media_browser_fetch(
+                "/rest/app-chat/upload-file",
                 body=body,
                 timeout=240,
+                account_id=account_id,
             )
             if int(browser_response.get("status") or 0) >= 400:
                 browser_text = browser_response.get("text") or ""
@@ -5025,11 +5104,11 @@ def grok_official_rest_post_json(path, body, label="Grok official request", time
             and ("anti-bot" in detail.lower() or grok_official_is_cloudflare_challenge(detail))
         )
         if should_try_browser:
-            browser_response = grok_official_browser_fetch(browser_fetch_url, body=body or {}, timeout=timeout)
+            browser_response = grok_official_media_browser_fetch(browser_fetch_url, body=body or {}, timeout=timeout, account_id=account_id)
             status = int(browser_response.get("status") or 0)
             text = browser_response.get("text") or ""
             if status >= 400:
-                raise RuntimeError(f"{label}: browser fetch failed with HTTP {status}: {text[:1200]}")
+                raise RuntimeError(f"{label}: Playwright browser fetch failed with HTTP {status}: {text[:1200]}")
             try:
                 return json.loads(text or "{}") or {}
             except json.JSONDecodeError as exc:
@@ -5051,12 +5130,12 @@ def grok_official_app_chat_request(body, timeout=650, account_id=None, target_po
             and ("anti-bot" in detail.lower() or grok_official_is_cloudflare_challenge(detail))
         )
         if should_try_browser:
-            browser_response = grok_official_browser_fetch(browser_fetch_url, body=body or {}, timeout=timeout)
+            browser_response = grok_official_media_browser_fetch(browser_fetch_url, body=body or {}, timeout=timeout, account_id=account_id)
             status = int(browser_response.get("status") or 0)
             text = browser_response.get("text") or ""
             if status >= 400:
                 raise RuntimeError(
-                    f"Grok official app-chat browser request failed after direct HTTP {response.status_code}: "
+                    f"Grok official app-chat Playwright browser request failed after direct HTTP {response.status_code}: "
                     f"browser HTTP {status}, fetch_url={browser_fetch_url}. {text[:1200]}"
                 )
             return text

@@ -2239,3 +2239,19 @@
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
   - monkeypatch로 browser fallback이 Chrome 보장, 탭 전면화, `/imagine` 이동을 수행하는지 확인.
   - 실제 Grok 편집 요청은 크레딧/쿼타 보호를 위해 실행하지 않았다.
+
+### 2026-06-14 17:15 KST - Grok 공식홈 fallback 첨부 최소 코드 Playwright 순서 적용
+- 증상:
+  - 사용자가 첨부한 최소 코드와 달리 앱은 CDP로 기존 Chrome 탭에 `fetch()`를 주입하는 fallback을 사용하고 있었다.
+  - 따라서 오류 메시지에는 browser request라고 나왔지만, 첨부 코드의 `launch_persistent_context -> add_cookies -> goto(/imagine) -> page.evaluate(fetch)` 순서와 달랐다.
+- 변경:
+  - `playwright`를 `requirements.txt`에 추가했다.
+  - `grok_official_playwright_browser_fetch()`를 추가해 첨부 코드와 같은 순서로 임시 Chrome profile을 만들고 Grok cookie를 `.grok.com`에 심은 뒤 `https://grok.com/imagine`에서 fetch하도록 했다.
+  - media-post REST/app-chat anti-bot fallback의 기본 엔진을 Playwright로 변경했다.
+  - 기존 CDP fallback은 `GROK_OFFICIAL_BROWSER_FETCH_ENGINE=cdp`를 명시한 경우에만 사용하도록 분리했다.
+  - upload-file 요청도 최소 구현과 같은 media headers 및 Playwright fallback을 사용하도록 맞췄다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - monkeypatch로 app-chat direct 403 시 `/rest/app-chat/conversations/new`가 Playwright fallback으로 호출되고 CDP fallback이 호출되지 않는지 확인.
+  - monkeypatch로 upload-file direct 403 시 `/rest/app-chat/upload-file`이 Playwright fallback으로 호출되는지 확인.
+  - 실제 Grok 편집 요청은 크레딧/쿼타 보호를 위해 실행하지 않았다.
