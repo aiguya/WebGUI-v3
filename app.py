@@ -2916,8 +2916,8 @@ def grok_official_browser_fetch(url, body=None, method="POST", timeout=360, targ
     "Content-Type": "application/json",
     "x-xai-request-id": crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
   }};
-  const statsigId = findStatsigId();
-  if (statsigId) requestHeaders["x-statsig-id"] = statsigId;
+  const statsigId = findStatsigId() || "minimal-grok-media-browser";
+  requestHeaders["x-statsig-id"] = statsigId;
   const response = await fetch({json.dumps(url)}, {{
     method: {json.dumps(method)},
     credentials: "include",
@@ -3059,6 +3059,20 @@ def grok_web_headers(account_id=None, accept="application/json", start_chrome=Fa
     if csrf:
         headers["x-csrf-token"] = csrf
     return headers
+
+
+def grok_official_minimal_media_headers(account_id=None, accept="application/json, text/event-stream, */*"):
+    cookie = grok_web_cookie_for(account_id)
+    return {
+        "Accept": accept,
+        "Content-Type": "application/json",
+        "Cookie": cookie,
+        "Origin": "https://grok.com",
+        "Referer": "https://grok.com/",
+        "User-Agent": grok_chrome_user_agent(),
+        "x-xai-request-id": uuid.uuid4().hex,
+        "x-statsig-id": os.getenv("GROK_OFFICIAL_STATSIG_ID", "minimal-grok-media-example"),
+    }
 
 
 def official_aspect_ratio(aspect_ratio, fallback="2:3"):
@@ -4966,11 +4980,8 @@ def grok_official_asset_url(value):
 
 def grok_official_rest_post_json(path, body, label="Grok official request", timeout=120, account_id=None):
     url = path if str(path).startswith(("http://", "https://")) else f"https://grok.com{path}"
-    headers = {
-        **grok_web_headers(account_id, accept="application/json, text/event-stream, */*"),
-        "Content-Type": "application/json",
-        "x-xai-request-id": uuid.uuid4().hex,
-    }
+    browser_fetch_url = path if not str(path).startswith(("http://", "https://")) else url
+    headers = grok_official_minimal_media_headers(account_id, accept="application/json, text/event-stream, */*")
     response = requests.post(url, headers=headers, json=body or {}, timeout=timeout)
     if response.status_code >= 400:
         detail = grok_official_json_error(response)
@@ -4980,7 +4991,7 @@ def grok_official_rest_post_json(path, body, label="Grok official request", time
             and ("anti-bot" in detail.lower() or grok_official_is_cloudflare_challenge(detail))
         )
         if should_try_browser:
-            browser_response = grok_official_browser_fetch(url, body=body or {}, timeout=timeout)
+            browser_response = grok_official_browser_fetch(browser_fetch_url, body=body or {}, timeout=timeout)
             status = int(browser_response.get("status") or 0)
             text = browser_response.get("text") or ""
             if status >= 400:
@@ -4995,11 +5006,8 @@ def grok_official_rest_post_json(path, body, label="Grok official request", time
 
 def grok_official_app_chat_request(body, timeout=650, account_id=None, target_post_id=None):
     url = "https://grok.com/rest/app-chat/conversations/new"
-    headers = {
-        **grok_web_headers(account_id, accept="application/json, text/event-stream, */*"),
-        "Content-Type": "application/json",
-        "x-xai-request-id": uuid.uuid4().hex,
-    }
+    browser_fetch_url = "/rest/app-chat/conversations/new"
+    headers = grok_official_minimal_media_headers(account_id, accept="application/json, text/event-stream, */*")
     response = requests.post(url, headers=headers, json=body or {}, timeout=timeout, stream=True)
     if response.status_code >= 400:
         detail = grok_official_json_error(response)
@@ -5009,7 +5017,7 @@ def grok_official_app_chat_request(body, timeout=650, account_id=None, target_po
             and ("anti-bot" in detail.lower() or grok_official_is_cloudflare_challenge(detail))
         )
         if should_try_browser:
-            browser_response = grok_official_browser_fetch(url, body=body or {}, timeout=timeout, target_post_id=target_post_id)
+            browser_response = grok_official_browser_fetch(browser_fetch_url, body=body or {}, timeout=timeout, target_post_id=target_post_id)
             status = int(browser_response.get("status") or 0)
             text = browser_response.get("text") or ""
             if status >= 400:

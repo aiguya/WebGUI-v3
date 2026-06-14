@@ -2191,3 +2191,19 @@
   - monkeypatch 테스트로 i2v payload가 `imagine-video-gen`, `parentPostId`, `isReferenceToVideo: false`, `--mode=normal`을 사용하는지 확인.
   - wrapper가 기본적으로 media-post helper를 호출하는지 확인.
   - 실제 Grok 생성 요청은 크레딧을 쓰지 않기 위해 실행하지 않았다.
+
+### 2026-06-14 11:36 KST - Grok 공식홈 media-post 요청 헤더 최소 구현 정렬
+- 증상:
+  - 공식홈 이미지 편집에서 `Request rejected by anti-bot rules`가 발생했고, 오류가 app-chat browser fallback에서도 403으로 이어졌다.
+- 원인:
+  - 첨부 최소 구현의 `_headers()`는 direct REST/app-chat 요청마다 `x-xai-request-id`와 `x-statsig-id`를 넣는데, 앱에 반영한 media-post helper의 direct 요청에는 `x-statsig-id`가 빠져 있었다.
+  - browser fallback도 statsig 값을 찾지 못하면 `x-statsig-id`를 생략했지만, 첨부 구현은 fallback에서도 고정 statsig 값을 넣었다.
+  - app-chat browser fallback fetch URL도 첨부 구현처럼 same-origin 상대 경로를 쓰는 편이 더 가깝다.
+- 변경:
+  - `grok_official_minimal_media_headers()`를 추가해 첨부 구현과 동일하게 `Accept`, `Content-Type`, `Cookie`, `Origin`, `Referer`, `User-Agent`, `x-xai-request-id`, `x-statsig-id`를 구성하도록 했다.
+  - media-post REST/app-chat helper가 기존 `grok_web_headers()` 대신 최소 구현 형태의 헤더를 쓰도록 변경했다.
+  - browser fallback은 statsig를 찾지 못해도 `minimal-grok-media-browser`를 넣고, app-chat fallback은 `/rest/app-chat/conversations/new` 상대 경로로 fetch하도록 변경했다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - monkeypatch로 최소 구현형 media headers에 `x-statsig-id`가 포함되는지 확인.
+  - 실제 Grok 편집 요청은 크레딧/쿼타 보호를 위해 실행하지 않았다.
