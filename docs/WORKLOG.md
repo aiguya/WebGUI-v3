@@ -2062,3 +2062,19 @@
   - 실제 링크 `https://grok.com/imagine/post/cf54450b-0dbd-4f8b-aa6a-6b0c49d51bc7` 등록 테스트에서 영상 1개 신규 등록, 프롬프트/썸네일/공식 영상 URL 메타데이터 저장 확인.
   - 같은 링크 재등록 시 신규 0개, 기존 1개로 중복 방지 확인.
   - 잘못된 링크 입력 시 400 오류로 안내 확인.
+
+### 2026-06-14 09:19 KST - Grok 공식홈 이미지 placeholder 라이브러리 노출 방지
+- 증상:
+  - 공식홈 쿼타 이미지 생성에서 동시에 여러 이미지 URL을 받는 경우, 실제 완성 이미지가 아닌 검열/중간 placeholder 이미지가 라이브러리에 함께 보일 수 있었다.
+  - metadata 등록 단계에서 placeholder를 건너뛰어도 파일이 `media-library/image`에 남아 있으면 라이브러리 스캐너가 미등록 이미지로 다시 노출할 수 있었다.
+- 변경:
+  - 공식홈 이미지 URL 후보 정렬을 추가해 `generated`/`imagine-public` 완성본 후보를 우선 다운로드하고 `-part-`, preview, thumbnail 계열 후보를 뒤로 미뤘다.
+  - 공식홈 placeholder 판정 지표에 `edge_to_std` 비율을 추가해 Grok 검열 placeholder의 노이즈 패턴을 조금 더 안정적으로 감지하도록 했다.
+  - placeholder로 판정된 공식홈 이미지 파일은 라이브러리 스캔 폴더에 남기지 않고 `metadata-backups/grok-official-placeholders`로 격리하도록 했다.
+  - `/api/grok-official-t2i`는 정상 파일만 metadata에 등록하고, 격리된 placeholder 수와 경로를 응답 debug 정보에 남기도록 했다.
+  - 공식홈 이미지 편집에서 app-chat 브라우저 요청이 anti-bot 403으로 거부될 때 Chrome 탭이 열리는 이유와 차단 원인을 더 직접적인 오류 문구로 안내하도록 했다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - 최근 이미지 120개 기준 새 placeholder detector 오탐 0개 확인.
+  - URL 정렬 helper가 `generated/image.jpg` > `imagine-public` > 일반 asset > `image-part` 순서로 정렬됨을 확인.
+  - Flask test client로 `/health` 200, `/api/library?media_type=image&force=1` 200 응답 확인.

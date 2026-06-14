@@ -3386,17 +3386,45 @@ def likely_grok_official_censor_placeholder(path):
             entropy = -sum((count / total) * math.log2(count / total) for count in hist if count)
             edge_mean = ImageStat.Stat(edges).mean[0]
             gray_std = ImageStat.Stat(gray).stddev[0]
+            edge_to_std = edge_mean / max(gray_std, 1.0)
         # Grok's moderation placeholder is a blurred, multicolor noise field: many
         # small edges but comparatively low luminance entropy after downsampling.
-        is_placeholder = edge_mean >= 40 and entropy <= 7.05 and gray_std <= 35
+        strict_noise_placeholder = edge_mean >= 40 and entropy <= 7.05 and gray_std <= 35
+        ratio_noise_placeholder = edge_mean >= 32 and entropy <= 7.4 and gray_std <= 50 and edge_to_std >= 0.95
+        is_placeholder = strict_noise_placeholder or ratio_noise_placeholder
         return {
             "is_placeholder": bool(is_placeholder),
             "edge_mean": round(edge_mean, 3),
             "entropy": round(entropy, 3),
             "gray_std": round(gray_std, 3),
+            "edge_to_std": round(edge_to_std, 3),
         }
     except Exception as exc:
         return {"is_placeholder": False, "error": str(exc)[:300]}
+
+
+def quarantine_grok_official_placeholder(path):
+    try:
+        source = Path(path).resolve()
+        root = media_root().resolve()
+        source.relative_to(root)
+        if not source.exists() or not source.is_file():
+            return ""
+        quarantine_dir = (root / "metadata-backups" / "grok-official-placeholders").resolve()
+        quarantine_dir.relative_to(root)
+        quarantine_dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha1(str(source).encode("utf-8")).hexdigest()[:10]
+        suffix = source.suffix or ".bin"
+        target = quarantine_dir / f"{source.stem}-{digest}{suffix}"
+        counter = 1
+        while target.exists():
+            target = quarantine_dir / f"{source.stem}-{digest}-{counter}{suffix}"
+            counter += 1
+        shutil.move(str(source), str(target))
+        invalidate_library_cache()
+        return public_path(target)
+    except Exception:
+        return ""
 
 
 def raise_if_grok_official_placeholder(path, extra=None):
@@ -3405,9 +3433,11 @@ def raise_if_grok_official_placeholder(path, extra=None):
         return None
     check = likely_grok_official_censor_placeholder(path)
     if check.get("is_placeholder"):
+        quarantined_path = quarantine_grok_official_placeholder(path)
         extra["official_skipped_censor_placeholder"] = {
             "path": public_path(path),
             "check": check,
+            "quarantined_path": quarantined_path,
         }
         raise RuntimeError("Grok 공식홈 이미지 생성 결과가 검열 placeholder로 감지되어 라이브러리에 등록하지 않았습니다.")
     return check
@@ -4219,6 +4249,38 @@ def grok_official_extract_urls(payload, kind="image"):
         if url not in deduped:
             deduped.append(url)
     return deduped
+
+
+def grok_official_image_url_rank(url):
+    lowered = str(url or "").lower()
+    rank = 0
+    if "-part-" in lowered:
+        rank += 100
+    if any(token in lowered for token in ("preview", "thumbnail", "/thumb", "placeholder", "blur")):
+        rank += 80
+    if "assets.grok.com" in lowered and "/generated/" in lowered:
+        rank -= 30
+    elif "imagine-public.x.ai" in lowered:
+        rank -= 20
+    elif "assets.grok.com" in lowered:
+        rank += 10
+    if lowered.endswith((".jpg", ".jpeg", ".png", ".webp")):
+        rank -= 5
+    return rank
+
+
+def grok_official_order_image_urls(urls):
+    deduped = []
+    for url in urls or []:
+        if url and url not in deduped:
+            deduped.append(url)
+    return [
+        url
+        for _, url in sorted(
+            enumerate(deduped),
+            key=lambda pair: (grok_official_image_url_rank(pair[1]), pair[0]),
+        )
+    ]
 
 
 def grok_official_extract_post_id(payload):
@@ -5599,7 +5661,15 @@ def grok_official_app_chat_image_edit(prompt, source_paths, dest_dir, aspect_rat
         target_post_id=parent_post_id,
     )
     if int(browser_response.get("status") or 0) >= 400:
-        raise RuntimeError(f"Grok official browser image edit request failed: {browser_response.get('status')} {(browser_response.get('text') or '')[:1200]}")
+        status = browser_response.get("status")
+        text = (browser_response.get("text") or "")[:1200]
+        if grok_official_is_antibot_error(text):
+            raise RuntimeError(
+                "Grok 공식홈 브라우저 세션으로 이미지 편집 요청을 보냈지만 anti-bot 규칙에 의해 차단되었습니다. "
+                "Chrome 탭이 열린 것은 공식 Grok origin에서 app-chat 요청을 실행하기 위한 동작입니다. "
+                f"HTTP {status} / {text}"
+            )
+        raise RuntimeError(f"Grok official browser image edit request failed: {status} {text}")
     events = []
     all_urls = []
     final_urls = []
@@ -6086,6 +6156,7 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
     output_paths = []
     downloaded_urls = []
     download_errors = []
+    ordered_image_urls = []
     if blobs:
         update_grok_official_progress(stage="save", message="Grok 공식홈 WebSocket 이미지 blob 저장 중")
         seen_blob_hashes = set()
@@ -6097,7 +6168,8 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
             output_paths.append(save_response_bytes(blob, dest_dir, suffix=response_suffix_from_bytes(blob, ".jpg")))
         path = output_paths[0] if output_paths else None
     elif image_url or image_urls:
-        for url in ([*image_urls] if image_urls else [image_url]):
+        ordered_image_urls = grok_official_order_image_urls([*image_urls] if image_urls else [image_url])
+        for url in ordered_image_urls:
             if not url or url in downloaded_urls:
                 continue
             try:
@@ -6184,6 +6256,8 @@ def grok_official_image_generate_ws(prompt, dest_dir, count=1, account_id=None, 
         "aspect_ratio": aspect_ratio,
         "official_image_url": image_url,
         "official_image_urls": image_urls,
+        "official_ordered_image_urls": ordered_image_urls,
+        "official_preview_like_image_urls": [url for url in ordered_image_urls if grok_official_image_url_rank(url) > 0],
         "official_image_id": image_id,
         "official_width": width,
         "official_height": height,
@@ -9405,18 +9479,30 @@ def grok_official_t2i():
         original_output_total = len(output_file_paths)
         common_extra = dict(extra)
         common_extra.pop("official_output_file_paths", None)
+        downloaded_urls = list(common_extra.get("official_downloaded_urls") or [])
         skipped_placeholders = []
         filtered_output_paths = []
-        for output_path in output_file_paths:
+        filtered_downloaded_urls = []
+        for output_index, output_path in enumerate(output_file_paths):
             placeholder_check = likely_grok_official_censor_placeholder(output_path)
             if placeholder_check.get("is_placeholder"):
+                original_public_path = public_path(output_path)
+                quarantined_path = quarantine_grok_official_placeholder(output_path)
                 skipped_placeholders.append({
-                    "path": public_path(output_path),
+                    "path": original_public_path,
+                    "source_url": downloaded_urls[output_index] if output_index < len(downloaded_urls) else "",
                     "check": placeholder_check,
+                    "quarantined_path": quarantined_path,
                 })
                 continue
             filtered_output_paths.append(output_path)
+            if output_index < len(downloaded_urls):
+                filtered_downloaded_urls.append(downloaded_urls[output_index])
         output_file_paths = filtered_output_paths
+        common_extra["official_registered_output_count"] = len(output_file_paths)
+        common_extra["official_registered_output_paths"] = [public_path(item) for item in output_file_paths]
+        if filtered_downloaded_urls:
+            common_extra["official_downloaded_urls"] = filtered_downloaded_urls
         if skipped_placeholders:
             common_extra["official_skipped_censor_placeholders"] = skipped_placeholders
             common_extra["official_skipped_censor_placeholder_count"] = len(skipped_placeholders)
@@ -9438,7 +9524,8 @@ def grok_official_t2i():
             created.append((index, add_metadata("image", prompt, image_model, output_path, extra=item_extra)))
         items = [item for _, item in sorted(created, key=lambda pair: pair[0])]
         item = items[0]
-        return jsonify({"ok": True, "item": item, "items": items, "official": json_safe(extra)})
+        invalidate_library_cache()
+        return jsonify({"ok": True, "item": item, "items": items, "official": json_safe(common_extra)})
     except Exception as exc:
         return safe_error("Grok 공식홈 이미지 생성에 실패했습니다.", exc, 502)
 
