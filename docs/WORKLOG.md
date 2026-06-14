@@ -2255,3 +2255,16 @@
   - monkeypatch로 app-chat direct 403 시 `/rest/app-chat/conversations/new`가 Playwright fallback으로 호출되고 CDP fallback이 호출되지 않는지 확인.
   - monkeypatch로 upload-file direct 403 시 `/rest/app-chat/upload-file`이 Playwright fallback으로 호출되는지 확인.
   - 실제 Grok 편집 요청은 크레딧/쿼타 보호를 위해 실행하지 않았다.
+
+### 2026-06-14 17:21 KST - Playwright 의존성 Python 3.14 호환 범위 수정
+- 증상:
+  - 실행 환경에서 `Playwright가 설치되어 있지 않습니다` 오류가 발생했다.
+  - `playwright==1.49.1` 설치 시 `greenlet==3.1.1`이 Python 3.14용 wheel을 제공하지 않아 C++ 빌드 실패가 발생했다.
+- 원인:
+  - 첨부 최소 코드의 requirements는 `playwright>=1.44.0`인데, 앱 반영 시 임의로 `==1.49.1`로 고정해 Python 3.14와 충돌했다.
+- 변경:
+  - `requirements.txt`를 첨부 코드처럼 `playwright>=1.44.0` 범위 지정으로 수정했다.
+  - 현재 Python 3.14 환경에 `playwright 1.60.0`, `greenlet 3.5.1`, `pyee 13.0.1` 설치를 완료했다.
+- 검증:
+  - `from playwright.sync_api import sync_playwright` import 확인.
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
