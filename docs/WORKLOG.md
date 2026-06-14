@@ -2223,3 +2223,19 @@
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
   - monkeypatch로 direct 403 시 browser fallback이 `/rest/app-chat/conversations/new`를 post target 없이 호출하는지 확인.
   - 실제 Grok 편집 요청은 크레딧/쿼타 보호를 위해 실행하지 않았다.
+
+### 2026-06-14 17:07 KST - Grok 공식홈 browser fallback Chrome 전면 실행 보강
+- 증상:
+  - app-chat browser fallback이 실행됐지만 사용자 화면에 Chrome이 새로 뜨거나 전면으로 올라오지 않았다.
+  - 오류 detail은 browser fetch가 실행됐다고 표시했지만, 실제 동작은 기존 CDP 탭에서 백그라운드 `fetch()`를 실행하는 형태였다.
+- 원인:
+  - `grok_official_browser_fetch()`가 `ensure_grok_chrome()`을 직접 호출하지 않았고, 선택한 탭을 `Page.bringToFront`로 전면화하지 않았다.
+  - 선택된 탭이 `/imagine`이 아닐 때도 명시적으로 `/imagine`으로 이동시키지 않았다.
+- 변경:
+  - browser fallback 진입 시 `ensure_grok_chrome()`으로 공식홈 Chrome 실행을 보장하도록 했다.
+  - CDP `Page.enable`, `Page.bringToFront`를 호출해 탭을 전면으로 가져오도록 했다.
+  - 선택된 탭이 `grok.com/imagine`이 아니거나 post 탭이면 `https://grok.com/imagine`으로 navigate 후 fetch하도록 했다.
+- 검증:
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+  - monkeypatch로 browser fallback이 Chrome 보장, 탭 전면화, `/imagine` 이동을 수행하는지 확인.
+  - 실제 Grok 편집 요청은 크레딧/쿼타 보호를 위해 실행하지 않았다.

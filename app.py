@@ -2872,6 +2872,7 @@ def grok_official_cloudflare_upload_message(status, detail=""):
 
 
 def grok_official_browser_fetch(url, body=None, method="POST", timeout=360, target_post_id=None):
+    ensure_grok_chrome()
     tab = grok_imagine_tab(post_id=target_post_id)
     body_json = json.dumps(body or {}, ensure_ascii=False, separators=(",", ":"))
     expression = f"""
@@ -2960,6 +2961,21 @@ def grok_official_browser_fetch(url, body=None, method="POST", timeout=360, targ
 }})()
 """
     with CdpWebSocket(tab["webSocketDebuggerUrl"], timeout=timeout + 30) as cdp:
+        try:
+            cdp.call("Page.enable", timeout=10)
+        except Exception:
+            pass
+        try:
+            cdp.call("Page.bringToFront", timeout=10)
+        except Exception:
+            pass
+        tab_url = str(tab.get("url") or "")
+        if "grok.com/imagine" not in tab_url or "/imagine/post/" in tab_url:
+            try:
+                cdp.call("Page.navigate", {"url": "https://grok.com/imagine"}, timeout=20)
+                time.sleep(2)
+            except Exception:
+                pass
         result = cdp.call(
             "Runtime.evaluate",
             {
