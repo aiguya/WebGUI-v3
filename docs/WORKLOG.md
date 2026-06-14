@@ -2127,3 +2127,18 @@
 - 검증:
   - monkeypatch 검증에서 이미지 편집, 이미지→영상, 영상 연장이 모두 `official_transport=pipeline`으로 반환되고 `grok_official_browser_fetch`가 호출되지 않음을 확인.
   - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.
+
+### 2026-06-14 10:12 KST - Grok 공식홈 post 링크 import 메타데이터 보강
+- 증상:
+  - 공식홈 post 링크를 라이브러리에 등록할 때 영상만 등록되고, 해당 영상의 reference 이미지 및 이미지/영상 생성 프롬프트 관계가 보존되지 않았다.
+  - 등록된 prompt가 실제 링크의 prompt가 아닌 HTML 내부의 다른 `prompt` 값을 잡을 수 있었다.
+- 변경:
+  - post 페이지 JSON 문자열 디코딩을 `json.loads` 기반으로 보강해 한글 prompt가 깨지지 않도록 했다.
+  - post id 주변의 `videoPrompt`, `imagePrompt`, `originalPrompt`, `prompt`를 우선 추출하고, 다른 script 블록의 전역 prompt가 fallback으로 선택되지 않도록 점수화를 보강했다.
+  - post 페이지에 노출된 `assets.grok.com` 이미지/영상 URL을 추출해, 영상 import 시 reference image item을 먼저 등록/갱신하도록 했다.
+  - video item에는 `source_path`, `source_image_path`, `start_image_path`, `source_image_id`, `source_image_prompt`, `official_image_prompt`, `official_video_prompt`, `official_reference_image_url`을 저장하도록 했다.
+  - 이미 등록된 공식홈 post import 항목도 재등록 시 prompt와 extra 메타데이터를 갱신하도록 했다.
+- 검증:
+  - synthetic Grok post HTML로 전역 `prompt`와 post-local prompt가 섞인 경우 post-local prompt를 선택하는지 확인.
+  - monkeypatch import 테스트에서 영상 post 링크가 image item과 video item을 함께 생성하고 video item이 reference image id/path 및 image/video prompt를 저장하는지 확인.
+  - `pythoncore-3.14-64\python.exe -m py_compile app.py` 통과.

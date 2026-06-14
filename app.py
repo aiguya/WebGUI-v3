@@ -333,8 +333,14 @@ COMPACT_LIBRARY_EXTRA_KEYS = {
     "original_start_image_path",
     "start_image_path",
     "source_image_path",
+    "source_image_id",
+    "source_image_prompt",
     "source_video_path",
     "source_page_path",
+    "official_image_prompt",
+    "official_video_prompt",
+    "official_reference_image_url",
+    "official_reference_image_post_id",
     "scanned",
     "promoted_from_scan",
 }
@@ -3197,16 +3203,135 @@ def grok_official_extract_json_string_fields(text, keys):
         matches = []
         for match in re.finditer(pattern, text or ""):
             raw = match.group(1)
-            try:
-                value = raw.encode("utf-8").decode("unicode_escape", errors="replace")
-            except Exception:
-                value = raw
+            value = grok_official_decode_json_string(raw)
             value = html.unescape(value).strip()
             if value and value not in matches:
                 matches.append(value)
         if matches:
             values[key] = matches[0]
     return values
+
+
+def grok_official_decode_json_string(raw):
+    try:
+        return json.loads(f'"{raw}"')
+    except Exception:
+        try:
+            return raw.encode("utf-8").decode("unicode_escape", errors="replace")
+        except Exception:
+            return raw
+
+
+def grok_official_clean_prompt_value(value):
+    value = html.unescape(str(value or "")).strip()
+    if not value:
+        return ""
+    lowered = value.lower()
+    if value.startswith(("http://", "https://")):
+        return ""
+    blocked_fragments = (
+        "grok.com",
+        "javascript",
+        "__next",
+        "generated_video.mp4",
+        "preview_image.jpg",
+        "assets.grok.com",
+    )
+    if any(fragment in lowered for fragment in blocked_fragments):
+        return ""
+    return value[:20000]
+
+
+def grok_official_json_string_matches(text, keys):
+    matches = []
+    for key in keys:
+        pattern = r'"' + re.escape(key) + r'"\s*:\s*"((?:\\.|[^"\\]){0,12000})"'
+        for match in re.finditer(pattern, text or ""):
+            value = grok_official_clean_prompt_value(grok_official_decode_json_string(match.group(1)))
+            if value:
+                matches.append({"key": key, "value": value, "index": match.start()})
+    return matches
+
+
+def grok_official_prompt_match_score(text, match, post_id):
+    index = int(match.get("index") or 0)
+    key = str(match.get("key") or "")
+    value = str(match.get("value") or "")
+    anchors = [m.start() for m in re.finditer(re.escape(post_id), text or "", re.IGNORECASE)] if post_id else []
+    distance = min((abs(index - anchor) for anchor in anchors), default=900000)
+    nearest_anchor = min(anchors, key=lambda anchor: abs(index - anchor)) if anchors else None
+    context = (text or "")[max(0, index - 6000): index + 6000].lower()
+    score = distance
+    if post_id and post_id.lower() in context:
+        score -= 1000000
+    if nearest_anchor is not None:
+        between = (text or "")[min(index, nearest_anchor): max(index, nearest_anchor)].lower()
+        if "</script" in between or "<script" in between:
+            score += 2000000
+    if f"/generated/{post_id}".lower() in context:
+        score -= 300000
+    if "generated_video" in context or '"video' in context:
+        if "video" in key.lower() or key == "originalPrompt":
+            score -= 120000
+    if "image" in context and "image" in key.lower():
+        score -= 100000
+    if key == "prompt":
+        score += 40000
+    if len(value) < 4:
+        score += 100000
+    return score
+
+
+def grok_official_best_json_fields_near_post(text, post_id, keys):
+    selected = {}
+    matches = grok_official_json_string_matches(text, keys)
+    for key in keys:
+        key_matches = [match for match in matches if match.get("key") == key]
+        if not key_matches:
+            continue
+        key_matches.sort(key=lambda match: grok_official_prompt_match_score(text, match, post_id))
+        selected[key] = key_matches[0]["value"]
+    return selected
+
+
+def grok_official_extract_asset_urls(text):
+    cleaned = html.unescape(str(text or "").replace("\\/", "/").replace("\\u002F", "/").replace("\\u002f", "/"))
+    urls = []
+    pattern = r'(?:https?://)?assets\.grok\.com/users/[^\s"\'<>\\]+'
+    for match in re.finditer(pattern, cleaned):
+        url = match.group(0).rstrip(".,;)]}")
+        if url.startswith("assets.grok.com/"):
+            url = "https://" + url
+        if url and url not in urls:
+            urls.append(url)
+    return urls
+
+
+def grok_official_post_page_assets(text, og_image="", og_video=""):
+    image_urls = []
+    thumbnail_urls = []
+    video_urls = []
+    for url in [og_image, og_video, *grok_official_extract_asset_urls(text)]:
+        url = str(url or "").strip()
+        if not url:
+            continue
+        lowered = strip_url_query(url).lower()
+        target = video_urls if ("generated_video" in lowered or lowered.endswith((".mp4", ".webm", ".mov"))) else None
+        if target is None and ("preview_image" in lowered or "thumbnail" in lowered):
+            target = thumbnail_urls
+        if target is None and (
+            "/content" in lowered
+            or "/image" in lowered
+            or lowered.endswith((".jpg", ".jpeg", ".png", ".webp"))
+        ):
+            target = image_urls
+        if target is not None and url not in target:
+            target.append(url)
+    return {
+        "image_urls": image_urls,
+        "thumbnail_urls": thumbnail_urls,
+        "video_urls": video_urls,
+    }
 
 
 def grok_official_meta_content(text, name):
@@ -3234,16 +3359,44 @@ def grok_official_post_page_metadata(post_id, account_id=None):
         text,
         ("videoPrompt", "imagePrompt", "originalPrompt", "prompt"),
     )
+    near_fields = grok_official_best_json_fields_near_post(
+        text,
+        post_id,
+        ("videoPrompt", "imagePrompt", "originalPrompt", "prompt", "inputPrompt", "userPrompt", "mediaPrompt", "textPrompt"),
+    )
     description = grok_official_meta_content(text, "description")
     og_image = grok_official_meta_content(text, "og:image")
     og_video = grok_official_meta_content(text, "og:video")
+    video_prompt = (
+        near_fields.get("videoPrompt")
+        or near_fields.get("originalPrompt")
+        or fields.get("videoPrompt")
+        or fields.get("originalPrompt")
+        or ""
+    )
+    image_prompt = (
+        near_fields.get("imagePrompt")
+        or fields.get("imagePrompt")
+        or ""
+    )
+    generic_prompt = (
+        near_fields.get("prompt")
+        or near_fields.get("inputPrompt")
+        or near_fields.get("userPrompt")
+        or near_fields.get("mediaPrompt")
+        or near_fields.get("textPrompt")
+        or fields.get("prompt")
+        or ""
+    )
+    assets = grok_official_post_page_assets(text, og_image=og_image, og_video=og_video)
     return {
-        "video_prompt": fields.get("videoPrompt") or fields.get("originalPrompt") or "",
-        "image_prompt": fields.get("imagePrompt") or "",
-        "prompt": fields.get("prompt") or fields.get("imagePrompt") or fields.get("videoPrompt") or description or "",
+        "video_prompt": grok_official_clean_prompt_value(video_prompt),
+        "image_prompt": grok_official_clean_prompt_value(image_prompt),
+        "prompt": grok_official_clean_prompt_value(generic_prompt or image_prompt or video_prompt),
         "description": description,
         "og_image": og_image,
         "og_video": og_video,
+        **assets,
     }
 
 
@@ -3261,6 +3414,74 @@ def grok_official_find_existing_import(kind, post_id, official_url=""):
     return None
 
 
+def grok_official_unique_urls(*groups):
+    urls = []
+    seen = set()
+    for group in groups:
+        for url in group or []:
+            url = str(url or "").strip()
+            key = strip_url_query(url)
+            if not (url and key) or key in seen:
+                continue
+            seen.add(key)
+            urls.append(url)
+    return urls
+
+
+def grok_official_post_id_from_asset_url(url, fallback=""):
+    return (
+        official_generated_id_from_url(url)
+        or official_asset_content_id_from_url(url)
+        or official_image_id_from_url(url)
+        or fallback
+        or ""
+    )
+
+
+def grok_official_page_prompt(page_meta, kind, post_id):
+    if kind == "video":
+        prompt = page_meta.get("video_prompt") or page_meta.get("prompt")
+        return grok_official_clean_prompt_value(prompt) or f"Grok official video {post_id}"
+    prompt = page_meta.get("image_prompt") or page_meta.get("prompt")
+    return grok_official_clean_prompt_value(prompt) or f"Grok official image {post_id}"
+
+
+def grok_official_clean_extra(extra):
+    cleaned = {}
+    for key, value in (extra or {}).items():
+        if value is None:
+            continue
+        if value == "":
+            continue
+        if isinstance(value, (list, dict)) and not value:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
+def grok_official_update_import_item(existing_item, prompt=None, source_path=None, extra=None):
+    if not isinstance(existing_item, dict) or not existing_item.get("id"):
+        return existing_item
+    updated = None
+    items = read_metadata()
+    for item in items:
+        if item.get("id") != existing_item.get("id"):
+            continue
+        if prompt:
+            item["prompt"] = prompt
+        if source_path:
+            item["source_path"] = public_path(source_path)
+        if extra:
+            merged = item.get("extra") if isinstance(item.get("extra"), dict) else {}
+            item["extra"] = {**merged, **grok_official_clean_extra(extra)}
+        updated = item
+        break
+    if updated:
+        write_metadata(items)
+        return updated
+    return existing_item
+
+
 def grok_official_import_post_link(post_url):
     post_id = grok_official_post_id_from_url(post_url)
     if not post_id:
@@ -3271,46 +3492,71 @@ def grok_official_import_post_link(post_url):
     canonical_url = grok_official_post_url(post_id)
     page_meta = grok_official_post_page_metadata(post_id, account_id=account_id)
     candidates = grok_official_post_link_candidates(post_id, account_id)
+    image_candidates = grok_official_unique_urls(page_meta.get("image_urls"), candidates["image"], page_meta.get("thumbnail_urls"))
+    thumbnail_candidates = grok_official_unique_urls(page_meta.get("thumbnail_urls"), candidates["thumbnail"])
+    video_candidates = grok_official_unique_urls(page_meta.get("video_urls"), candidates["video"])
+    normal_image_candidate_keys = {strip_url_query(url) for url in grok_official_unique_urls(page_meta.get("image_urls"), candidates["image"])}
     probes = {}
     imported = []
     existing = []
     errors = []
+    reference_image_item = None
+    reference_image_path = None
+    reference_image_url = ""
+    reference_image_post_id = ""
+    image_prompt = grok_official_page_prompt(page_meta, "image", post_id)
+    video_prompt = grok_official_page_prompt(page_meta, "video", post_id)
 
     image_url = ""
-    for candidate in candidates["image"]:
+    for candidate in image_candidates:
         probe = grok_official_media_probe(candidate, "image", account_id=account_id)
         probes[candidate] = probe
         if probe.get("ok"):
             image_url = candidate
             break
     if image_url:
-        existing_item = grok_official_find_existing_import("image", post_id, image_url)
+        reference_image_url = image_url
+        reference_image_post_id = grok_official_post_id_from_asset_url(image_url, fallback=post_id)
+        image_reference_kind = "reference_image" if strip_url_query(image_url) in normal_image_candidate_keys else "thumbnail_fallback"
+        image_extra = {
+            "source": "grok_official_web",
+            "generation_type": "grok_official_post_import",
+            "official_transport": "post_link_import",
+            "official_post_id": reference_image_post_id,
+            "official_parent_post_id": reference_image_post_id,
+            "official_root_post_id": reference_image_post_id,
+            "official_import_root_post_id": post_id,
+            "official_import_role": "video_reference_image" if video_candidates else "post_image",
+            "official_reference_kind": image_reference_kind,
+            "official_image_url": image_url,
+            "official_media_url": image_url,
+            "official_source_url": image_url,
+            "official_import_post_url": canonical_url,
+            "official_account_id": account_id,
+            "official_image_prompt": image_prompt,
+            "official_video_prompt": video_prompt,
+            "official_page_metadata": page_meta,
+        }
+        existing_item = grok_official_find_existing_import("image", reference_image_post_id or post_id, image_url)
         if existing_item:
-            existing.append(existing_item)
+            reference_image_item = grok_official_update_import_item(existing_item, prompt=image_prompt, extra=image_extra)
+            reference_image_path = resolve_public_media_path(reference_image_item.get("file_path"), {".jpg", ".jpeg", ".png", ".webp", ".svg"}) if reference_image_item else None
+            existing.append(reference_image_item)
         else:
             try:
                 path, used_url = grok_official_download(image_url, media_path("image"), kind="image", return_url=True)
-                prompt = page_meta.get("image_prompt") or page_meta.get("prompt") or f"Grok 공식홈 이미지 {post_id}"
-                item = add_metadata("image", prompt, "grok-official-post-link", path, extra={
-                    "source": "grok_official_web",
-                    "generation_type": "grok_official_post_import",
-                    "official_transport": "post_link_import",
-                    "official_post_id": post_id,
-                    "official_parent_post_id": post_id,
-                    "official_root_post_id": post_id,
-                    "official_image_url": used_url,
-                    "official_media_url": used_url,
-                    "official_source_url": image_url,
-                    "official_import_post_url": canonical_url,
-                    "official_account_id": account_id,
-                    "official_page_metadata": page_meta,
-                })
+                image_extra["official_image_url"] = used_url
+                image_extra["official_media_url"] = used_url
+                item = add_metadata("image", image_prompt, "grok-official-post-link", path, extra=grok_official_clean_extra(image_extra))
+                reference_image_item = item
+                reference_image_path = path
+                reference_image_url = used_url
                 imported.append(item)
             except Exception as exc:
                 errors.append({"kind": "image", "url": image_url, "error": str(exc)[:500]})
 
     thumbnail_url = ""
-    for candidate in candidates["thumbnail"]:
+    for candidate in thumbnail_candidates:
         probe = grok_official_media_probe(candidate, "image", account_id=account_id)
         probes[candidate] = probe
         if probe.get("ok"):
@@ -3318,7 +3564,7 @@ def grok_official_import_post_link(post_url):
             break
 
     video_url = ""
-    for candidate in candidates["video"]:
+    for candidate in video_candidates:
         probe = grok_official_media_probe(candidate, "video", account_id=account_id)
         probes[candidate] = probe
         if probe.get("ok"):
@@ -3326,28 +3572,51 @@ def grok_official_import_post_link(post_url):
             break
     if video_url:
         existing_item = grok_official_find_existing_import("video", post_id, video_url)
+        video_extra = {
+            "source": "grok_official_web",
+            "generation_type": "grok_official_post_import",
+            "official_transport": "post_link_import",
+            "official_post_id": post_id,
+            "official_parent_post_id": post_id,
+            "official_extend_post_id": post_id,
+            "official_root_post_id": post_id,
+            "official_root_attachment_id": post_id,
+            "official_media_url": video_url,
+            "official_thumbnail_url": thumbnail_url,
+            "official_source_url": video_url,
+            "official_import_post_url": canonical_url,
+            "official_account_id": account_id,
+            "official_video_prompt": video_prompt,
+            "official_image_prompt": image_prompt,
+            "i2v_prompt": video_prompt,
+            "source_image_path": public_path(reference_image_path) if reference_image_path else "",
+            "start_image_path": public_path(reference_image_path) if reference_image_path else "",
+            "original_start_image_path": public_path(reference_image_path) if reference_image_path else "",
+            "source_image_id": reference_image_item.get("id") if isinstance(reference_image_item, dict) else "",
+            "source_image_prompt": image_prompt,
+            "official_reference_image_url": reference_image_url,
+            "official_reference_image_post_id": reference_image_post_id,
+            "official_page_metadata": page_meta,
+        }
         if existing_item:
-            existing.append(existing_item)
+            existing.append(grok_official_update_import_item(
+                existing_item,
+                prompt=video_prompt,
+                source_path=reference_image_path,
+                extra=video_extra,
+            ))
         else:
             try:
                 path, used_url = grok_official_download(video_url, media_path("video"), kind="video", return_url=True)
-                prompt = page_meta.get("video_prompt") or page_meta.get("prompt") or f"Grok 공식홈 영상 {post_id}"
-                item = add_metadata("video", prompt, "grok-official-post-link", path, extra={
-                    "source": "grok_official_web",
-                    "generation_type": "grok_official_post_import",
-                    "official_transport": "post_link_import",
-                    "official_post_id": post_id,
-                    "official_parent_post_id": post_id,
-                    "official_extend_post_id": post_id,
-                    "official_root_post_id": post_id,
-                    "official_root_attachment_id": post_id,
-                    "official_media_url": used_url,
-                    "official_thumbnail_url": thumbnail_url,
-                    "official_source_url": video_url,
-                    "official_import_post_url": canonical_url,
-                    "official_account_id": account_id,
-                    "official_page_metadata": page_meta,
-                })
+                video_extra["official_media_url"] = used_url
+                item = add_metadata(
+                    "video",
+                    video_prompt,
+                    "grok-official-post-link",
+                    path,
+                    source_path=reference_image_path,
+                    extra=grok_official_clean_extra(video_extra),
+                )
                 imported.append(item)
             except Exception as exc:
                 errors.append({"kind": "video", "url": video_url, "error": str(exc)[:500]})
